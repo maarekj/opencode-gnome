@@ -23,7 +23,7 @@ const script = [
   // écran X virtuel, bus D-Bus privé (pas de contact avec une instance déjà ouverte),
   // sans accessibilité ni portails (absents de ce bus privé)
   `export GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none GDK_DEBUG=no-portals GIO_USE_VFS=local`,
-  `timeout ${Number(delay) + (process.env['SCREENSHOT_XDOTOOL'] === undefined ? 3 : 15)} dbus-run-session -- gjs -m ${quote(path.join(root, 'dist', 'app', 'main.js'))} --size ${w}x${h} ${appArgs.map((a) => quote(a)).join(' ')} 2>&1 | grep -v -e '^dbus-daemon' -e 'DRI3' &`,
+  `timeout ${Number(delay) + (process.env['SCREENSHOT_XDOTOOL'] === undefined ? 3 : 120)} dbus-run-session -- gjs -m ${quote(path.join(root, 'dist', 'app', 'main.js'))} --size ${w}x${h} ${appArgs.map((a) => quote(a)).join(' ')} 2>&1 | grep -v -e '^dbus-daemon' -e 'DRI3' &`,
   `sleep ${delay}`,
   ...(process.env['SCREENSHOT_XDOTOOL'] ?? '')
     .split(';')
@@ -33,6 +33,8 @@ const script = [
     .map((c) => (c.startsWith('sleep ') ? c : c.startsWith('sh:') ? c.slice(3) : `xdotool ${c}`)),
   'sleep 1',
   `import -window root ${quote(out)}`,
+  // l'app est arrêtée une fois la capture prise
+  `pkill -f -- '--size ${w}x${h}' || true`,
   `wait`,
 ].join('\n');
 execFileSync('xvfb-run', ['-a', '-s', `-screen 0 ${w}x${h}x24`, 'bash', '-c', script], { stdio: 'inherit' });

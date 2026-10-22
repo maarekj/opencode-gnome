@@ -5,6 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
+import { isModelReadable } from '../shared/client.ts';
 import type { Attachment } from '../shared/schemas.ts';
 
 Gio._promisify(Gio.File.prototype, 'load_contents_async', 'load_contents_finish');
@@ -145,7 +146,7 @@ export function AttachmentView({ mime, filename, url, onRemove }: { mime?: strin
     content = (
       <Gtk.Button
         cssClasses={['attachment-chip']}
-        tooltipText={filename ?? ''}
+        tooltipText={onRemove !== undefined && !isModelReadable(mime ?? '') ? `${filename ?? ''} : type non lisible par le modèle, transmis par son chemin` : (filename ?? '')}
         onClicked={(self: Gtk.Button) => {
           launch(self, { mime, filename, url }).catch((e: unknown) => console.error(e));
         }}

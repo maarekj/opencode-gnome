@@ -15,6 +15,10 @@ type Query = Readonly<Record<string, string | number | boolean | undefined>>;
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
+/** Types de fichiers que les modèles lisent directement en pièce jointe. */
+export const isModelReadable = (mime: string): boolean =>
+  mime.startsWith('image/') || mime === 'application/pdf' || mime.startsWith('text/') || mime === 'application/json';
+
 export class OpencodeClient {
   readonly url: string;
   readonly #session = new Soup.Session({ timeout: 30 });
@@ -103,7 +107,17 @@ export class OpencodeClient {
     opts: { agent?: string; model?: { providerID: string; modelID: string }; files?: readonly Attachment[] } = {},
   ): Promise<void> {
     const { files = [], ...rest } = opts;
-    const parts = [...(text === '' ? [] : [{ type: 'text', text }]), ...files.map((f) => ({ type: 'file', mime: f.mime, filename: f.filename, url: f.url }))];
+    // Les fournisseurs refusent les types non pris en charge (xlsx, zip…), et l'erreur se répète
+    // à chaque tour car la pièce jointe reste dans l'historique : ces fichiers sont transmis par
+    // leur chemin, l'agent les ouvre avec ses outils.
+    const direct = files.filter((f) => isModelReadable(f.mime) || !f.url.startsWith('file://'));
+    const byPath = files.filter((f) => !direct.includes(f));
+    const paths = byPath.map((f) => `- ${decodeURIComponent(f.url.slice('file://'.length))}`);
+    const fullText = paths.length === 0 ? text : `${text}${text === '' ? '' : '\n\n'}Fichiers joints :\n${paths.join('\n')}`;
+    const parts = [
+      ...(fullText === '' ? [] : [{ type: 'text', text: fullText }]),
+      ...direct.map((f) => ({ type: 'file', mime: f.mime, filename: f.filename, url: f.url })),
+    ];
     await this.request('POST', `/session/${encodeURIComponent(sessionID)}/prompt_async`, z.unknown(), {
       query: { directory },
       body: { parts, ...rest },
