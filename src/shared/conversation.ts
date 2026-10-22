@@ -1,0 +1,277 @@
+// Conversation d'une session : messages chargés puis mis à jour en direct (streaming des parties).
+//
+// Chaque partie visible est un « bloc » stable (même objet tant que la partie existe) dont le contenu
+// est un Accessor : un delta de streaming ne met à jour que le widget du bloc concerné, sans
+// reconstruire la liste.
+import GLib from 'gi://GLib';
+import { createState, type Accessor, type Setter } from 'gnim';
+import { errorMessage } from './errors.ts';
+import type { MessageInfo, Part, PermissionRequest, QuestionRequest, SessionEvent } from './schemas.ts';
+import type { Store } from './store.ts';
+
+export type BlockKind = 'user' | 'text' | 'reasoning' | 'tool' | 'file' | 'error';
+
+export interface Block {
+  readonly id: string;
+  readonly kind: BlockKind;
+  readonly part: Accessor<Part>;
+}
+
+interface PartEntry {
+  readonly block: Block;
+  readonly set: Setter<Part>;
+  value: Part;
+  dirty: boolean;
+}
+
+interface MessageEntry {
+  info: MessageInfo;
+  readonly parts: string[];
+}
+
+/** Délai de regroupement des mises à jour (ms) : le streaming émet des dizaines de deltas par seconde. */
+const FLUSH_MS = 80;
+
+function kindOf(role: string, part: Part): BlockKind | null {
+  switch (part.type) {
+    case 'text':
+      if (part.synthetic === true || part.ignored === true) return null;
+      return role === 'user' ? 'user' : 'text';
+    case 'reasoning':
+      return (part.text ?? '').trim() === '' ? null : 'reasoning';
+    case 'tool':
+      return 'tool';
+    case 'file':
+      return 'file';
+    default:
+      return null; // step-start, step-finish, snapshot, patch, agent…
+  }
+}
+
+const errorPart = (info: MessageInfo): Part | null =>
+  info.error === undefined
+    ? null
+    : { id: `${info.id}-error`, type: 'error', messageID: info.id, sessionID: info.sessionID, text: `${info.error.name ?? 'Erreur'} : ${info.error.data?.message ?? ''}` };
+
+export class Conversation {
+  readonly sessionID: string;
+  readonly blocks: Accessor<readonly Block[]>;
+  readonly loading: Accessor<boolean>;
+  readonly error: Accessor<string | null>;
+  /** Demandes en attente d'une réponse de l'utilisateur pour cette session. */
+  readonly permissions: Accessor<readonly PermissionRequest[]>;
+  readonly questions: Accessor<readonly QuestionRequest[]>;
+  /** Incrémenté quand les fichiers modifiés de la session changent. */
+  readonly diffVersion: Accessor<number>;
+
+  readonly #store: Store;
+  readonly #setBlocks: Setter<readonly Block[]>;
+  readonly #setLoading: Setter<boolean>;
+  readonly #setError: Setter<string | null>;
+  readonly #setPermissions: Setter<readonly PermissionRequest[]>;
+  readonly #setQuestions: Setter<readonly QuestionRequest[]>;
+  readonly #setDiffVersion: Setter<number>;
+  #directory: string | null = null;
+  readonly #messages = new Map<string, MessageEntry>();
+  readonly #parts = new Map<string, PartEntry>();
+  #structureChanged = false;
+  #flushQueued = false;
+  #signature = '';
+  #unsubscribe: (() => void) | null = null;
+  #disposed = false;
+
+  constructor(store: Store, sessionID: string) {
+    this.#store = store;
+    this.sessionID = sessionID;
+    [this.blocks, this.#setBlocks] = createState<readonly Block[]>([]);
+    [this.loading, this.#setLoading] = createState(true);
+    [this.error, this.#setError] = createState<string | null>(null);
+    [this.permissions, this.#setPermissions] = createState<readonly PermissionRequest[]>([]);
+    [this.questions, this.#setQuestions] = createState<readonly QuestionRequest[]>([]);
+    [this.diffVersion, this.#setDiffVersion] = createState(0);
+  }
+
+  /** Répertoire de la session (requis par les appels qui ciblent une instance opencode). */
+  get directory(): string | null {
+    return this.#directory ?? this.#store.session(this.sessionID)?.directory ?? null;
+  }
+
+  /** Recharge les permissions et questions en attente de cette session. */
+  async reloadRequests(): Promise<void> {
+    const dir = this.directory;
+    if (dir === null) return;
+    try {
+      const [permissions, questions] = await Promise.all([this.#store.client.permissions(dir), this.#store.client.questions(dir)]);
+      if (this.#disposed) return;
+      this.#setPermissions(permissions.filter((p) => p.sessionID === this.sessionID));
+      this.#setQuestions(questions.filter((q) => q.sessionID === this.sessionID));
+    } catch {
+      // affiché à la prochaine action
+    }
+  }
+
+  /** Charge l'historique et suit les événements. Les événements reçus pendant le chargement sont conservés. */
+  async start(): Promise<void> {
+    this.#unsubscribe ??= this.#store.onSessionEvents(this.sessionID, (e) => this.#apply(e));
+    await Promise.all([this.reload(), this.reloadRequests()]);
+  }
+
+  async reload(): Promise<void> {
+    this.#setLoading(true);
+    try {
+      const messages = await this.#store.client.messages(this.sessionID);
+      if (this.#disposed) return;
+      for (const { info, parts } of messages) {
+        const path: unknown = info['path'];
+        if (this.#directory === null && typeof path === 'object' && path !== null && 'cwd' in path && typeof path.cwd === 'string') this.#directory = path.cwd;
+        this.#upsertMessage(info);
+        for (const part of parts) this.#upsertPart(part);
+      }
+      this.#setError(null);
+    } catch (e) {
+      this.#setError(errorMessage(e));
+    }
+    this.#setLoading(false);
+    this.#flush();
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#unsubscribe?.();
+    this.#unsubscribe = null;
+  }
+
+  #apply(e: SessionEvent): void {
+    switch (e.type) {
+      case 'permission.asked':
+      case 'permission.v2.asked':
+      case 'permission.replied':
+      case 'permission.v2.replied':
+      case 'question.asked':
+      case 'question.v2.asked':
+      case 'question.replied':
+      case 'question.v2.replied':
+      case 'question.rejected':
+      case 'question.v2.rejected':
+        void this.reloadRequests();
+        return;
+      case 'session.diff':
+        this.#setDiffVersion(this.diffVersion.peek() + 1);
+        return;
+      case 'message.updated':
+        this.#upsertMessage(e.properties.info);
+        break;
+      case 'message.removed': {
+        const m = this.#messages.get(e.properties.messageID);
+        for (const id of m?.parts ?? []) this.#parts.delete(id);
+        this.#messages.delete(e.properties.messageID);
+        this.#structureChanged = true;
+        break;
+      }
+      case 'message.part.updated':
+        this.#upsertPart(e.properties.part);
+        break;
+      case 'message.part.removed': {
+        const m = this.#messages.get(e.properties.messageID);
+        if (m !== undefined) m.parts.splice(m.parts.indexOf(e.properties.partID) >>> 0, 1);
+        this.#parts.delete(e.properties.partID);
+        this.#structureChanged = true;
+        break;
+      }
+      case 'message.part.delta': {
+        const { partID, field, delta } = e.properties;
+        const entry = this.#parts.get(partID);
+        if (entry === undefined) return; // la partie arrivera via message.part.updated
+        const prev = entry.value[field];
+        entry.value = { ...entry.value, [field]: (typeof prev === 'string' ? prev : '') + delta };
+        entry.dirty = true;
+        break;
+      }
+      default:
+        return;
+    }
+    this.#scheduleFlush();
+  }
+
+  #message(id: string): MessageEntry | undefined {
+    return this.#messages.get(id);
+  }
+
+  #upsertMessage(info: MessageInfo): void {
+    const m = this.#messages.get(info.id);
+    if (m === undefined) {
+      this.#messages.set(info.id, { info, parts: [] });
+      this.#structureChanged = true;
+    } else {
+      if ((m.info.error === undefined) !== (info.error === undefined)) this.#structureChanged = true;
+      m.info = info;
+    }
+    const err = errorPart(info);
+    if (err !== null) this.#upsertPart(err);
+  }
+
+  #upsertPart(part: Part): void {
+    let m = this.#message(part.messageID);
+    if (m === undefined) {
+      // partie reçue avant son message : message provisoire
+      m = { info: { id: part.messageID, role: 'assistant', sessionID: part.sessionID, time: { created: 0 } }, parts: [] };
+      this.#messages.set(part.messageID, m);
+    }
+    const entry = this.#parts.get(part.id);
+    if (entry !== undefined) {
+      entry.value = part;
+      entry.dirty = true;
+      // une partie peut devenir visible (reasoning vide -> rempli)
+      if (kindOf(m.info.role, part) !== entry.block.kind) this.#structureChanged = true;
+      return;
+    }
+    const kind = part.type === 'error' ? 'error' : kindOf(m.info.role, part);
+    const [accessor, set] = createState<Part>(part);
+    this.#parts.set(part.id, { block: { id: part.id, kind: kind ?? 'text', part: accessor }, set, value: part, dirty: false });
+    if (!m.parts.includes(part.id)) m.parts.push(part.id);
+    this.#structureChanged = true;
+  }
+
+  #scheduleFlush(): void {
+    if (this.#flushQueued) return;
+    this.#flushQueued = true;
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, FLUSH_MS, () => {
+      this.#flushQueued = false;
+      if (!this.#disposed) this.#flush();
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+
+  #flush(): void {
+    for (const entry of this.#parts.values()) {
+      if (entry.dirty) {
+        entry.dirty = false;
+        entry.set(entry.value);
+      }
+    }
+    if (!this.#structureChanged) return;
+    this.#structureChanged = false;
+    const blocks: Block[] = [];
+    // les identifiants opencode sont triables chronologiquement
+    for (const id of [...this.#messages.keys()].toSorted()) {
+      const m = this.#messages.get(id);
+      if (m === undefined) continue;
+      for (const partID of m.parts) {
+        const entry = this.#parts.get(partID);
+        if (entry === undefined) continue;
+        const kind = entry.value.type === 'error' ? 'error' : kindOf(m.info.role, entry.value);
+        if (kind === null) continue;
+        // le type visible peut avoir changé : nouveau bloc
+        if (kind !== entry.block.kind) {
+          const [accessor, set] = createState<Part>(entry.value);
+          this.#parts.set(partID, { block: { id: partID, kind, part: accessor }, set, value: entry.value, dirty: false });
+        }
+        blocks.push(this.#parts.get(partID)?.block ?? entry.block);
+      }
+    }
+    const signature = blocks.map((b) => `${b.id}:${b.kind}`).join(',');
+    if (signature === this.#signature) return;
+    this.#signature = signature;
+    this.#setBlocks(blocks);
+  }
+}

@@ -1,0 +1,213 @@
+// Client HTTP + SSE pour `opencode serve`, basé sur libsoup 3 (GJS, sans Node).
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Soup from 'gi://Soup?version=3.0';
+import * as z from 'zod/mini';
+import { errorMessage, HttpError } from './errors.ts';
+import { Agent, AppEvent, FileDiff, GlobalEnvelope, Health, MessageWithParts, PermissionRequest, Providers, QuestionRequest, Project, Session, SessionStatus, type AppEventEnvelope } from './schemas.ts';
+
+Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
+Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
+Gio._promisify(Gio.DataInputStream.prototype, 'read_line_async', 'read_line_finish');
+
+type Query = Readonly<Record<string, string | number | boolean | undefined>>;
+
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+
+export class OpencodeClient {
+  readonly url: string;
+  readonly #session = new Soup.Session({ timeout: 30 });
+  /** Session dédiée au flux SSE : pas de timeout. */
+  readonly #stream = new Soup.Session({ timeout: 0, idleTimeout: 0 });
+
+  constructor(url: string) {
+    this.url = url.replace(/\/+$/u, '');
+  }
+
+  #uri(path: string, query: Query = {}): string {
+    const params = Object.entries(query)
+      .filter((e): e is [string, string | number | boolean] => e[1] !== undefined)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+    return `${this.url}${path}${params.length > 0 ? `?${params.join('&')}` : ''}`;
+  }
+
+  async request<S extends z.ZodMiniType>(method: string, path: string, schema: S, opts: { query?: Query; body?: unknown } = {}): Promise<z.output<S>> {
+    const msg = Soup.Message.new(method, this.#uri(path, opts.query));
+    if (msg === null) throw new Error(`URL invalide : ${this.url}${path}`);
+    if (opts.body !== undefined) {
+      msg.set_request_body_from_bytes('application/json', new GLib.Bytes(encoder.encode(JSON.stringify(opts.body))));
+    }
+    const bytes = await this.#session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const data = bytes.get_data();
+    const text = data === null ? '' : decoder.decode(data);
+    const status: number = msg.get_status();
+    if (status < 200 || status >= 300) throw new HttpError(status, `${method} ${path} : HTTP ${status} ${text.slice(0, 200)}`);
+    return z.parse(schema, text === '' ? null : JSON.parse(text));
+  }
+
+  get<S extends z.ZodMiniType>(path: string, schema: S, query?: Query): Promise<z.output<S>> {
+    return this.request('GET', path, schema, query === undefined ? {} : { query });
+  }
+
+  // ------------------------------------------------------------------ API
+
+  health(): Promise<Health> {
+    return this.get('/global/health', Health);
+  }
+
+  projects(): Promise<Project[]> {
+    return this.get('/project', z.array(Project));
+  }
+
+  /** Sessions racines (sans les sous-agents) de tous les projets, les plus récentes d'abord. */
+  sessions(limit = 500): Promise<Session[]> {
+    return this.get('/experimental/session', z.array(Session), { roots: true, limit });
+  }
+
+  /** Statut des sessions actives (les sessions absentes sont au repos). */
+  statuses(): Promise<Record<string, SessionStatus>> {
+    return this.get('/session/status', z.record(z.string(), SessionStatus));
+  }
+
+  /** Derniers messages d'une session (ordre chronologique). */
+  messages(sessionID: string, limit = 200): Promise<MessageWithParts[]> {
+    return this.get(`/session/${encodeURIComponent(sessionID)}/message`, z.array(MessageWithParts), { limit });
+  }
+
+  createSession(directory: string): Promise<Session> {
+    return this.request('POST', '/session', Session, { query: { directory }, body: {} });
+  }
+
+  /** Envoie un prompt sans attendre la réponse (elle arrive par le flux d'événements). */
+  async prompt(sessionID: string, directory: string, text: string, opts: { agent?: string; model?: { providerID: string; modelID: string } } = {}): Promise<void> {
+    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/prompt_async`, z.unknown(), {
+      query: { directory },
+      body: { parts: [{ type: 'text', text }], ...opts },
+    });
+  }
+
+  async abort(sessionID: string, directory: string): Promise<void> {
+    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/abort`, z.unknown(), { query: { directory } });
+  }
+
+  permissions(directory: string): Promise<PermissionRequest[]> {
+    return this.get('/permission', z.array(PermissionRequest), { directory });
+  }
+
+  async replyPermission(requestID: string, directory: string, reply: 'once' | 'always' | 'reject'): Promise<void> {
+    await this.request('POST', `/permission/${encodeURIComponent(requestID)}/reply`, z.unknown(), { query: { directory }, body: { reply } });
+  }
+
+  questions(directory: string): Promise<QuestionRequest[]> {
+    return this.get('/question', z.array(QuestionRequest), { directory });
+  }
+
+  /** Une réponse par question : la liste des libellés choisis (ou saisis). */
+  async replyQuestion(requestID: string, directory: string, answers: string[][]): Promise<void> {
+    await this.request('POST', `/question/${encodeURIComponent(requestID)}/reply`, z.unknown(), { query: { directory }, body: { answers } });
+  }
+
+  async rejectQuestion(requestID: string, directory: string): Promise<void> {
+    await this.request('POST', `/question/${encodeURIComponent(requestID)}/reject`, z.unknown(), { query: { directory } });
+  }
+
+  agents(directory: string): Promise<Agent[]> {
+    return this.get('/agent', z.array(Agent), { directory });
+  }
+
+  providers(directory: string): Promise<Providers> {
+    return this.get('/config/providers', Providers, { directory });
+  }
+
+  diff(sessionID: string, directory: string): Promise<FileDiff[]> {
+    return this.get(`/session/${encodeURIComponent(sessionID)}/diff`, z.array(FileDiff), { directory });
+  }
+
+  // ------------------------------------------------------------------ SSE
+
+  /**
+   * Écoute `GET /global/event` (tous les projets) et reconnecte automatiquement.
+   * `onState(true)` à chaque connexion : l'appelant doit alors recharger l'état complet.
+   * Retourne une fonction d'arrêt.
+   */
+  listen(onEvent: (e: AppEventEnvelope) => void, onState: (connected: boolean, error?: string) => void): () => void {
+    const cancellable = new Gio.Cancellable();
+    let retry = 0;
+
+    // une connexion, puis reconnexion après un délai croissant (1 à 5 s)
+    const connect = async (): Promise<void> => {
+      try {
+        await this.#readStream(cancellable, onEvent, () => {
+          retry = 0;
+          onState(true);
+        });
+        onState(false, 'flux interrompu');
+      } catch (e) {
+        if (cancellable.is_cancelled()) return;
+        onState(false, errorMessage(e));
+      }
+      retry = Math.min(retry + 1, 5);
+      await sleep(retry * 1000, cancellable);
+      if (!cancellable.is_cancelled()) void connect();
+    };
+    void connect();
+    return () => cancellable.cancel();
+  }
+
+  async #readStream(cancellable: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, onOpen: () => void): Promise<void> {
+    const msg = Soup.Message.new('GET', this.#uri('/global/event'));
+    if (msg === null) throw new Error(`URL invalide : ${this.url}`);
+    msg.get_request_headers().append('Accept', 'text/event-stream');
+    const input = await this.#stream.send_async(msg, GLib.PRIORITY_DEFAULT, cancellable);
+    const status: number = msg.get_status();
+    if (status !== 200) throw new HttpError(status, `/global/event : HTTP ${status}`);
+    onOpen();
+    const lines = new Gio.DataInputStream({ baseStream: input, closeBaseStream: true });
+    let data: string[] = [];
+    try {
+      for (;;) {
+        // oxlint-disable-next-line no-await-in-loop -- lecture séquentielle d'un flux SSE
+        const [bytes] = await lines.read_line_async(GLib.PRIORITY_DEFAULT, cancellable);
+        if (bytes === null) return; // fin du flux
+        const line = decoder.decode(bytes).replace(/\r$/u, '');
+        if (line === '') {
+          if (data.length > 0) dispatch(data.join('\n'), onEvent);
+          data = [];
+        } else if (line.startsWith('data:')) {
+          data.push(line.slice(5).trimStart());
+        }
+      }
+    } finally {
+      lines.close(null);
+    }
+  }
+}
+
+function dispatch(raw: string, onEvent: (e: AppEventEnvelope) => void): void {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  const env = GlobalEnvelope.safeParse(json);
+  if (!env.success) return;
+  const ev = AppEvent.safeParse(env.data.payload);
+  if (!ev.success) return; // événement non utilisé par l'app
+  onEvent({ directory: env.data.directory ?? null, event: ev.data });
+}
+
+function sleep(ms: number, cancellable: Gio.Cancellable): Promise<void> {
+  return new Promise((resolve) => {
+    const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+      cancellable.disconnect(handler);
+      resolve();
+      return GLib.SOURCE_REMOVE;
+    });
+    const handler = cancellable.connect(() => {
+      GLib.source_remove(id);
+      resolve();
+    });
+  });
+}
