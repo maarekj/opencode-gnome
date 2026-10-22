@@ -108,8 +108,15 @@ export function createConversationPage(opts: {
             <Gtk.Button
               $type="end"
               iconName="document-edit-symbolic"
-              tooltipText="Fichiers modifiés"
-              onClicked={(self: Gtk.Button) => openDiffDialog(self, title.peek(), () => client.diff(sessionID, dir()))}
+              tooltipText="Fichiers modifiés (git)"
+              onClicked={(self: Gtk.Button) =>
+                openDiffDialog(self, {
+                  title: GLib.path_get_basename(dir()),
+                  load: () => client.gitDiff(dir()),
+                  vcs: () => client.vcs(dir()),
+                  changed: conversation.diffVersion,
+                })
+              }
             />
             <Gtk.Button
               $type="end"

@@ -123,7 +123,11 @@ export const Providers = z.looseObject({
 });
 export type Providers = z.output<typeof Providers>;
 
-export const FileDiff = z.looseObject({ path: z.string(), status: z.optional(z.string()), additions: z.number(), deletions: z.number(), patch: z.optional(z.string()) });
+/** Fichier modifié dans le dépôt git (`GET /vcs/diff?mode=git`). */
+export const FileDiff = z.looseObject({ file: z.string(), status: z.optional(z.string()), additions: z.number(), deletions: z.number(), patch: z.optional(z.string()) });
+
+export const VcsInfo = z.looseObject({ branch: z.optional(z.nullable(z.string())) });
+export type VcsInfo = z.output<typeof VcsInfo>;
 export type FileDiff = z.output<typeof FileDiff>;
 
 /** Pièce jointe envoyée avec un prompt (`FilePartInput`). */

@@ -84,7 +84,7 @@ export class Conversation {
   readonly questions: Accessor<readonly QuestionRequest[]>;
   /** Contexte utilisé par la session (dernier message de l'assistant ayant des tokens). */
   readonly context: Accessor<ContextUsage | null>;
-  /** Incrémenté quand les fichiers modifiés de la session changent. */
+  /** Incrémenté quand la session modifie des fichiers (`session.diff`, outils d'édition terminés). */
   readonly diffVersion: Accessor<number>;
 
   readonly #store: Store;

@@ -95,4 +95,8 @@ export const STYLESHEET = `
 .context-bar.error block.filled {
   background: var(--error-color);
 }
+
+.diff-view {
+  font-size: 0.9em;
+}
 `;
