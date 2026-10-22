@@ -54,6 +54,8 @@ export const Part = z.looseObject({
   synthetic: z.optional(z.boolean()),
   ignored: z.optional(z.boolean()),
   tool: z.optional(z.string()),
+  /** identifiant de l'appel d'outil (relie une permission / question à son appel) */
+  callID: z.optional(z.string()),
   state: z.optional(ToolState),
   filename: z.optional(z.string()),
   mime: z.optional(z.string()),
@@ -76,6 +78,9 @@ export type MessageInfo = z.output<typeof MessageInfo>;
 export const MessageWithParts = z.looseObject({ info: MessageInfo, parts: z.array(Part) });
 export type MessageWithParts = z.output<typeof MessageWithParts>;
 
+/** Appel d'outil à l'origine d'une demande. */
+export const RequestTool = z.looseObject({ messageID: z.string(), callID: z.string() });
+
 export const PermissionRequest = z.looseObject({
   id: z.string(),
   sessionID: z.string(),
@@ -83,6 +88,7 @@ export const PermissionRequest = z.looseObject({
   patterns: z.optional(z.array(z.string())),
   always: z.optional(z.array(z.string())),
   metadata: z.optional(z.unknown()),
+  tool: z.optional(RequestTool),
 });
 export type PermissionRequest = z.output<typeof PermissionRequest>;
 
@@ -95,7 +101,7 @@ export const QuestionInfo = z.looseObject({
 });
 export type QuestionInfo = z.output<typeof QuestionInfo>;
 
-export const QuestionRequest = z.looseObject({ id: z.string(), sessionID: z.string(), questions: z.array(QuestionInfo) });
+export const QuestionRequest = z.looseObject({ id: z.string(), sessionID: z.string(), questions: z.array(QuestionInfo), tool: z.optional(RequestTool) });
 export type QuestionRequest = z.output<typeof QuestionRequest>;
 
 export const Agent = z.looseObject({ name: z.string(), mode: z.optional(z.string()), hidden: z.optional(z.nullable(z.boolean())), description: z.optional(z.string()) });

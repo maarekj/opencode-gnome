@@ -9,12 +9,13 @@ import { errorMessage } from '../shared/errors.ts';
 import { Composer } from './Composer.tsx';
 import { ConversationView } from './ConversationView.tsx';
 import { openDiffDialog } from './DiffDialog.tsx';
-import { Requests } from './Requests.tsx';
+import type { RequestActions } from './Requests.tsx';
 
 const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
   idle: '',
   busy: 'En cours…',
   retry: 'Nouvel essai…',
+  question: 'Question en attente',
   permission: 'Permission demandée',
 };
 
@@ -60,7 +61,12 @@ export function createConversationPage(opts: {
       return null;
     });
     const title = view((v) => (v === null || v.session.title === '' ? 'Session' : v.session.title));
-    const subtitle = view((v) => (v === null ? '' : ACTIVITY_LABEL[v.activity] || prettyPath(v.session.directory)));
+    const subtitle = createComputed(() => {
+      if (conversation.questions().length > 0) return ACTIVITY_LABEL.question;
+      if (conversation.permissions().length > 0) return ACTIVITY_LABEL.permission;
+      const v = view();
+      return v === null ? '' : ACTIVITY_LABEL[v.activity] || prettyPath(v.session.directory);
+    });
     const busy = view((v) => v !== null && v.activity !== 'idle');
     const client = store.client;
     const dir = (): string => conversation.directory ?? view.peek()?.session.directory ?? GLib.get_home_dir();
@@ -84,13 +90,11 @@ export function createConversationPage(opts: {
       abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),
     });
 
-    const requests = Requests({
-      permissions: conversation.permissions,
-      questions: conversation.questions,
+    const requestActions: RequestActions = {
       replyPermission: (id, reply) => void attempt(toast, 'Réponse impossible', () => client.replyPermission(id, dir(), reply)).then(() => conversation.reloadRequests()),
       replyQuestion: (id, answers) => void attempt(toast, 'Réponse impossible', () => client.replyQuestion(id, dir(), answers)).then(() => conversation.reloadRequests()),
       rejectQuestion: (id) => void attempt(toast, 'Réponse impossible', () => client.rejectQuestion(id, dir())).then(() => conversation.reloadRequests()),
-    });
+    };
 
     const page = (
       <Adw.NavigationPage title={title} tag={sessionTag(sessionID)}>
@@ -113,9 +117,8 @@ export function createConversationPage(opts: {
               }}
             />
           </Adw.HeaderBar>
-          <ConversationView conversation={conversation} revealed={revealed} />
+          <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
-            {requests}
             {composer}
           </Gtk.Box>
         </Adw.ToolbarView>

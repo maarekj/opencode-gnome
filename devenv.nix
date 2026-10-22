@@ -22,6 +22,7 @@
     # captures de l'interface sur un écran virtuel (scripts/screenshot.ts)
     pkgs.xvfb-run
     pkgs.imagemagick
+    pkgs.xdotool # clics / saisie simulés pendant les captures (SCREENSHOT_XDOTOOL)
   ];
 
   # opencode n'est pas fourni ici : on utilise celui de l'utilisateur (même version que la console).

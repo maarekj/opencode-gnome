@@ -5,7 +5,7 @@ import type { OpencodeClient } from './client.ts';
 import { errorMessage } from './errors.ts';
 import type { AppEventEnvelope, Project, Session, SessionEvent } from './schemas.ts';
 
-export type Activity = 'idle' | 'busy' | 'retry' | 'permission';
+export type Activity = 'idle' | 'busy' | 'retry' | 'question' | 'permission';
 
 export interface SessionView {
   readonly session: Session;
@@ -44,6 +44,8 @@ export class Store {
   readonly #status = new Map<string, 'busy' | 'retry'>();
   /** sessionID -> demandes de permission en attente */
   readonly #permissions = new Map<string, Set<string>>();
+  /** sessionID -> questions en attente */
+  readonly #questions = new Map<string, Set<string>>();
   /** sessionID -> abonnés aux événements de messages (conversations ouvertes) */
   readonly #messageListeners = new Map<string, Set<(e: SessionEvent) => void>>();
   #stop: (() => void) | null = null;
@@ -113,13 +115,15 @@ export class Store {
     for (const fn of this.#messageListeners.get(event.properties.sessionID) ?? []) fn(event);
   }
 
-  /** Marque une session comme en attente d'une réponse de l'utilisateur (question). */
-  #attention(sessionID: string, on: boolean): void {
-    const set = this.#permissions.get(sessionID) ?? new Set<string>();
-    if (on) set.add('question');
-    else set.delete('question');
-    if (set.size === 0) this.#permissions.delete(sessionID);
-    else this.#permissions.set(sessionID, set);
+  /** Suit les questions en attente d'une session (id de la demande : `id` ou `requestID`). */
+  #question(sessionID: string, props: Record<string, unknown>, asked: boolean): void {
+    const raw = asked ? props['id'] : props['requestID'];
+    const id = typeof raw === 'string' ? raw : 'question';
+    const set = this.#questions.get(sessionID) ?? new Set<string>();
+    if (asked) set.add(id);
+    else if (!set.delete(id)) set.clear(); // id inconnu : on considère la session comme répondue
+    if (set.size === 0) this.#questions.delete(sessionID);
+    else this.#questions.set(sessionID, set);
   }
 
   /** Ajoute ou met à jour une session localement (avant l'événement du serveur). */
@@ -155,6 +159,7 @@ export class Store {
         this.#sessions.delete(event.properties.sessionID);
         this.#status.delete(event.properties.sessionID);
         this.#permissions.delete(event.properties.sessionID);
+        this.#questions.delete(event.properties.sessionID);
         break;
       case 'session.status': {
         const { sessionID, status } = event.properties;
@@ -165,6 +170,7 @@ export class Store {
       case 'session.idle':
         this.#status.delete(event.properties.sessionID);
         this.#permissions.delete(event.properties.sessionID);
+        this.#questions.delete(event.properties.sessionID);
         break;
       case 'question.asked':
       case 'question.v2.asked':
@@ -173,8 +179,7 @@ export class Store {
       case 'question.rejected':
       case 'question.v2.rejected':
         this.#notify(event);
-        if (event.type.endsWith('asked')) this.#attention(event.properties.sessionID, true);
-        else this.#attention(event.properties.sessionID, false);
+        this.#question(event.properties.sessionID, event.properties, event.type.endsWith('asked'));
         break;
       case 'permission.asked':
       case 'permission.v2.asked': {
@@ -210,6 +215,7 @@ export class Store {
   }
 
   activity(sessionID: string): Activity {
+    if ((this.#questions.get(sessionID)?.size ?? 0) > 0) return 'question';
     if ((this.#permissions.get(sessionID)?.size ?? 0) > 0) return 'permission';
     return this.#status.get(sessionID) ?? 'idle';
   }

@@ -83,8 +83,10 @@ function activityIcon(view: SessionView): JSX.Element | null {
       return <Adw.Spinner $type="prefix" tooltipText="En cours" />;
     case 'retry':
       return <Gtk.Image $type="prefix" iconName="view-refresh-symbolic" cssClasses={['warning']} tooltipText="Nouvel essai" />;
+    case 'question':
+      return <Gtk.Image $type="prefix" iconName="help-about-symbolic" cssClasses={['warning']} tooltipText="Question en attente" />;
     case 'permission':
-      return <Gtk.Image $type="prefix" iconName="dialog-question-symbolic" cssClasses={['warning']} tooltipText="Permission demandée" />;
+      return <Gtk.Image $type="prefix" iconName="dialog-warning-symbolic" cssClasses={['warning']} tooltipText="Permission demandée" />;
     case 'idle':
       return null;
     default:

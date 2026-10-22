@@ -39,4 +39,17 @@ export const STYLESHEET = `
   padding: 8px 12px;
   font-size: 0.9em;
 }
+
+.request.question,
+.request.permission {
+  border: 1px solid alpha(var(--accent-bg-color), 0.5);
+}
+.other-answer {
+  padding: 2px 6px;
+  font-weight: normal;
+  color: var(--accent-color);
+}
+.pending-pill {
+  box-shadow: 0 2px 8px alpha(black, 0.25);
+}
 `;

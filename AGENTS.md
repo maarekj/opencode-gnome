@@ -17,13 +17,16 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `pnpm screenshot [sortie.png] [-- --session ID]` : lance l'app sur un écran virtuel (Xvfb)
   et en fait une capture. Toujours valider un changement d'interface ainsi, jamais en ouvrant
-  une fenêtre sur l'écran de l'utilisateur.
+  une fenêtre sur l'écran de l'utilisateur. Interactions simulées avec
+  `SCREENSHOT_XDOTOOL="mousemove X Y click 1; type texte; key ctrl+Return; sleep 2"`.
+  `OPENCODE_GNOME_TEST_SCROLL=top` : la conversation reste en haut (test de la pastille).
 
 ## Conventions
 - TypeScript strict ; données externes validées avec zod/mini.
 - Interface et messages en français ; commentaires de code en français.
 - gnim n'est pas React : un composant s'exécute une fois, seules les valeurs liées se mettent à jour.
   Pour une liste ordonnée, utiliser `keyedBox` / `keyedListBox` (`src/app/KeyedBox.ts`), pas `<For>`.
+  Pas de `<With>` directement dans un `<With>` (Fragments imbriqués non gérés) : intercaler un `Gtk.Box`.
 - Ne jamais bloquer la boucle principale pendant une animation (voir `ConversationPage.tsx`).
 - Messages de commit en français, courts, au style des commits existants.
 
