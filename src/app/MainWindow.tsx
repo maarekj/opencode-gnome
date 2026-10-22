@@ -309,10 +309,34 @@ export function MainWindow({ app, store, size, ready }: { app: Adw.Application; 
   };
 
 
+  /**
+   * Dernière vue de chaque projet : session ouverte (id) ou liste (null). Mise à jour à chaque
+   * changement de page, sauf pendant un changement de projet (qui passe brièvement par la liste).
+   */
+  const lastView = new Map<string, string | null>();
+  let switching = false;
+  nav.connect('notify::visible-page', () => {
+    const key = current.peek()?.key;
+    if (switching || key === undefined) return;
+    const tag = nav.visiblePage?.tag ?? '';
+    lastView.set(key, tag.startsWith('session:') ? tag.slice('session:'.length) : null);
+  });
+
   const select = (key: string): void => {
+    if (split !== null) split.showContent = true;
+    // projet déjà affiché : retour à sa liste de sessions
+    if (key === current.peek()?.key) {
+      nav.pop_to_tag('sessions');
+      return;
+    }
+    // autre projet : restaure sa dernière vue, si la session existe encore
+    const sessionID = lastView.get(key) ?? null;
+    const exists = sessionID !== null && store.projects.peek().some((p) => p.key === key && p.sessions.some((v) => v.session.id === sessionID));
+    switching = true;
     setSelected(key);
     nav.pop_to_tag('sessions');
-    if (split !== null) split.showContent = true;
+    switching = false;
+    if (exists) actions.openSession(sessionID);
   };
 
   nav.add(asPage(SessionsPage({ store, current, actions })));

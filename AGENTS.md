@@ -21,6 +21,9 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   `SCREENSHOT_XDOTOOL="mousemove X Y click 1; type texte; key ctrl+Return; sleep 2"`
   (`sh: commande` pour une commande shell, ex. `xclip` pour remplir le presse-papier).
   `OPENCODE_GNOME_TEST_SCROLL=top` : la conversation reste en haut (test de la pastille).
+  Pour des clics dans la barre latérale, pointer l'app sur un serveur de test
+  (`opencode serve --port 4799` + `OPENCODE_GNOME_URL=http://127.0.0.1:4799`) : sur le serveur
+  partagé, la session de l'agent en cours fait bouger l'ordre des projets pendant le test.
 
 ## Conventions
 - TypeScript strict ; données externes validées avec zod/mini.
