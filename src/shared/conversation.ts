@@ -32,11 +32,16 @@ interface MessageEntry {
 /** Délai de regroupement des mises à jour (ms) : le streaming émet des dizaines de deltas par seconde. */
 const FLUSH_MS = 80;
 
+/** Retire les repères « [Image N] » insérés par le TUI à la place des images collées. */
+export const stripImageMarkers = (text: string): string => text.replaceAll(/\[Image \d+\] ?/gu, '');
+
 function kindOf(role: string, part: Part): BlockKind | null {
   switch (part.type) {
     case 'text':
       if (part.synthetic === true || part.ignored === true) return null;
-      return role === 'user' ? 'user' : 'text';
+      if (role !== 'user') return 'text';
+      // texte réduit aux repères « [Image N] » du TUI : les miniatures suffisent
+      return stripImageMarkers(part.text ?? '').trim() === '' ? null : 'user';
     case 'reasoning':
       return (part.text ?? '').trim() === '' ? null : 'reasoning';
     case 'tool':

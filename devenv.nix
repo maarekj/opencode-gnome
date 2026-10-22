@@ -23,6 +23,7 @@
     pkgs.xvfb-run
     pkgs.imagemagick
     pkgs.xdotool # clics / saisie simulés pendant les captures (SCREENSHOT_XDOTOOL)
+    pkgs.xclip # presse-papier de l'écran virtuel (tests du collage)
   ];
 
   # opencode n'est pas fourni ici : on utilise celui de l'utilisateur (même version que la console).

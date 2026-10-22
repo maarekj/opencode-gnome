@@ -2,7 +2,8 @@
 // Usage : node scripts/screenshot.ts [sortie.png] [-- arguments de l'app, ex. --session ses_xxx]
 // Variables : SCREENSHOT_DELAY (s, défaut 4), SCREENSHOT_SIZE (défaut 1280x800),
 // SCREENSHOT_XDOTOOL : commandes xdotool jouées avant la capture, séparées par « ; »
-// (ex. « mousemove 700 180 click 1; type bonjour; key ctrl+Return; sleep 2 »).
+// (ex. « mousemove 700 180 click 1; type bonjour; key ctrl+Return; sleep 2 » ;
+// « sh: commande » exécute une commande shell, ex. xclip pour remplir le presse-papier).
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { buildApp } from './build.ts';
@@ -28,7 +29,8 @@ const script = [
     .split(';')
     .map((c) => c.trim())
     .filter((c) => c !== '')
-    .map((c) => (c.startsWith('sleep ') ? c : `xdotool ${c}`)),
+    // « sleep … » et « sh: … » (commande shell) tels quels, le reste passé à xdotool
+    .map((c) => (c.startsWith('sleep ') ? c : c.startsWith('sh:') ? c.slice(3) : `xdotool ${c}`)),
   'sleep 1',
   `import -window root ${quote(out)}`,
   `wait`,

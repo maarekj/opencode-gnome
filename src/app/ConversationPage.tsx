@@ -85,8 +85,11 @@ export function createConversationPage(opts: {
         const [agents, providers] = await Promise.all([client.agents(dir()), client.providers(dir())]);
         return { agents, providers };
       },
-      send: (text, agent, model) =>
-        attempt(toast, "Envoi impossible", () => client.prompt(sessionID, dir(), text, { ...(agent === undefined ? {} : { agent }), ...(model === undefined ? {} : { model }) })),
+      send: (text, agent, model, files) =>
+        attempt(toast, 'Envoi impossible', () =>
+          client.prompt(sessionID, dir(), text, { files, ...(agent === undefined ? {} : { agent }), ...(model === undefined ? {} : { model }) }),
+        ),
+      toast,
       abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),
     });
 

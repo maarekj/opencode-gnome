@@ -4,7 +4,8 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
-import type { Block, Conversation } from '../shared/conversation.ts';
+import { stripImageMarkers, type Block, type Conversation } from '../shared/conversation.ts';
+import { AttachmentView } from './Attachments.tsx';
 import { esc } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../shared/schemas.ts';
 import { keyedBox } from './KeyedBox.ts';
@@ -200,7 +201,7 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
     case 'user':
       widget = (
         <Gtk.Box cssClasses={['user-message']} halign={Gtk.Align.FILL}>
-          <With value={text(block.part)}>{(t: string) => <Markdown text={t} />}</With>
+          <With value={block.part((p) => stripImageMarkers(p.text ?? ''))}>{(t: string) => <Markdown text={t} />}</With>
         </Gtk.Box>
       );
       break;
@@ -223,14 +224,16 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
     case 'tool':
       widget = <ToolBlock part={block.part} ctx={ctx} />;
       break;
-    case 'file':
+    case 'file': {
+      // contenu figé : une pièce jointe ne change pas une fois envoyée
+      const p = block.part.peek();
       widget = (
-        <Gtk.Box spacing={6} cssClasses={['dim-label']}>
-          <Gtk.Image iconName="mail-attachment-symbolic" />
-          <Gtk.Label label={block.part((p) => p.filename ?? p.mime ?? 'fichier')} />
+        <Gtk.Box halign={Gtk.Align.START} cssClasses={['message-attachment']}>
+          <AttachmentView mime={p.mime} filename={p.filename} url={p.url ?? ''} />
         </Gtk.Box>
       );
       break;
+    }
     case 'error':
       widget = <Gtk.Label label={text(block.part)} xalign={0} wrap selectable cssClasses={['error']} />;
       break;

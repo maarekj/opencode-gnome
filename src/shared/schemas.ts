@@ -59,6 +59,8 @@ export const Part = z.looseObject({
   state: z.optional(ToolState),
   filename: z.optional(z.string()),
   mime: z.optional(z.string()),
+  /** fichier : URL `data:` (contenu en base64) ou `file://` */
+  url: z.optional(z.string()),
 });
 export type Part = z.output<typeof Part>;
 
@@ -115,6 +117,14 @@ export type Providers = z.output<typeof Providers>;
 
 export const FileDiff = z.looseObject({ path: z.string(), status: z.optional(z.string()), additions: z.number(), deletions: z.number(), patch: z.optional(z.string()) });
 export type FileDiff = z.output<typeof FileDiff>;
+
+/** Pièce jointe envoyée avec un prompt (`FilePartInput`). */
+export interface Attachment {
+  readonly mime: string;
+  readonly filename: string;
+  /** `data:<mime>;base64,…` ou `file:///chemin` */
+  readonly url: string;
+}
 
 /** Enveloppe de `GET /global/event` : un événement bus + son répertoire d'origine. */
 export const GlobalEnvelope = z.looseObject({

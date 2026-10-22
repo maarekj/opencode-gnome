@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
-import { Agent, AppEvent, FileDiff, GlobalEnvelope, Health, MessageWithParts, PermissionRequest, Providers, QuestionRequest, Project, Session, SessionStatus, type AppEventEnvelope } from './schemas.ts';
+import { Agent, AppEvent, type Attachment, FileDiff, GlobalEnvelope, Health, MessageWithParts, PermissionRequest, Providers, QuestionRequest, Project, Session, SessionStatus, type AppEventEnvelope } from './schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
 Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
@@ -96,10 +96,17 @@ export class OpencodeClient {
   }
 
   /** Envoie un prompt sans attendre la réponse (elle arrive par le flux d'événements). */
-  async prompt(sessionID: string, directory: string, text: string, opts: { agent?: string; model?: { providerID: string; modelID: string } } = {}): Promise<void> {
+  async prompt(
+    sessionID: string,
+    directory: string,
+    text: string,
+    opts: { agent?: string; model?: { providerID: string; modelID: string }; files?: readonly Attachment[] } = {},
+  ): Promise<void> {
+    const { files = [], ...rest } = opts;
+    const parts = [...(text === '' ? [] : [{ type: 'text', text }]), ...files.map((f) => ({ type: 'file', mime: f.mime, filename: f.filename, url: f.url }))];
     await this.request('POST', `/session/${encodeURIComponent(sessionID)}/prompt_async`, z.unknown(), {
       query: { directory },
-      body: { parts: [{ type: 'text', text }], ...opts },
+      body: { parts, ...rest },
     });
   }
 

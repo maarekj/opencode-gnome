@@ -62,4 +62,24 @@ export const STYLESHEET = `
   font-weight: bold;
   font-size: 0.85em;
 }
+
+.attachment-thumb {
+  padding: 0;
+  border-radius: 8px;
+}
+.attachment-chip {
+  padding: 4px 10px;
+}
+.removable .attachment-chip {
+  padding-right: 32px;
+}
+.attachment-remove {
+  margin: 4px;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+}
+.message-attachment {
+  margin-top: -6px;
+}
 `;

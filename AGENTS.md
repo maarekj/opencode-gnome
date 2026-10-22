@@ -18,7 +18,8 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - `pnpm screenshot [sortie.png] [-- --session ID]` : lance l'app sur un écran virtuel (Xvfb)
   et en fait une capture. Toujours valider un changement d'interface ainsi, jamais en ouvrant
   une fenêtre sur l'écran de l'utilisateur. Interactions simulées avec
-  `SCREENSHOT_XDOTOOL="mousemove X Y click 1; type texte; key ctrl+Return; sleep 2"`.
+  `SCREENSHOT_XDOTOOL="mousemove X Y click 1; type texte; key ctrl+Return; sleep 2"`
+  (`sh: commande` pour une commande shell, ex. `xclip` pour remplir le presse-papier).
   `OPENCODE_GNOME_TEST_SCROLL=top` : la conversation reste en haut (test de la pastille).
 
 ## Conventions

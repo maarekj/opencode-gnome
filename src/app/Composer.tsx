@@ -3,8 +3,12 @@
 import Gdk from 'gi://Gdk?version=4.0';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
-import type { Accessor } from 'gnim';
-import type { Agent, Providers } from '../shared/schemas.ts';
+import GObject from 'gi://GObject';
+import { createState, onCleanup, type Accessor } from 'gnim';
+import { errorMessage } from '../shared/errors.ts';
+import { attachmentFromFile, attachmentFromTexture, attachmentsFromClipboard, AttachmentView, pickFiles } from './Attachments.tsx';
+import { keyedBox } from './KeyedBox.ts';
+import type { Agent, Attachment, Providers } from '../shared/schemas.ts';
 
 export interface ModelRef {
   readonly providerID: string;
@@ -16,7 +20,9 @@ export interface ComposerProps {
   /** Agent et modèle utilisés en dernier dans la session (présélection). */
   initial: () => { agent?: string; model?: ModelRef };
   loadChoices: () => Promise<{ agents: Agent[]; providers: Providers }>;
-  send: (text: string, agent: string | undefined, model: ModelRef | undefined) => Promise<boolean>;
+  send: (text: string, agent: string | undefined, model: ModelRef | undefined, files: readonly Attachment[]) => Promise<boolean>;
+  /** Affiche un message d'erreur. */
+  toast: (message: string) => void;
   abort: () => void;
 }
 
@@ -57,6 +63,28 @@ export function Composer(props: ComposerProps): JSX.Element {
   const modelDD = stringDropDown('Modèle', true);
   const buffer = new Gtk.TextBuffer();
   let sending = false;
+  const [files, setFiles] = createState<readonly Attachment[]>([]);
+  let fileSeq = 0;
+  /** clé stable par pièce jointe (pour la liste des miniatures) */
+  const fileKeys = new WeakMap<Attachment, string>();
+  const keyOf = (a: Attachment): string => {
+    let k = fileKeys.get(a);
+    if (k === undefined) {
+      fileSeq += 1;
+      k = String(fileSeq);
+      fileKeys.set(a, k);
+    }
+    return k;
+  };
+  const addFiles = (list: readonly Attachment[]): void => {
+    if (list.length > 0) setFiles([...files.peek(), ...list]);
+  };
+  const attach = (load: Promise<Attachment[] | null>): void => {
+    load.then(
+      (list) => addFiles(list ?? []),
+      (e: unknown) => props.toast(`Pièce jointe impossible : ${errorMessage(e)}`),
+    );
+  };
 
   const choose = async (): Promise<void> => {
     try {
@@ -75,22 +103,60 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   const submit = (): void => {
     const text = buffer.text.trim();
-    if (text === '' || sending) return;
+    const attached = files.peek();
+    if ((text === '' && attached.length === 0) || sending) return;
     const agent = selectedString(agentDD);
     const model = selectedString(modelDD);
     const slash = model?.indexOf('/') ?? -1;
     const ref = model === undefined || slash === -1 ? undefined : { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
     sending = true;
     const go = async (): Promise<void> => {
-      const ok = await props.send(text, agent, ref);
+      const ok = await props.send(text, agent, ref, attached);
       sending = false;
-      if (ok) buffer.text = '';
+      if (ok) {
+        buffer.text = '';
+        setFiles([]);
+      }
     };
     void go();
   };
 
   return (
-    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['composer', 'card']} marginStart={18} marginEnd={18} marginBottom={12}>
+    <Gtk.Box
+      orientation={Gtk.Orientation.VERTICAL}
+      cssClasses={['composer', 'card']}
+      marginStart={18}
+      marginEnd={18}
+      marginBottom={12}
+      $={(self: Gtk.Box) => {
+        // glisser-déposer de fichiers ou d'images sur la zone de saisie
+        const drop = Gtk.DropTarget.new(GObject.TYPE_NONE, Gdk.DragAction.COPY);
+        drop.set_gtypes([Gdk.FileList.$gtype, Gdk.Texture.$gtype]);
+        drop.connect('drop', (_t: Gtk.DropTarget, value: unknown) => {
+          if (value instanceof Gdk.FileList) attach(Promise.all(value.get_files().map((f) => attachmentFromFile(f))));
+          else if (value instanceof Gdk.Texture) addFiles([attachmentFromTexture(value)]);
+          else return false;
+          return true;
+        });
+        self.add_controller(drop);
+      }}
+    >
+      <Gtk.Box
+        spacing={8}
+        marginTop={10}
+        marginStart={12}
+        marginEnd={12}
+        visible={files((f) => f.length > 0)}
+        $={(self: Gtk.Box) => {
+          onCleanup(
+            keyedBox(self, files, keyOf, (a) => {
+              const w = AttachmentView({ mime: a.mime, filename: a.filename, url: a.url, onRemove: () => setFiles(files.peek().filter((x) => x !== a)) });
+              if (!(w instanceof Gtk.Widget)) throw new TypeError('widget attendu');
+              return w;
+            }),
+          );
+        }}
+      />
       <Gtk.ScrolledWindow hscrollbarPolicy={Gtk.PolicyType.NEVER} propagateNaturalHeight maxContentHeight={240}>
         <Gtk.TextView
           buffer={buffer}
@@ -114,6 +180,14 @@ export function Composer(props: ComposerProps): JSX.Element {
               return false;
             });
             self.add_controller(keys);
+            // Ctrl+V : image ou fichiers du presse-papier en pièces jointes, sinon collage normal du texte
+            self.connect('paste-clipboard', () => {
+              const clipboard = self.get_clipboard();
+              const formats = clipboard.get_formats();
+              if (!formats.contain_gtype(Gdk.FileList.$gtype) && !formats.contain_gtype(Gdk.Texture.$gtype)) return;
+              GObject.signal_stop_emission_by_name(self, 'paste-clipboard');
+              attach(attachmentsFromClipboard(clipboard));
+            });
             // grab_focus dès que la vue est affichée
             self.connect('map', () => {
               self.grab_focus();
@@ -122,6 +196,12 @@ export function Composer(props: ComposerProps): JSX.Element {
         />
       </Gtk.ScrolledWindow>
       <Gtk.Box spacing={6} marginStart={6} marginEnd={6} marginBottom={6}>
+        <Gtk.Button
+          iconName="mail-attachment-symbolic"
+          tooltipText="Joindre des fichiers ou des images (ou coller / glisser-déposer)"
+          cssClasses={['flat', 'circular']}
+          onClicked={(self: Gtk.Button) => attach(pickFiles(self))}
+        />
         {agentDD}
         {modelDD}
         <Gtk.Label
