@@ -9,6 +9,22 @@ import { errorMessage } from './errors.ts';
 import type { MessageInfo, Part, PermissionRequest, QuestionRequest, SessionEvent } from './schemas.ts';
 import type { Store } from './store.ts';
 
+export interface ContextUsage {
+  /** tokens présents dans le contexte au dernier tour */
+  readonly tokens: number;
+  readonly providerID: string;
+  readonly modelID: string;
+  /** coût cumulé des messages chargés */
+  readonly cost: number;
+}
+
+/** Tokens du contexte d'un tour : entrée (y compris cache) + sortie, comme le TUI d'opencode. */
+export const contextTokens = (info: MessageInfo): number => {
+  const t = info.tokens;
+  if (t === undefined) return 0;
+  return t.input + t.output + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0);
+};
+
 export type BlockKind = 'user' | 'text' | 'reasoning' | 'tool' | 'file' | 'error';
 
 export interface Block {
@@ -66,6 +82,8 @@ export class Conversation {
   /** Demandes en attente d'une réponse de l'utilisateur pour cette session. */
   readonly permissions: Accessor<readonly PermissionRequest[]>;
   readonly questions: Accessor<readonly QuestionRequest[]>;
+  /** Contexte utilisé par la session (dernier message de l'assistant ayant des tokens). */
+  readonly context: Accessor<ContextUsage | null>;
   /** Incrémenté quand les fichiers modifiés de la session changent. */
   readonly diffVersion: Accessor<number>;
 
@@ -76,10 +94,12 @@ export class Conversation {
   readonly #setPermissions: Setter<readonly PermissionRequest[]>;
   readonly #setQuestions: Setter<readonly QuestionRequest[]>;
   readonly #setDiffVersion: Setter<number>;
+  readonly #setContext: Setter<ContextUsage | null>;
   #directory: string | null = null;
   readonly #messages = new Map<string, MessageEntry>();
   readonly #parts = new Map<string, PartEntry>();
   #structureChanged = false;
+  #contextDirty = false;
   #flushQueued = false;
   #signature = '';
   #unsubscribe: (() => void) | null = null;
@@ -94,6 +114,9 @@ export class Conversation {
     [this.permissions, this.#setPermissions] = createState<readonly PermissionRequest[]>([]);
     [this.questions, this.#setQuestions] = createState<readonly QuestionRequest[]>([]);
     [this.diffVersion, this.#setDiffVersion] = createState(0);
+    [this.context, this.#setContext] = createState<ContextUsage | null>(null, {
+      equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.cost === b?.cost,
+    });
   }
 
   /** Répertoire de la session (requis par les appels qui ciblent une instance opencode). */
@@ -202,7 +225,21 @@ export class Conversation {
     return this.#messages.get(id);
   }
 
+  /** Recalcule le contexte depuis le dernier message de l'assistant qui a des tokens. */
+  #updateContext(): void {
+    let last: MessageInfo | null = null;
+    let cost = 0;
+    for (const { info } of this.#messages.values()) {
+      cost += info.cost ?? 0;
+      if (info.role !== 'assistant' || contextTokens(info) === 0) continue;
+      if (last === null || info.id > last.id) last = info;
+    }
+    if (last === null) return;
+    this.#setContext({ tokens: contextTokens(last), providerID: last.providerID ?? '', modelID: last.modelID ?? '', cost });
+  }
+
   #upsertMessage(info: MessageInfo): void {
+    if (info.role === 'assistant') this.#contextDirty = true;
     const m = this.#messages.get(info.id);
     if (m === undefined) {
       this.#messages.set(info.id, { info, parts: [] });
@@ -248,6 +285,10 @@ export class Conversation {
   }
 
   #flush(): void {
+    if (this.#contextDirty) {
+      this.#contextDirty = false;
+      this.#updateContext();
+    }
     for (const entry of this.#parts.values()) {
       if (entry.dirty) {
         entry.dirty = false;

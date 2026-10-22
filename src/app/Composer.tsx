@@ -4,7 +4,8 @@ import Gdk from 'gi://Gdk?version=4.0';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import GObject from 'gi://GObject';
-import { createState, onCleanup, type Accessor } from 'gnim';
+import { createComputed, createState, onCleanup, type Accessor } from 'gnim';
+import type { ContextUsage } from '../shared/conversation.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { attachmentFromFile, attachmentFromTexture, attachmentsFromClipboard, AttachmentView, pickFiles } from './Attachments.tsx';
 import { keyedBox } from './KeyedBox.ts';
@@ -21,6 +22,8 @@ export interface ComposerProps {
   initial: () => { agent?: string; model?: ModelRef };
   loadChoices: () => Promise<{ agents: Agent[]; providers: Providers }>;
   send: (text: string, agent: string | undefined, model: ModelRef | undefined, files: readonly Attachment[]) => Promise<boolean>;
+  /** Contexte utilisé par la session. */
+  context: Accessor<ContextUsage | null>;
   /** Affiche un message d'erreur. */
   toast: (message: string) => void;
   abort: () => void;
@@ -58,12 +61,65 @@ const selectedString = (dd: Gtk.DropDown): string | undefined => {
   return item instanceof Gtk.StringObject ? item.string : undefined;
 };
 
+const fmtTokens = (n: number): string => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)} M` : n >= 1000 ? `${Math.round(n / 1000)} k` : String(n));
+
+/** Classe d'alerte selon le remplissage du contexte. */
+const level = (r: number | null): string => (r === null || r < 0.8 ? '' : r < 0.95 ? 'warning' : 'error');
+
+/** Taille du contexte : « 152 k · 15 % » et jauge ; alerte au-delà de 80 %, critique au-delà de 95 %. */
+function ContextGauge({ context, limits }: { context: Accessor<ContextUsage | null>; limits: Accessor<ReadonlyMap<string, number>> }): JSX.Element {
+  const info = createComputed(() => {
+    const c = context();
+    if (c === null) return null;
+    const limit = limits().get(`${c.providerID}/${c.modelID}`) ?? null;
+    return { ...c, limit, ratio: limit === null ? null : Math.min(1, c.tokens / limit) };
+  });
+  return (
+    <Gtk.Box
+      spacing={6}
+      valign={Gtk.Align.CENTER}
+      visible={info((i) => i !== null)}
+      cssClasses={['context-gauge']}
+      tooltipText={info((i) =>
+        i === null
+          ? ''
+          : [
+              `Contexte : ${i.tokens.toLocaleString('fr-FR')} tokens`,
+              i.limit === null ? 'Limite du modèle inconnue' : `Limite : ${i.limit.toLocaleString('fr-FR')} tokens (${Math.round((i.ratio ?? 0) * 100)} %)`,
+              `Modèle : ${i.providerID}/${i.modelID}`,
+              ...(i.cost > 0 ? [`Coût : ${i.cost.toFixed(2)} $`] : []),
+            ].join('\n'),
+      )}
+    >
+      <Gtk.LevelBar
+        valign={Gtk.Align.CENTER}
+        widthRequest={48}
+        minValue={0}
+        maxValue={1}
+        value={info((i) => i?.ratio ?? 0)}
+        visible={info((i) => i?.ratio !== null)}
+        cssClasses={info((i) => ['context-bar', level(i?.ratio ?? null)])}
+        $={(self: Gtk.LevelBar) => {
+          // couleurs gérées par les classes, pas par les seuils par défaut de GTK
+          for (const name of ['low', 'high', 'full']) self.remove_offset_value(name);
+        }}
+      />
+      <Gtk.Label
+        cssClasses={info((i) => ['caption', 'numeric', level(i?.ratio ?? null) || 'dim-label'])}
+        label={info((i) => (i === null ? '' : i.ratio === null ? fmtTokens(i.tokens) : `${fmtTokens(i.tokens)} · ${Math.round(i.ratio * 100)} %`))}
+      />
+    </Gtk.Box>
+  );
+}
+
 export function Composer(props: ComposerProps): JSX.Element {
   const agentDD = stringDropDown('Agent', false);
   const modelDD = stringDropDown('Modèle', true);
   const buffer = new Gtk.TextBuffer();
   let sending = false;
   const [files, setFiles] = createState<readonly Attachment[]>([]);
+  /** « fournisseur/modèle » -> taille de la fenêtre de contexte */
+  const [limits, setLimits] = createState<ReadonlyMap<string, number>>(new Map());
   let fileSeq = 0;
   /** clé stable par pièce jointe (pour la liste des miniatures) */
   const fileKeys = new WeakMap<Attachment, string>();
@@ -92,6 +148,13 @@ export function Composer(props: ComposerProps): JSX.Element {
       const init = props.initial();
       const names = agents.filter((a) => a.mode !== 'subagent' && a.hidden !== true).map((a) => a.name);
       fill(agentDD, names, init.agent ?? 'build');
+      setLimits(
+        new Map(
+          providers.providers.flatMap((p) =>
+            Object.entries(p.models).flatMap(([id, m]) => (m.limit === undefined ? [] : [[`${p.id}/${id}`, m.limit.context] as const])),
+          ),
+        ),
+      );
       const models = providers.providers.flatMap((p) => Object.keys(p.models).map((id) => `${p.id}/${id}`)).toSorted();
       const fallback = Object.entries(providers.default).map(([p, m]) => `${p}/${m}`)[0];
       fill(modelDD, models, init.model === undefined ? fallback : modelKey(init.model));
@@ -211,6 +274,7 @@ export function Composer(props: ComposerProps): JSX.Element {
           cssClasses={['dim-label', 'caption']}
           label={HINT}
         />
+        <ContextGauge context={props.context} limits={limits} />
         <Gtk.Button
           iconName="media-playback-stop-symbolic"
           tooltipText="Interrompre"

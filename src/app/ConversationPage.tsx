@@ -90,6 +90,7 @@ export function createConversationPage(opts: {
           client.prompt(sessionID, dir(), text, { files, ...(agent === undefined ? {} : { agent }), ...(model === undefined ? {} : { model }) }),
         ),
       toast,
+      context: conversation.context,
       abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),
     });
 

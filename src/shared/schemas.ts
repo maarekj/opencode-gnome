@@ -73,6 +73,14 @@ export const MessageInfo = z.looseObject({
   modelID: z.optional(z.string()),
   providerID: z.optional(z.string()),
   cost: z.optional(z.number()),
+  tokens: z.optional(
+    z.looseObject({
+      input: z.number(),
+      output: z.number(),
+      reasoning: z.optional(z.number()),
+      cache: z.optional(z.looseObject({ read: z.number(), write: z.number() })),
+    }),
+  ),
   error: z.optional(z.looseObject({ name: z.optional(z.string()), data: z.optional(z.looseObject({ message: z.optional(z.string()) })) })),
 });
 export type MessageInfo = z.output<typeof MessageInfo>;
@@ -110,7 +118,7 @@ export const Agent = z.looseObject({ name: z.string(), mode: z.optional(z.string
 export type Agent = z.output<typeof Agent>;
 
 export const Providers = z.looseObject({
-  providers: z.array(z.looseObject({ id: z.string(), name: z.optional(z.string()), models: z.record(z.string(), z.looseObject({ id: z.string(), name: z.optional(z.string()) })) })),
+  providers: z.array(z.looseObject({ id: z.string(), name: z.optional(z.string()), models: z.record(z.string(), z.looseObject({ id: z.string(), name: z.optional(z.string()), limit: z.optional(z.looseObject({ context: z.number() })) })) })),
   default: z.record(z.string(), z.string()),
 });
 export type Providers = z.output<typeof Providers>;

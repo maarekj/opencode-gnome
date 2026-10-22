@@ -82,4 +82,17 @@ export const STYLESHEET = `
 .message-attachment {
   margin-top: -6px;
 }
+
+.context-bar trough {
+  min-height: 6px;
+}
+.context-bar block.filled {
+  background: alpha(currentColor, 0.45);
+}
+.context-bar.warning block.filled {
+  background: var(--warning-color);
+}
+.context-bar.error block.filled {
+  background: var(--error-color);
+}
 `;
