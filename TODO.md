@@ -11,6 +11,7 @@ https://github.com/maarekj/opencode-gnome/issues
 - #6 Fichiers modifiés : utiliser l'état git du répertoire (liste + diff)
 - #7 Extension GNOME Shell : indicateur et notifications
 - #8 Projets favoris : mode « Favoris » / « Tous » dans la barre latérale
+- #9 Terminaux persistants par projet (zellij)
 
 ## Idées à trier
 (idées pas encore transformées en issue)
