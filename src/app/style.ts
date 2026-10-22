@@ -110,4 +110,17 @@ export const STYLESHEET = `
 .project-row .star.favorite {
   color: var(--warning-color);
 }
+
+.markdown-view,
+.markdown-view text {
+  background: transparent;
+}
+.copyable .copy-button {
+  opacity: 0;
+  margin: -6px -6px 0 0;
+}
+.copyable:hover .copy-button,
+.copyable .copy-button:focus-visible {
+  opacity: 1;
+}
 `;

@@ -1,5 +1,6 @@
 // Affichage d'une conversation : messages utilisateur, réponses (markdown), réflexion, appels d'outils.
 import Adw from 'gi://Adw?version=1';
+import Gdk from 'gi://Gdk?version=4.0';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
@@ -9,7 +10,7 @@ import { AttachmentView } from './Attachments.tsx';
 import { esc } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../shared/schemas.ts';
 import { keyedBox } from './KeyedBox.ts';
-import { Markdown } from './Markdown.tsx';
+import { MarkdownView } from './Markdown.tsx';
 import { AnsweredQuestions, PermissionCard, QuestionCard, type RequestActions } from './Requests.tsx';
 
 /** Demande en attente d'une réponse de l'utilisateur. */
@@ -195,28 +196,55 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
 
 const text = (part: Accessor<Part>): Accessor<string> => part((p) => p.text ?? '');
 
+/** Copie du texte dans le presse-papier. */
+function copyText(widget: Gtk.Widget, value: string): void {
+  widget.get_clipboard().set_content(Gdk.ContentProvider.new_for_bytes('text/plain;charset=utf-8', new GLib.Bytes(new TextEncoder().encode(value))));
+}
+
+/**
+ * Message en markdown, sélectionnable d'un bloc (un seul TextView), avec un bouton « Copier »
+ * (markdown source) qui apparaît au survol.
+ */
+function Copyable({ text: source, css }: { text: Accessor<string>; css: string }): JSX.Element {
+  return (
+    <Gtk.Overlay cssClasses={['copyable', css]}>
+      <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
+        <With value={source}>{(t: string) => MarkdownView({ text: t })}</With>
+      </Gtk.Box>
+      <Gtk.Button
+        $type="overlay"
+        iconName="edit-copy-symbolic"
+        tooltipText="Copier le message (markdown)"
+        halign={Gtk.Align.END}
+        valign={Gtk.Align.START}
+        cssClasses={['flat', 'circular', 'copy-button']}
+        onClicked={(self: Gtk.Button) => {
+          copyText(self, source.peek());
+          self.iconName = 'object-select-symbolic';
+          GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1200, () => {
+            self.iconName = 'edit-copy-symbolic';
+            return GLib.SOURCE_REMOVE;
+          });
+        }}
+      />
+    </Gtk.Overlay>
+  );
+}
+
 function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widget {
   let widget: JSX.Element;
   switch (block.kind) {
     case 'user':
-      widget = (
-        <Gtk.Box cssClasses={['user-message']} halign={Gtk.Align.FILL}>
-          <With value={block.part((p) => stripImageMarkers(p.text ?? ''))}>{(t: string) => <Markdown text={t} />}</With>
-        </Gtk.Box>
-      );
+      widget = <Copyable text={block.part((p) => stripImageMarkers(p.text ?? ''))} css="user-message" />;
       break;
     case 'text':
-      widget = (
-        <Gtk.Box cssClasses={['assistant-message']}>
-          <With value={text(block.part)}>{(t: string) => <Markdown text={t} />}</With>
-        </Gtk.Box>
-      );
+      widget = <Copyable text={text(block.part)} css="assistant-message" />;
       break;
     case 'reasoning':
       widget = (
         <Gtk.Expander label="Réflexion" cssClasses={['reasoning']}>
           <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
-            <With value={text(block.part)}>{(t: string) => <Markdown text={t} />}</With>
+            <With value={text(block.part)}>{(t: string) => MarkdownView({ text: t })}</With>
           </Gtk.Box>
         </Gtk.Expander>
       );
@@ -416,7 +444,12 @@ export function ConversationView({ conversation, revealed, actions }: { conversa
             orientation={Gtk.Orientation.VERTICAL}
             spacing={14}
             $={(self: Gtk.Box) => {
-              whenRevealed(() => keyedBox(self, conversation.blocks, (b) => b.id, (b) => BlockView({ block: b, ctx })));
+              whenRevealed(() => {
+                const t0 = Date.now();
+                const stop = keyedBox(self, conversation.blocks, (b) => b.id, (b) => BlockView({ block: b, ctx }));
+                if (GLib.getenv('OPENCODE_GNOME_TIMING') !== null) console.log(`TIMING blocs=${conversation.blocks.peek().length} ${Date.now() - t0} ms`);
+                return stop;
+              });
             }}
           />
           <Gtk.Box

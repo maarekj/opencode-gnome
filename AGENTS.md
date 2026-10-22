@@ -24,6 +24,8 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   Pour des clics dans la barre latérale, pointer l'app sur un serveur de test
   (`opencode serve --port 4799` + `OPENCODE_GNOME_URL=http://127.0.0.1:4799`) : sur le serveur
   partagé, la session de l'agent en cours fait bouger l'ordre des projets pendant le test.
+  `OPENCODE_GNOME_TIMING=1` : temps de construction de la conversation dans les logs.
+  Ne pas toucher aux réglages de l'utilisateur en test : `XDG_CONFIG_HOME=/tmp/...`.
 
 ## Conventions
 - TypeScript strict ; données externes validées avec zod/mini.
