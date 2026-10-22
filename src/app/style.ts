@@ -99,4 +99,15 @@ export const STYLESHEET = `
 .diff-view {
   font-size: 0.9em;
 }
+
+.project-row .star:not(.favorite) {
+  opacity: 0;
+}
+.project-row:hover .star,
+.project-row .star:focus-visible {
+  opacity: 1;
+}
+.project-row .star.favorite {
+  color: var(--warning-color);
+}
 `;

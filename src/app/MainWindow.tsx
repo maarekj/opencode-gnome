@@ -10,6 +10,8 @@ import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import { attachCommand, openTerminal } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag } from './ConversationPage.tsx';
+import type { Settings } from '../shared/settings.ts';
+import { attachContextMenu } from './ContextMenu.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { askDelete, attachSessionMenu, type SessionActions } from './SessionMenu.ts';
 
@@ -35,7 +37,15 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n > 1 ?
  * Projet de la barre latérale. Suffixes : spinner si l'agent travaille dans une session,
  * pastille orange avec le nombre de sessions qui attendent une réponse. Projets vides atténués.
  */
-function ProjectRow({ project }: { project: ProjectView }): JSX.Element {
+interface ProjectActions {
+  isFavorite: (path: string) => boolean;
+  toggleFavorite: (path: string) => void;
+  newSession: (directory: string) => void;
+  /** opencode dans un terminal, nouvelle session */
+  attach: (directory: string) => void;
+}
+
+function ProjectRow({ project, favorite, actions }: { project: ProjectView; favorite: boolean; actions: ProjectActions }): JSX.Element {
   const empty = project.sessions.length === 0;
   return (
     <Adw.ActionRow
@@ -44,8 +54,19 @@ function ProjectRow({ project }: { project: ProjectView }): JSX.Element {
       subtitle={esc(prettyPath(project.path))}
       subtitleLines={1}
       activatable
-      cssClasses={empty ? ['dim-label'] : []}
+      cssClasses={empty ? ['project-row', 'dim-label'] : ['project-row']}
       tooltipText={empty ? 'Aucune session' : ''}
+      $={(self: Adw.ActionRow) => {
+        attachContextMenu(self, () => [
+          [
+            { label: actions.isFavorite(project.path) ? 'Retirer des favoris' : 'Ajouter aux favoris', activate: () => actions.toggleFavorite(project.path) },
+          ],
+          [
+            { label: 'Nouvelle session', activate: () => actions.newSession(project.path) },
+            { label: 'Ouvrir opencode dans le terminal', activate: () => actions.attach(project.path) },
+          ],
+        ]);
+      }}
     >
       <Gtk.Image $type="prefix" iconName="folder-symbolic" />
       {project.working > 0 ? <Adw.Spinner $type="suffix" tooltipText={plural(project.working, 'session en cours', 'sessions en cours')} /> : null}
@@ -58,6 +79,14 @@ function ProjectRow({ project }: { project: ProjectView }): JSX.Element {
           tooltipText={plural(project.waiting, 'session attend ta réponse', 'sessions attendent ta réponse')}
         />
       ) : null}
+      <Gtk.Button
+        $type="suffix"
+        iconName={favorite ? 'starred-symbolic' : 'non-starred-symbolic'}
+        tooltipText={favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+        valign={Gtk.Align.CENTER}
+        cssClasses={favorite ? ['flat', 'star', 'favorite'] : ['flat', 'star']}
+        onClicked={() => actions.toggleFavorite(project.path)}
+      />
     </Adw.ActionRow>
   );
 }
@@ -70,12 +99,45 @@ function startServer(): void {
   }
 }
 
-function Sidebar({ store, select }: { store: Store; select: (key: string) => void }): JSX.Element {
+function Sidebar({
+  store,
+  settings,
+  projects,
+  select,
+  actions,
+}: {
+  store: Store;
+  settings: Settings;
+  projects: Accessor<readonly ProjectView[]>;
+  select: (key: string) => void;
+  actions: ProjectActions;
+}): JSX.Element {
   const conn = store.connection;
+  const mode = settings.data((d) => d.sidebarMode);
+  const favorites = settings.data((d) => d.favorites);
+  const emptyFavorites = createComputed(() => mode() === 'favorites' && projects().length === 0);
   return (
     <Adw.NavigationPage title="Projets" tag="projects">
       <Adw.ToolbarView>
         <Adw.HeaderBar $type="top">
+          <Adw.ToggleGroup
+            $type="title"
+            cssClasses={['round']}
+            $={(self: Adw.ToggleGroup) => {
+              self.add(new Adw.Toggle({ name: 'favorites', label: 'Favoris', tooltip: 'Projets favoris' }));
+              self.add(new Adw.Toggle({ name: 'all', label: 'Tous', tooltip: 'Tous les projets' }));
+              self.activeName = mode.peek();
+              self.connect('notify::active-name', () => {
+                const name = self.activeName;
+                if (name === 'favorites' || name === 'all') settings.setSidebarMode(name);
+              });
+              onCleanup(
+                mode.subscribe(() => {
+                  if (self.activeName !== mode.peek()) self.activeName = mode.peek();
+                }),
+              );
+            }}
+          />
           <Gtk.Button $type="end" iconName="view-refresh-symbolic" tooltipText="Recharger" onClicked={() => void store.reload()} />
         </Adw.HeaderBar>
         <Adw.Banner
@@ -85,17 +147,36 @@ function Sidebar({ store, select }: { store: Store; select: (key: string) => voi
           buttonLabel="Démarrer"
           onButtonClicked={startServer}
         />
-        <Gtk.ScrolledWindow vexpand hscrollbarPolicy={Gtk.PolicyType.NEVER}>
-          <Gtk.ListBox
-            cssClasses={['navigation-sidebar']}
-            onRowActivated={(_self: Gtk.ListBox, row: Gtk.ListBoxRow) => {
-              select(row.name);
-            }}
-            $={(self: Gtk.ListBox) => {
-              onCleanup(keyedListBox(self, store.projects, (p) => `${p.key}|${p.working}|${p.waiting}|${p.sessions.length === 0}|${p.name}`, (p) => asWidget(ProjectRow({ project: p }))));
-            }}
-          />
-        </Gtk.ScrolledWindow>
+        <Gtk.Stack visibleChildName={emptyFavorites((e) => (e ? 'empty' : 'list'))}>
+          <Gtk.ScrolledWindow name="list" $type="named" vexpand hscrollbarPolicy={Gtk.PolicyType.NEVER}>
+            <Gtk.ListBox
+              cssClasses={['navigation-sidebar']}
+              onRowActivated={(_self: Gtk.ListBox, row: Gtk.ListBoxRow) => {
+                select(row.name);
+              }}
+              $={(self: Gtk.ListBox) => {
+                onCleanup(
+                  keyedListBox(
+                    self,
+                    createComputed(() => projects().map((p) => ({ p, favorite: favorites().includes(p.path) }))),
+                    ({ p, favorite }) => `${p.key}|${p.working}|${p.waiting}|${p.sessions.length === 0}|${p.name}|${favorite}`,
+                    ({ p, favorite }) => asWidget(ProjectRow({ project: p, favorite, actions })),
+                  ),
+                );
+              }}
+            />
+          </Gtk.ScrolledWindow>
+          <Adw.StatusPage
+            name="empty"
+            $type="named"
+            iconName="starred-symbolic"
+            title="Aucun favori"
+            description="Ajoute un projet aux favoris avec son étoile (mode « Tous ») ou par clic droit."
+            cssClasses={['compact']}
+          >
+            <Gtk.Button label="Voir tous les projets" halign={Gtk.Align.CENTER} cssClasses={['pill']} onClicked={() => settings.setSidebarMode('all')} />
+          </Adw.StatusPage>
+        </Gtk.Stack>
       </Adw.ToolbarView>
     </Adw.NavigationPage>
   );
@@ -229,12 +310,39 @@ export interface WindowApi {
   openSession: (sessionID: string) => void;
 }
 
-export function MainWindow({ app, store, size, ready }: { app: Adw.Application; store: Store; size?: [number, number]; ready: (api: WindowApi) => void }): JSX.Element {
+export function MainWindow({
+  app,
+  store,
+  settings,
+  size,
+  ready,
+}: {
+  app: Adw.Application;
+  store: Store;
+  settings: Settings;
+  size?: [number, number];
+  ready: (api: WindowApi) => void;
+}): JSX.Element {
   const [selected, setSelected] = createState<string | null>(null);
-  const current = createComputed(() => {
+  /** Projets connus + favoris absents de la liste d'opencode (répertoire sans session). */
+  const allProjects = createComputed((): readonly ProjectView[] => {
     const projects = store.projects();
+    const known = new Set(projects.map((p) => p.path));
+    const missing = settings
+      .data()
+      .favorites.filter((path) => !known.has(path))
+      .map((path): ProjectView => ({ key: `dir:${path}`, name: GLib.path_get_basename(path), path, vcs: false, sessions: [], working: 0, waiting: 0, updated: 0 }));
+    return [...projects, ...missing];
+  });
+  /** Projets affichés dans la barre latérale selon le mode. */
+  const visibleProjects = createComputed((): readonly ProjectView[] => {
+    const { sidebarMode, favorites } = settings.data();
+    const all = allProjects();
+    return sidebarMode === 'all' ? all : all.filter((p) => favorites.includes(p.path));
+  });
+  const current = createComputed(() => {
     const key = selected();
-    return projects.find((p) => p.key === key) ?? projects[0] ?? null;
+    return allProjects().find((p) => p.key === key) ?? visibleProjects()[0] ?? allProjects()[0] ?? null;
   });
 
   let overlay: Adw.ToastOverlay | null = null;
@@ -353,7 +461,20 @@ export function MainWindow({ app, store, size, ready }: { app: Adw.Application; 
           sidebarWidthFraction={0.28}
           minSidebarWidth={240}
           maxSidebarWidth={340}
-          sidebar={asPage(Sidebar({ store, select }))}
+          sidebar={asPage(
+            Sidebar({
+              store,
+              settings,
+              projects: visibleProjects,
+              select,
+              actions: {
+                isFavorite: (path) => settings.isFavorite(path),
+                toggleFavorite: (path) => settings.toggleFavorite(path),
+                newSession: (dir) => actions.newSession(dir),
+                attach: (dir) => actions.attach(dir),
+              },
+            }),
+          )}
           content={new Adw.NavigationPage({ title: 'opencode', child: nav })}
           $={(self: Adw.NavigationSplitView) => {
             split = self;

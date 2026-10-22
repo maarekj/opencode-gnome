@@ -6,6 +6,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import { createRoot } from 'gnim';
 import { OpencodeClient } from '../shared/client.ts';
 import { serverUrl } from '../shared/config.ts';
+import { Settings } from '../shared/settings.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { STYLESHEET } from './style.ts';
@@ -14,6 +15,7 @@ export const APP_ID = 'io.github.maarekj.OpencodeGnome';
 
 const app = new Adw.Application({ applicationId: APP_ID, flags: Gio.ApplicationFlags.DEFAULT_FLAGS });
 const store = new Store(new OpencodeClient(serverUrl()));
+const settings = new Settings();
 let api: WindowApi | null = null;
 let size: [number, number] | undefined;
 
@@ -72,10 +74,12 @@ app.connect('activate', () => {
     return;
   }
   store.start();
+  settings.watch();
   createRoot((dispose) => {
     const win = MainWindow({
       app,
       store,
+      settings,
       ...(size === undefined ? {} : { size }),
       ready: (a) => {
         api = a;
