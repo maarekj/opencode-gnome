@@ -66,8 +66,8 @@ export class OpencodeClient {
   }
 
   /** Statut des sessions actives (les sessions absentes sont au repos). */
-  statuses(): Promise<Record<string, SessionStatus>> {
-    return this.get('/session/status', z.record(z.string(), SessionStatus));
+  statuses(directory?: string): Promise<Record<string, SessionStatus>> {
+    return this.get('/session/status', z.record(z.string(), SessionStatus), directory === undefined ? {} : { directory });
   }
 
   /** Derniers messages d'une session (ordre chronologique). */

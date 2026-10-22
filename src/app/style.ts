@@ -52,4 +52,14 @@ export const STYLESHEET = `
 .pending-pill {
   box-shadow: 0 2px 8px alpha(black, 0.25);
 }
+
+.waiting-badge {
+  background: var(--warning-bg-color);
+  color: var(--warning-fg-color);
+  border-radius: 999px;
+  min-width: 20px;
+  padding: 0 6px;
+  font-weight: bold;
+  font-size: 0.85em;
+}
 `;

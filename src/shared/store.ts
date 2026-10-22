@@ -22,9 +22,24 @@ export interface ProjectView {
   readonly path: string;
   readonly vcs: boolean;
   readonly sessions: readonly SessionView[];
-  readonly active: number;
+  /** sessions où l'agent travaille (busy / retry) */
+  readonly working: number;
+  /** sessions qui attendent une réponse de l'utilisateur (question / permission) */
+  readonly waiting: number;
   readonly updated: number;
 }
+
+/** L'agent attend une réponse de l'utilisateur. */
+export const isWaiting = (a: Activity): boolean => a === 'question' || a === 'permission';
+/** L'agent travaille. */
+export const isWorking = (a: Activity): boolean => a === 'busy' || a === 'retry';
+
+/**
+ * Le statut, les permissions et les questions sont propres à chaque instance (répertoire) d'opencode.
+ * Au chargement, ils ne sont interrogés que pour les répertoires des sessions récentes : interroger
+ * un répertoire y démarre une instance, coûteux pour des dizaines de projets.
+ */
+const RECENT_MS = 24 * 3600 * 1000;
 
 export type Connection = { state: 'connecting' } | { state: 'connected'; version: string } | { state: 'error'; message: string };
 
@@ -79,25 +94,55 @@ export class Store {
   /** Recharge l'état complet (à la connexion, ou manuellement). */
   async reload(): Promise<void> {
     try {
-      const [health, projects, sessions, statuses] = await Promise.all([
-        this.client.health(),
-        this.client.projects(),
-        this.client.sessions(),
-        this.client.statuses(),
-      ]);
+      const [health, projects, sessions] = await Promise.all([this.client.health(), this.client.projects(), this.client.sessions()]);
       this.#projects.clear();
       for (const p of projects) this.#projects.set(p.id, p);
       this.#sessions.clear();
       for (const s of sessions) this.#sessions.set(s.id, s);
-      this.#status.clear();
-      for (const [id, st] of Object.entries(statuses)) {
-        if (st.type === 'busy' || st.type === 'retry') this.#status.set(id, st.type);
-      }
       this.#setConnection({ state: 'connected', version: health.version });
+      this.#publish();
+      await this.#loadActivity(sessions);
       this.#publish();
     } catch (e) {
       this.#setConnection({ state: 'error', message: errorMessage(e) });
     }
+  }
+
+  /** Statut, permissions et questions en attente des répertoires récemment actifs. */
+  async #loadActivity(sessions: readonly Session[]): Promise<void> {
+    const since = Date.now() - RECENT_MS;
+    const dirs = [...new Set(sessions.filter((s) => (s.time.updated ?? s.time.created) >= since).map((s) => s.directory))];
+    const results = await Promise.all(
+      dirs.map(async (dir) => {
+        try {
+          const [statuses, permissions, questions] = await Promise.all([this.client.statuses(dir), this.client.permissions(dir), this.client.questions(dir)]);
+          return { statuses, permissions, questions };
+        } catch {
+          return null; // répertoire supprimé, instance en erreur… : ignoré
+        }
+      }),
+    );
+    this.#status.clear();
+    this.#permissions.clear();
+    this.#questions.clear();
+    for (const r of results) {
+      if (r === null) continue;
+      for (const [id, st] of Object.entries(r.statuses)) {
+        if (st.type === 'busy' || st.type === 'retry') this.#status.set(id, st.type);
+      }
+      for (const p of r.permissions) this.#track(this.#permissions, p.sessionID, p.id, true);
+      for (const q of r.questions) this.#track(this.#questions, q.sessionID, q.id, true);
+    }
+  }
+
+  /** Ajoute / retire une demande en attente d'une session. */
+  #track(map: Map<string, Set<string>>, sessionID: string, id: string | undefined, add: boolean): void {
+    const set = map.get(sessionID) ?? new Set<string>();
+    if (add && id !== undefined) set.add(id);
+    // id inconnu à la réponse : on considère la session comme répondue
+    else if (id === undefined || !set.delete(id)) set.clear();
+    if (set.size === 0) map.delete(sessionID);
+    else map.set(sessionID, set);
   }
 
   /** S'abonne aux événements de messages d'une session. Retourne la fonction de désabonnement. */
@@ -113,17 +158,6 @@ export class Store {
 
   #notify(event: SessionEvent): void {
     for (const fn of this.#messageListeners.get(event.properties.sessionID) ?? []) fn(event);
-  }
-
-  /** Suit les questions en attente d'une session (id de la demande : `id` ou `requestID`). */
-  #question(sessionID: string, props: Record<string, unknown>, asked: boolean): void {
-    const raw = asked ? props['id'] : props['requestID'];
-    const id = typeof raw === 'string' ? raw : 'question';
-    const set = this.#questions.get(sessionID) ?? new Set<string>();
-    if (asked) set.add(id);
-    else if (!set.delete(id)) set.clear(); // id inconnu : on considère la session comme répondue
-    if (set.size === 0) this.#questions.delete(sessionID);
-    else this.#questions.set(sessionID, set);
   }
 
   /** Ajoute ou met à jour une session localement (avant l'événement du serveur). */
@@ -178,22 +212,18 @@ export class Store {
       case 'question.v2.replied':
       case 'question.rejected':
       case 'question.v2.rejected':
-        this.#notify(event);
-        this.#question(event.properties.sessionID, event.properties, event.type.endsWith('asked'));
-        break;
       case 'permission.asked':
-      case 'permission.v2.asked': {
+      case 'permission.v2.asked':
+      case 'permission.replied':
+      case 'permission.v2.replied': {
         this.#notify(event);
-        const set = this.#permissions.get(event.properties.sessionID) ?? new Set<string>();
-        set.add(event.properties.id);
-        this.#permissions.set(event.properties.sessionID, set);
+        const asked = event.type.endsWith('asked');
+        // demande : `id` ; réponse : `requestID`
+        const raw: unknown = asked ? event.properties['id'] : event.properties['requestID'];
+        const map = event.type.startsWith('question') ? this.#questions : this.#permissions;
+        this.#track(map, event.properties.sessionID, typeof raw === 'string' ? raw : undefined, asked);
         break;
       }
-      case 'permission.replied':
-      case 'permission.v2.replied':
-        this.#notify(event);
-        this.#permissions.delete(event.properties.sessionID);
-        break;
       case 'project.updated':
         this.#projects.set(event.properties.id, event.properties);
         break;
@@ -252,10 +282,12 @@ export class Store {
         path: g.path,
         vcs: g.vcs,
         sessions,
-        active: sessions.filter((s) => s.activity !== 'idle').length,
+        working: sessions.filter((s) => isWorking(s.activity)).length,
+        waiting: sessions.filter((s) => isWaiting(s.activity)).length,
         updated: first === undefined ? (this.#projects.get(key)?.time?.updated ?? 0) : (first.time.updated ?? first.time.created),
       };
     });
-    this.#setProjects(views.toSorted((a, b) => b.updated - a.updated));
+    // projets avec sessions d'abord (activité récente en tête), projets vides en bas
+    this.#setProjects(views.toSorted((a, b) => Number(a.sessions.length === 0) - Number(b.sessions.length === 0) || b.updated - a.updated));
   }
 }

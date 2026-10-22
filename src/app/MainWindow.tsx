@@ -25,11 +25,35 @@ interface Actions {
 
 // ---------------------------------------------------------------- barre latérale
 
+const plural = (n: number, one: string, many: string): string => `${n} ${n > 1 ? many : one}`;
+
+/**
+ * Projet de la barre latérale. Suffixes : spinner si l'agent travaille dans une session,
+ * pastille orange avec le nombre de sessions qui attendent une réponse. Projets vides atténués.
+ */
 function ProjectRow({ project }: { project: ProjectView }): JSX.Element {
+  const empty = project.sessions.length === 0;
   return (
-    <Adw.ActionRow name={project.key} title={esc(project.name)} subtitle={esc(prettyPath(project.path))} subtitleLines={1} activatable>
+    <Adw.ActionRow
+      name={project.key}
+      title={esc(project.name)}
+      subtitle={esc(prettyPath(project.path))}
+      subtitleLines={1}
+      activatable
+      cssClasses={empty ? ['dim-label'] : []}
+      tooltipText={empty ? 'Aucune session' : ''}
+    >
       <Gtk.Image $type="prefix" iconName="folder-symbolic" />
-      {project.active > 0 ? <Gtk.Label $type="suffix" label={String(project.active)} cssClasses={['accent', 'heading']} tooltipText="Sessions actives" /> : null}
+      {project.working > 0 ? <Adw.Spinner $type="suffix" tooltipText={plural(project.working, 'session en cours', 'sessions en cours')} /> : null}
+      {project.waiting > 0 ? (
+        <Gtk.Label
+          $type="suffix"
+          label={String(project.waiting)}
+          valign={Gtk.Align.CENTER}
+          cssClasses={['waiting-badge']}
+          tooltipText={plural(project.waiting, 'session attend ta réponse', 'sessions attendent ta réponse')}
+        />
+      ) : null}
     </Adw.ActionRow>
   );
 }
@@ -64,7 +88,7 @@ function Sidebar({ store, select }: { store: Store; select: (key: string) => voi
               select(row.name);
             }}
             $={(self: Gtk.ListBox) => {
-              onCleanup(keyedListBox(self, store.projects, (p) => `${p.key}|${p.active}|${p.name}`, (p) => asWidget(ProjectRow({ project: p }))));
+              onCleanup(keyedListBox(self, store.projects, (p) => `${p.key}|${p.working}|${p.waiting}|${p.sessions.length === 0}|${p.name}`, (p) => asWidget(ProjectRow({ project: p }))));
             }}
           />
         </Gtk.ScrolledWindow>
