@@ -21,3 +21,6 @@ https://github.com/maarekj/opencode-gnome/issues
 - Charger l'historique ancien au-delà des 200 derniers messages (défilement vers le haut).
 - Commandes des agents exécutées sans l'environnement devenv/direnv du projet (serveur systemd) :
   étudier `direnv exec`.
+- Modèle présélectionné quand la session n'en a pas (nouvelle session, fork) : utiliser le `model`
+  de la config opencode (`GET /config`) plutôt que le premier défaut des fournisseurs (openai).
+- Menu d'actions de la session aussi dans l'en-tête de la conversation (renommer, forker, supprimer).

@@ -6,10 +6,12 @@ import Gtk from 'gi://Gtk?version=4.0';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtCost, fmtRelative } from '../shared/format.ts';
+import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import { attachCommand, openTerminal } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag } from './ConversationPage.tsx';
 import { keyedListBox } from './KeyedBox.ts';
+import { askDelete, attachSessionMenu, type SessionActions } from './SessionMenu.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
 
@@ -21,6 +23,8 @@ interface Actions {
   openSession: (sessionID: string) => void;
   /** Crée une session dans un répertoire et l'ouvre. */
   newSession: (directory: string) => void;
+  /** Actions du menu d'une session (ouvrir, terminal, renommer, forker, supprimer). */
+  sessionActions: (session: Session) => SessionActions;
 }
 
 // ---------------------------------------------------------------- barre latérale
@@ -120,16 +124,29 @@ function activityIcon(view: SessionView): JSX.Element | null {
 
 function SessionRow({ view, actions }: { view: SessionView; actions: Actions }): JSX.Element {
   const s = view.session;
+  const title = s.title === '' ? 'Sans titre' : s.title;
   const meta = [fmtRelative(updatedAt(view)), s.agent, s.model?.id, fmtCost(s.cost)].filter((x) => x !== undefined && x !== '').join('  ·  ');
+  const act = actions.sessionActions(s);
   return (
     <Adw.ActionRow
-      title={esc(s.title === '' ? 'Sans titre' : s.title)}
+      title={esc(title)}
       subtitle={esc(meta)}
       activatable
-      onActivated={() => actions.openSession(s.id)}
+      onActivated={act.open}
+      $={(self: Adw.ActionRow) => {
+        attachSessionMenu(self, () => title, act);
+      }}
     >
       {activityIcon(view)}
-      <Gtk.Button $type="suffix" iconName="utilities-terminal-symbolic" tooltipText="Ouvrir dans le terminal" valign={Gtk.Align.CENTER} cssClasses={['flat']} onClicked={() => actions.attach(s.directory, s.id)} />
+      <Gtk.Box $type="suffix" spacing={2} valign={Gtk.Align.CENTER}>
+        <Gtk.Button iconName="utilities-terminal-symbolic" tooltipText="Ouvrir dans le terminal" cssClasses={['flat']} onClicked={act.openInTerminal} />
+        <Gtk.Button
+          iconName="user-trash-symbolic"
+          tooltipText="Supprimer"
+          cssClasses={['flat']}
+          onClicked={(self: Gtk.Button) => askDelete(self, title, act.delete)}
+        />
+      </Gtk.Box>
     </Adw.ActionRow>
   );
 }
@@ -224,8 +241,18 @@ export function MainWindow({ app, store, size, ready }: { app: Adw.Application; 
   let split: Adw.NavigationSplitView | null = null;
   const nav = new Adw.NavigationView();
 
+  const toast = (title: string): void => {
+    overlay?.add_toast(new Adw.Toast({ title: esc(title), timeout: 4 }));
+  };
+  /** Exécute une action serveur ; en cas d'échec, affiche l'erreur. */
+  const run = (what: string, fn: () => Promise<void>): void => {
+    fn().catch((e: unknown) => {
+      toast(`${what} : ${errorMessage(e)}`);
+    });
+  };
+
   const actions: Actions = {
-    toast: (title) => overlay?.add_toast(new Adw.Toast({ title: esc(title), timeout: 4 })),
+    toast,
     attach: (directory, sessionID) => {
       try {
         openTerminal(attachCommand(store.client.url, directory, sessionID), GLib.file_test(directory, GLib.FileTest.IS_DIR) ? directory : GLib.get_home_dir());
@@ -233,6 +260,28 @@ export function MainWindow({ app, store, size, ready }: { app: Adw.Application; 
         actions.toast(errorMessage(e));
       }
     },
+    sessionActions: (session) => ({
+      open: () => actions.openSession(session.id),
+      openInTerminal: () => actions.attach(session.directory, session.id),
+      rename: (title) =>
+        run('Renommage impossible', async () => {
+          store.upsertSession(await store.client.renameSession(session.id, session.directory, title));
+        }),
+      fork: () =>
+        run('Fork impossible', async () => {
+          const copy = await store.client.forkSession(session.id, session.directory);
+          store.upsertSession(copy);
+          actions.openSession(copy.id);
+          actions.toast('Session forkée');
+        }),
+      delete: () =>
+        run('Suppression impossible', async () => {
+          await store.client.deleteSession(session.id, session.directory);
+          if (nav.find_page(sessionTag(session.id)) !== null) nav.pop_to_tag('sessions');
+          store.removeSession(session.id);
+          actions.toast('Session supprimée');
+        }),
+    }),
     newSession: (directory) => {
       const create = async (): Promise<void> => {
         try {

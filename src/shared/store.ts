@@ -167,6 +167,15 @@ export class Store {
     this.#publish();
   }
 
+  /** Retire une session localement (avant l'événement du serveur). */
+  removeSession(sessionID: string): void {
+    this.#sessions.delete(sessionID);
+    this.#status.delete(sessionID);
+    this.#permissions.delete(sessionID);
+    this.#questions.delete(sessionID);
+    this.#publish();
+  }
+
   /** Session connue (racine), si présente. */
   session(sessionID: string): Session | undefined {
     return this.#sessions.get(sessionID);

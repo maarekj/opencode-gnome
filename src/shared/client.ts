@@ -79,6 +79,22 @@ export class OpencodeClient {
     return this.request('POST', '/session', Session, { query: { directory }, body: {} });
   }
 
+  renameSession(sessionID: string, directory: string, title: string): Promise<Session> {
+    return this.request('PATCH', `/session/${encodeURIComponent(sessionID)}`, Session, { query: { directory }, body: { title } });
+  }
+
+  /** Copie une session (entière, ou jusqu'à `messageID`) dans une nouvelle session. */
+  forkSession(sessionID: string, directory: string, messageID?: string): Promise<Session> {
+    return this.request('POST', `/session/${encodeURIComponent(sessionID)}/fork`, Session, {
+      query: { directory },
+      body: messageID === undefined ? {} : { messageID },
+    });
+  }
+
+  async deleteSession(sessionID: string, directory: string): Promise<void> {
+    await this.request('DELETE', `/session/${encodeURIComponent(sessionID)}`, z.unknown(), { query: { directory } });
+  }
+
   /** Envoie un prompt sans attendre la réponse (elle arrive par le flux d'événements). */
   async prompt(sessionID: string, directory: string, text: string, opts: { agent?: string; model?: { providerID: string; modelID: string } } = {}): Promise<void> {
     await this.request('POST', `/session/${encodeURIComponent(sessionID)}/prompt_async`, z.unknown(), {
