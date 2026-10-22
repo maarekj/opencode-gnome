@@ -10,6 +10,7 @@ https://github.com/maarekj/opencode-gnome/issues
 - #5 Sélection de texte sur plusieurs paragraphes + bouton Copier
 - #6 Fichiers modifiés : utiliser l'état git du répertoire (liste + diff)
 - #7 Extension GNOME Shell : indicateur et notifications
+- #8 Projets favoris : mode « Favoris » / « Tous » dans la barre latérale
 
 ## Idées à trier
 (idées pas encore transformées en issue)
