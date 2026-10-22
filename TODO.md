@@ -24,3 +24,4 @@ https://github.com/maarekj/opencode-gnome/issues
 - Commandes des agents exécutées sans l'environnement devenv/direnv du projet (serveur systemd) :
   étudier `direnv exec`.
 - Menu d'actions de la session aussi dans l'en-tête de la conversation (renommer, forker, supprimer).
+- Liens cliquables dans les messages (perdus avec le rendu TextView de #5) : TextTag + clic.
