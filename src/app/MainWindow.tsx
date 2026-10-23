@@ -485,18 +485,61 @@ function asWidget(o: JSX.Element): Gtk.Widget {
 
 function SessionsPage({ store, current, actions, terminals }: { store: Store; current: Accessor<ProjectView | null>; actions: Actions; terminals: TerminalContext }): JSX.Element {
   const key = createMemo(() => current()?.key ?? null);
-  const sessions = createComputed(() => current()?.sessions ?? []);
-  const empty = createMemo(() => sessions().length === 0);
+  // recherche dans les sessions du projet (titre, agent, modèle), sans casse ni accents
+  const [query, setQuery] = createState('');
+  const allSessions = createComputed(() => current()?.sessions ?? []);
+  const sessions = createComputed((): readonly SessionView[] => {
+    const q = normalize(query().trim());
+    if (q === '') return allSessions();
+    return allSessions().filter((v) => normalize(`${v.session.title} ${v.session.agent ?? ''} ${v.session.model?.id ?? ''}`).includes(q));
+  });
+  const empty = createMemo(() => allSessions().length === 0);
+  const noMatch = createMemo(() => !empty() && sessions().length === 0);
+  let searchBar: Gtk.SearchBar | null = null;
   const newSession = (): void => {
     const p = current();
     if (p !== null) actions.newSession(p.path);
   };
   return (
-    <Adw.NavigationPage title={current((p) => p?.name ?? 'opencode')} tag="sessions">
+    <Adw.NavigationPage
+      title={current((p) => p?.name ?? 'opencode')}
+      tag="sessions"
+      $={(self: Adw.NavigationPage) => {
+        // Ctrl+F : recherche dans la liste des sessions affichée
+        const keys = new Gtk.ShortcutController({ scope: Gtk.ShortcutScope.MANAGED });
+        keys.add_shortcut(
+          new Gtk.Shortcut({
+            trigger: Gtk.ShortcutTrigger.parse_string('<Control>f'),
+            action: Gtk.CallbackAction.new(() => {
+              if (searchBar !== null) searchBar.searchModeEnabled = true;
+              return true;
+            }),
+          }),
+        );
+        self.add_controller(keys);
+        // changement de projet : recherche réinitialisée
+        onCleanup(
+          key.subscribe(() => {
+            if (searchBar !== null) searchBar.searchModeEnabled = false;
+          }),
+        );
+      }}
+    >
       <Adw.ToolbarView>
         <Adw.HeaderBar $type="top">
           <Adw.WindowTitle $type="title" title={current((p) => p?.name ?? 'opencode')} subtitle={current((p) => (p === null ? '' : prettyPath(p.path)))} />
           <Gtk.Button $type="end" iconName="tab-new-symbolic" tooltipText="Nouvelle session" sensitive={key((k) => k !== null)} onClicked={newSession} />
+          <Gtk.ToggleButton
+            $type="end"
+            iconName="system-search-symbolic"
+            tooltipText="Rechercher une session (Ctrl+F)"
+            $={(self: Gtk.ToggleButton) => {
+              GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                if (searchBar !== null) searchBar.bind_property('search-mode-enabled', self, 'active', GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE);
+                return GLib.SOURCE_REMOVE;
+              });
+            }}
+          />
           <Gtk.Button
             $type="end"
             iconName="folder-open-symbolic"
@@ -508,10 +551,31 @@ function SessionsPage({ store, current, actions, terminals }: { store: Store; cu
             }}
           />
         </Adw.HeaderBar>
+        <Gtk.SearchBar
+          $type="top"
+          $={(self: Gtk.SearchBar) => {
+            searchBar = self;
+            const entry = new Gtk.SearchEntry({ placeholderText: 'Rechercher une session…', hexpand: true });
+            self.child = new Adw.Clamp({ maximumSize: 900, child: entry });
+            self.connect_entry(entry);
+            entry.connect('search-changed', () => setQuery(entry.text));
+            // Entrée : ouvre la première session trouvée
+            entry.connect('activate', () => {
+              const first = sessions.peek()[0];
+              if (first === undefined) return;
+              self.searchModeEnabled = false;
+              actions.openSession(first.session.id);
+            });
+            self.connect('notify::search-mode-enabled', () => {
+              if (self.searchModeEnabled) entry.grab_focus();
+              else entry.text = '';
+            });
+          }}
+        />
         <Gtk.Box $type="top">
           <TerminalBar project={current((p) => p?.path ?? null)} ctx={terminals} />
         </Gtk.Box>
-        <With value={createMemo(() => `${key() ?? ''}|${String(empty())}|${store.connection().state}`)}>
+        <With value={createMemo(() => `${key() ?? ''}|${String(empty())}|${String(noMatch())}|${store.connection().state}`)}>
           {() => {
             if (store.connection.peek().state !== 'connected' && store.projects.peek().length === 0) {
               return <Adw.StatusPage iconName="network-offline-symbolic" title="Connexion au serveur opencode…" description={esc(store.client.url)} vexpand />;
@@ -524,6 +588,7 @@ function SessionsPage({ store, current, actions, terminals }: { store: Store; cu
                 </Adw.StatusPage>
               );
             }
+            if (noMatch.peek()) return <Adw.StatusPage iconName="system-search-symbolic" title="Aucune session" description="Aucune session ne correspond à la recherche." vexpand />;
             return <SessionList sessions={sessions} actions={actions} />;
           }}
         </With>
