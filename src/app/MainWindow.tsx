@@ -452,6 +452,73 @@ function SessionsPage({ store, current, actions }: { store: Store; current: Acce
 
 // ---------------------------------------------------------------- fenêtre
 
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 700;
+
+/**
+ * Adw.NavigationSplitView n'est pas redimensionnable : poignée sur le bord droit de la barre
+ * latérale (curseur de redimensionnement) ; la largeur glissée est fixée (min = max) et mémorisée.
+ * Double-clic : retour à la largeur automatique.
+ */
+function makeSidebarResizable(split: Adw.NavigationSplitView, settings: Settings): void {
+  const apply = (w: number): void => {
+    if (w <= 0) {
+      split.minSidebarWidth = 240;
+      split.maxSidebarWidth = 340;
+    } else {
+      split.maxSidebarWidth = Math.max(w, split.minSidebarWidth);
+      split.minSidebarWidth = w;
+      split.maxSidebarWidth = w;
+    }
+  };
+  apply(settings.data.peek().sidebarWidth);
+
+  // poignée (curseur et survol) en surimpression du contenu, contre la barre latérale
+  const handle = new Gtk.Box({ widthRequest: 6, halign: Gtk.Align.START, valign: Gtk.Align.FILL, cssClasses: ['sidebar-handle'] });
+  handle.set_cursor_from_name('col-resize');
+  const page = split.content;
+  if (page !== null) {
+    const child = page.child;
+    page.child = null;
+    page.child = new Gtk.Overlay({ child });
+    if (page.child instanceof Gtk.Overlay) page.child.add_overlay(handle);
+  }
+
+  // le glissement est suivi sur le split (immobile) : les coordonnées ne bougent pas avec la poignée
+  const edge = (): number => split.sidebar?.get_width() ?? 0;
+  let dragging = false;
+  let start = 0;
+  let lastPress = 0;
+  const drag = new Gtk.GestureDrag({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
+  drag.connect('drag-begin', (g: Gtk.GestureDrag, x: number) => {
+    // uniquement sur la bordure (6 px après la barre latérale), barre latérale visible à côté
+    dragging = !split.collapsed && x >= edge() - 2 && x <= edge() + 8;
+    if (!dragging) {
+      g.set_state(Gtk.EventSequenceState.DENIED);
+      return;
+    }
+    g.set_state(Gtk.EventSequenceState.CLAIMED);
+    start = edge();
+    // double-clic sur la bordure : largeur automatique
+    const now = GLib.get_monotonic_time();
+    if (now - lastPress < 400_000) {
+      dragging = false;
+      settings.setNumber('sidebarWidth', 0);
+      apply(0);
+    }
+    lastPress = now;
+  });
+  drag.connect('drag-update', (_g: Gtk.GestureDrag, dx: number) => {
+    if (dragging) apply(Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, start + dx))));
+  });
+  drag.connect('drag-end', () => {
+    if (!dragging) return;
+    dragging = false;
+    settings.setNumber('sidebarWidth', split.minSidebarWidth);
+  });
+  split.add_controller(drag);
+}
+
 function asPage(o: JSX.Element): Adw.NavigationPage {
   if (!(o instanceof Adw.NavigationPage)) throw new TypeError('NavigationPage attendue');
   return o;
@@ -671,6 +738,7 @@ export function MainWindow({
       >
         <Adw.NavigationSplitView
           sidebarWidthFraction={0.28}
+          sidebarWidthUnit={Adw.LengthUnit.PX}
           minSidebarWidth={240}
           maxSidebarWidth={340}
           sidebar={asPage(
@@ -699,6 +767,7 @@ export function MainWindow({
           content={new Adw.NavigationPage({ title: 'opencode', child: nav })}
           $={(self: Adw.NavigationSplitView) => {
             split = self;
+            makeSidebarResizable(self, settings);
           }}
         />
       </Adw.ToastOverlay>

@@ -18,6 +18,8 @@ export const SettingsData = z.object({
   openSessions: z.prefault(z.array(z.string()), []),
   /** projets repliés dans la barre latérale (clés de projet) */
   collapsed: z.prefault(z.array(z.string()), []),
+  /** largeur de la barre latérale en px (0 = automatique) */
+  sidebarWidth: z.prefault(z.number(), 0),
   /** taille du texte de la conversation, en % */
   fontScale: z.prefault(z.number(), 100),
   /** largeur maximale de la conversation en px (0 = toute la largeur) */
@@ -35,7 +37,7 @@ export const SettingsData = z.object({
 });
 export type SettingsData = z.output<typeof SettingsData>;
 
-const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], showTools: true, fontScale: 100, maxWidth: 860 };
+const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, fontScale: 100, maxWidth: 860 };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -109,7 +111,7 @@ export class Settings {
     });
   }
 
-  setNumber(key: 'fontScale' | 'maxWidth', value: number): void {
+  setNumber(key: 'fontScale' | 'maxWidth' | 'sidebarWidth', value: number): void {
     if (this.data.peek()[key] !== value) this.update((d) => ({ ...d, [key]: value }));
   }
 

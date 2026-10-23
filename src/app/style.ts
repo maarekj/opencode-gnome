@@ -192,4 +192,11 @@ export const STYLESHEET = `
 .session-tree-row .session-title {
   font-size: 0.93em;
 }
+
+.sidebar-handle {
+  background: transparent;
+}
+.sidebar-handle:hover {
+  background: alpha(var(--accent-bg-color), 0.35);
+}
 `;
