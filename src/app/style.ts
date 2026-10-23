@@ -159,6 +159,27 @@ export const STYLESHEET = `
   background: alpha(var(--accent-bg-color), 0.18);
   color: var(--accent-color);
 }
+.terminal-split > button {
+  border-radius: 0;
+  margin: 0;
+}
+.terminal-split > button:first-child {
+  border-radius: 999px 0 0 999px;
+}
+.terminal-split > button:last-child {
+  border-radius: 0 999px 999px 0;
+}
+.terminal-split > .terminal-action {
+  padding: 2px 8px;
+  min-width: 0;
+}
+.terminal-split > .terminal-stop:hover {
+  color: var(--error-color);
+}
+/* séparateur discret entre les parties du bouton divisé */
+.terminal-split > button + button {
+  border-left: 1px solid alpha(var(--accent-color), 0.25);
+}
 .terminal-dot {
   background: var(--success-color);
   border-radius: 999px;

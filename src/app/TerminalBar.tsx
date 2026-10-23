@@ -110,7 +110,27 @@ function TerminalPill({ t, project, running, ctx }: { t: ProjectTerminal; projec
     </Gtk.Button>
   );
   if (!(widget instanceof Gtk.Widget)) throw new TypeError('widget attendu');
-  return widget;
+  if (!running) return widget;
+  // terminal en cours : bouton divisé (ouvrir | redémarrer | arrêter)
+  const split = (
+    <Gtk.Box cssClasses={['linked', 'terminal-split']} valign={Gtk.Align.CENTER}>
+      {widget}
+      <Gtk.Button
+        iconName="view-refresh-symbolic"
+        tooltipText="Redémarrer"
+        cssClasses={['terminal-pill', 'running', 'terminal-action']}
+        onClicked={() => attempt(ctx, 'Redémarrage impossible', () => ctx.manager.restart(t, project))}
+      />
+      <Gtk.Button
+        iconName="media-playback-stop-symbolic"
+        tooltipText="Arrêter"
+        cssClasses={['terminal-pill', 'running', 'terminal-action', 'terminal-stop']}
+        onClicked={() => attempt(ctx, 'Arrêt impossible', () => ctx.manager.stop(t))}
+      />
+    </Gtk.Box>
+  );
+  if (!(split instanceof Gtk.Widget)) throw new TypeError('widget attendu');
+  return split;
 }
 
 /** Barre des terminaux du projet `project` (masquée sans projet ou sans zellij). */
