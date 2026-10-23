@@ -1,5 +1,7 @@
 // Fichiers modifiés du dépôt git d'une session : liste à gauche, diff du fichier choisi à droite.
+// Fenêtre séparée non modale (une par répertoire) : la conversation reste utilisable à côté.
 import Adw from 'gi://Adw?version=1';
+import Gdk from 'gi://Gdk?version=4.0';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
@@ -68,6 +70,8 @@ function FileRow({ file }: { file: FileDiff }): JSX.Element {
 }
 
 export interface DiffSource {
+  /** répertoire du dépôt : une seule fenêtre par répertoire */
+  directory: string;
   title: string;
   load: () => Promise<FileDiff[]>;
   vcs: () => Promise<VcsInfo>;
@@ -75,8 +79,19 @@ export interface DiffSource {
   changed?: Accessor<number>;
 }
 
-export function openDiffDialog(parent: Gtk.Widget, source: DiffSource): void {
-  const dialog = new Adw.Dialog({ title: 'Fichiers modifiés', contentWidth: 1200, contentHeight: 800 });
+/** Fenêtres ouvertes, par répertoire. */
+const windows = new Map<string, Adw.Window>();
+
+export function openDiffWindow(parent: Gtk.Widget, source: DiffSource): void {
+  const existing = windows.get(source.directory);
+  if (existing !== undefined) {
+    existing.present();
+    return;
+  }
+  const root = parent.get_root();
+  const app = root instanceof Gtk.Window ? root.application : null;
+  const dialog = new Adw.Window({ title: `Fichiers modifiés — ${source.title}`, defaultWidth: 1200, defaultHeight: 800, ...(app === null ? {} : { application: app }) });
+  windows.set(source.directory, dialog);
 
   // ------------------------------------------------ diff (droite)
   const buffer = new Gtk.TextBuffer();
@@ -124,7 +139,15 @@ export function openDiffDialog(parent: Gtk.Widget, source: DiffSource): void {
     minSidebarWidth: 260,
     maxSidebarWidth: 380,
   });
-  dialog.child = split;
+  dialog.content = split;
+  // Échap ferme la fenêtre
+  const keys = new Gtk.EventControllerKey();
+  keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number) => {
+    if (keyval !== Gdk.KEY_Escape) return false;
+    dialog.close();
+    return true;
+  });
+  dialog.add_controller(keys);
 
   let files: FileDiff[] = [];
   let selected: string | null = null;
@@ -191,11 +214,13 @@ export function openDiffDialog(parent: Gtk.Widget, source: DiffSource): void {
       return GLib.SOURCE_REMOVE;
     });
   });
-  dialog.connect('closed', () => {
+  dialog.connect('close-request', () => {
     unsubscribe?.();
     if (queued !== 0) GLib.source_remove(queued);
+    windows.delete(source.directory);
+    return false;
   });
 
-  dialog.present(parent);
+  dialog.present();
   void load();
 }

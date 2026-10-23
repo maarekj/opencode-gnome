@@ -8,7 +8,7 @@ import { prettyPath, type Activity, type Store } from '../shared/store.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { Composer } from './Composer.tsx';
 import { ConversationView } from './ConversationView.tsx';
-import { openDiffDialog } from './DiffDialog.tsx';
+import { openDiffWindow } from './DiffWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
 
 const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
@@ -110,7 +110,8 @@ export function createConversationPage(opts: {
               iconName="document-edit-symbolic"
               tooltipText="Fichiers modifiés (git)"
               onClicked={(self: Gtk.Button) =>
-                openDiffDialog(self, {
+                openDiffWindow(self, {
+                  directory: dir(),
                   title: GLib.path_get_basename(dir()),
                   load: () => client.gitDiff(dir()),
                   vcs: () => client.vcs(dir()),
