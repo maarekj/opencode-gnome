@@ -38,18 +38,24 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - Messages de commit en français, courts, au style des commits existants.
 
 ## Travail en parallèle (worktrees)
-- Un second agent travaille dans `../opencode-gnome-2` (worktree git, branche `agent-2`).
-  Ne pas toucher à l'autre worktree.
-- Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise
-  (commentaire « En cours dans <worktree> » sur l'issue).
-- Serveur de test pour les captures : port **4799** dans `opencode-gnome`, **4798** dans
-  `opencode-gnome-2` (ne jamais arrêter le serveur de l'autre agent).
-- Dans le worktree : commits sur `agent-2`, puis `git rebase main` et fusion dans `main`
-  (`git -C ../opencode-gnome merge --ff-only agent-2`) une fois l'issue terminée et `pnpm check` OK.
+- Plusieurs agents travaillent en même temps, chacun dans son dossier :
+
+  | Dossier | Branche | Port du serveur de test | Application installée |
+  |---|---|---|---|
+  | `opencode-gnome` | `main` | 4799 | « opencode » (`opencode-gnome`) |
+  | `opencode-gnome-2` | `agent-2` | 4798 | « opencode (2) » (`opencode-gnome-2`) |
+  | `opencode-gnome-3` | `agent-3` | 4797 | « opencode (3) » (`opencode-gnome-3`) |
+  | `opencode-gnome-4` | `agent-4` | 4796 | « opencode (4) » (`opencode-gnome-4`) |
+
+- Ne jamais toucher au dossier d'un autre agent, ni arrêter son serveur de test.
+- Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise, puis
+  commenter « En cours dans <dossier> » sur l'issue.
+- Dans un worktree : commits sur sa branche ; une fois l'issue terminée et `pnpm check` OK,
+  `git rebase main` puis fusion dans `main` : `git -C ../opencode-gnome merge --ff-only agent-N`
+  (si `main` a avancé entre-temps, refaire le rebase), puis `git -C ../opencode-gnome push`.
 - Chaque agent construit **et installe** son application après une modification d'interface :
-  `node scripts/install.ts` (dans le shell devenv). Dans le dépôt principal → « opencode »
-  (`opencode-gnome`) ; dans `opencode-gnome-2` → « opencode (2) » (`opencode-gnome-2`, identifiant
-  d'application distinct) : les deux apparaissent dans GNOME et tournent en même temps.
+  `node scripts/install.ts` (dans le shell devenv). Chaque dossier a son lanceur, son .desktop et
+  son identifiant d'application : toutes les versions apparaissent dans GNOME et tournent ensemble.
   Le serveur partagé et `oc` ne sont installés que depuis le dépôt principal.
 
 ## Suivi des fonctionnalités : issues GitHub
