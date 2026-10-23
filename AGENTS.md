@@ -46,7 +46,11 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   `opencode-gnome-2` (ne jamais arrêter le serveur de l'autre agent).
 - Dans le worktree : commits sur `agent-2`, puis `git rebase main` et fusion dans `main`
   (`git -C ../opencode-gnome merge --ff-only agent-2`) une fois l'issue terminée et `pnpm check` OK.
-- L'application installée (`opencode-gnome`) lance le `dist/` du dépôt principal.
+- Chaque agent construit **et installe** son application après une modification d'interface :
+  `node scripts/install.ts` (dans le shell devenv). Dans le dépôt principal → « opencode »
+  (`opencode-gnome`) ; dans `opencode-gnome-2` → « opencode (2) » (`opencode-gnome-2`, identifiant
+  d'application distinct) : les deux apparaissent dans GNOME et tournent en même temps.
+  Le serveur partagé et `oc` ne sont installés que depuis le dépôt principal.
 
 ## Suivi des fonctionnalités : issues GitHub
 Dépôt : https://github.com/maarekj/opencode-gnome

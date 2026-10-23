@@ -12,7 +12,8 @@ import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { openPreferences } from './PreferencesDialog.tsx';
 import { STYLESHEET } from './style.ts';
 
-export const APP_ID = 'io.github.maarekj.OpencodeGnome';
+/** Identifiant D-Bus : distinct pour l'app d'un worktree (lancée en même temps que la principale). */
+export const APP_ID = GLib.getenv('OPENCODE_GNOME_APP_ID') ?? 'io.github.maarekj.OpencodeGnome';
 
 const app = new Adw.Application({ applicationId: APP_ID, flags: Gio.ApplicationFlags.DEFAULT_FLAGS });
 const store = new Store(new OpencodeClient(serverUrl()));

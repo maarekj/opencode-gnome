@@ -9,11 +9,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildApp } from './build.ts';
 
-const APP_ID = 'io.github.maarekj.OpencodeGnome';
+const BASE_ID = 'io.github.maarekj.OpencodeGnome';
 const UNIT = 'opencode-gnome-server.service';
 const PORT = 4096;
 
 const root = path.resolve(import.meta.dirname, '..');
+
+/**
+ * Variante d'installation, déduite du dossier : `opencode-gnome` = principale ; un worktree
+ * (`opencode-gnome-2`) = variante « 2 », installée à côté (lanceur, .desktop et identifiant
+ * d'application distincts, pour que les deux apparaissent et tournent en même temps).
+ */
+const variant = path.basename(root).replace(/^opencode-gnome-?/u, '');
+const suffix = variant === '' ? '' : `-${variant}`;
+const APP_ID = variant === '' ? BASE_ID : `${BASE_ID}.Dev${variant.replaceAll(/[^A-Za-z0-9]/gu, '')}`;
+const LAUNCHER = `opencode-gnome${suffix}`;
 const home = os.homedir();
 const binDir = path.join(home, '.local', 'bin');
 const unitDir = path.join(home, '.config', 'systemd', 'user');
@@ -43,7 +53,8 @@ console.log('build…');
 await buildApp();
 
 console.log('fichiers :');
-write(
+// serveur partagé et `oc` : installés par l'installation principale uniquement
+if (variant === '') write(
   path.join(unitDir, UNIT),
   `[Unit]
 Description=Serveur opencode partagé (opencode-gnome)
@@ -62,7 +73,7 @@ WantedBy=default.target
 `,
 );
 
-write(
+if (variant === '') write(
   path.join(binDir, 'oc'),
   `#!/usr/bin/env bash
 # opencode console attaché au serveur partagé d'opencode-gnome, dans le répertoire courant.
@@ -79,9 +90,10 @@ exec opencode attach "$url" --dir "$PWD" "$@"
 );
 
 write(
-  path.join(binDir, 'opencode-gnome'),
+  path.join(binDir, LAUNCHER),
   `#!/usr/bin/env bash
 # Lance opencode-gnome (version de développement : ${root}).
+export OPENCODE_GNOME_APP_ID=${APP_ID}
 export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
 exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "$@"
 `,
@@ -92,9 +104,9 @@ write(
   path.join(appsDir, `${APP_ID}.desktop`),
   `[Desktop Entry]
 Type=Application
-Name=opencode
-Comment=Sessions opencode
-Exec=${path.join(binDir, 'opencode-gnome')}
+Name=${variant === '' ? 'opencode' : `opencode (${variant})`}
+Comment=Sessions opencode${variant === '' ? '' : ` — worktree ${path.basename(root)}`}
+Exec=${path.join(binDir, LAUNCHER)}
 Icon=utilities-terminal
 Terminal=false
 Categories=Development;
@@ -103,8 +115,12 @@ DBusActivatable=false
 `,
 );
 
-console.log('systemd…');
-execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'inherit' });
-execFileSync('systemctl', ['--user', 'enable', '--now', UNIT], { stdio: 'inherit' });
-execFileSync('systemctl', ['--user', 'restart', UNIT], { stdio: 'inherit' });
-console.log(`ok — serveur : http://127.0.0.1:${PORT}  ·  console : oc  ·  app : opencode-gnome`);
+if (variant === '') {
+  console.log('systemd…');
+  execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'inherit' });
+  execFileSync('systemctl', ['--user', 'enable', '--now', UNIT], { stdio: 'inherit' });
+  // pas de redémarrage : il couperait les sessions en cours des agents
+  console.log(`ok — serveur : http://127.0.0.1:${PORT}  ·  console : oc  ·  app : ${LAUNCHER}`);
+} else {
+  console.log(`ok — app : ${LAUNCHER} (« opencode (${variant}) » dans GNOME), même serveur partagé`);
+}
