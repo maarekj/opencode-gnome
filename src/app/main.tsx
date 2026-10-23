@@ -3,6 +3,7 @@ import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
+import Pango from 'gi://Pango';
 import { createRoot } from 'gnim';
 import { OpencodeClient } from '../shared/client.ts';
 import { serverUrl } from '../shared/config.ts';
@@ -24,6 +25,21 @@ const settings = new Settings();
 let api: WindowApi | null = null;
 let notifier: Notifier | null = null;
 let size: [number, number] | undefined;
+
+/**
+ * Police à chasse fixe de GNOME (`monospace-font-name`, ex. « Adwaita Mono 11 »), appliquée
+ * explicitement : la classe `.monospace` seule retombe parfois sur une police proportionnelle.
+ */
+function monospaceFamily(): string {
+  try {
+    const source = Gio.SettingsSchemaSource.get_default();
+    if ((source?.lookup('org.gnome.desktop.interface', true) ?? null) === null) return 'monospace';
+    const name = new Gio.Settings({ schemaId: 'org.gnome.desktop.interface' }).get_string('monospace-font-name');
+    return Pango.FontDescription.from_string(name).get_family()?.replaceAll('"', '') ?? 'monospace';
+  } catch {
+    return 'monospace';
+  }
+}
 
 // ------------------------------------------------------------------ ligne de commande
 
@@ -116,8 +132,11 @@ app.connect('startup', () => {
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
   // taille du texte de la conversation (préférences), appliquée en direct
   const fontCss = new Gtk.CssProvider();
+  const mono = monospaceFamily();
   const applyFont = (): void => {
-    fontCss.load_from_string(`.conversation { font-size: ${settings.data.peek().fontScale}%; }`);
+    fontCss.load_from_string(
+      `.conversation { font-size: ${settings.data.peek().fontScale}%; }\n.monospace, .diff-view { font-family: "${mono}", "DejaVu Sans Mono", monospace; }`,
+    );
   };
   applyFont();
   settings.data.subscribe(applyFont);

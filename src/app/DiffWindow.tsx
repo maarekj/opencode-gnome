@@ -9,8 +9,7 @@ import type { Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
 import type { FileDiff, VcsInfo } from '../shared/schemas.ts';
-
-const MAX_PATCH = 200_000;
+import { createDiffView } from './DiffView.ts';
 
 const STATUS: Readonly<Record<string, { icon: string; label: string; css: string }>> = {
   added: { icon: 'list-add-symbolic', label: 'Ajouté', css: 'success' },
@@ -21,36 +20,6 @@ const statusOf = (f: FileDiff): { icon: string; label: string; css: string } => 
 
 const basename = (p: string): string => p.slice(p.lastIndexOf('/') + 1);
 const dirname = (p: string): string => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
-
-/** Remplit un buffer avec un patch unifié coloré (tags), sans les entêtes `diff --git` / `index`. */
-function fillPatch(buffer: Gtk.TextBuffer, patch: string): void {
-  const table = buffer.get_tag_table();
-  const tag = (name: string, props: Partial<Gtk.TextTag.ConstructorProps>): Gtk.TextTag => {
-    const existing = table.lookup(name);
-    if (existing !== null) return existing;
-    const t = new Gtk.TextTag({ name, ...props });
-    table.add(t);
-    return t;
-  };
-  const tags = {
-    add: tag('add', { foreground: '#26a269', paragraphBackground: 'rgba(38,162,105,0.10)' }),
-    del: tag('del', { foreground: '#c01c28', paragraphBackground: 'rgba(192,28,40,0.10)' }),
-    hunk: tag('hunk', { foreground: '#1c71d8', pixelsAboveLines: 8 }),
-    meta: tag('meta', { scale: 0.9, style: Pango.Style.ITALIC }),
-  };
-  buffer.set_text('', -1);
-  const text = patch.length > MAX_PATCH ? `${patch.slice(0, MAX_PATCH)}\n… (diff tronqué)` : patch;
-  const lines = text.split('\n').filter((l) => !/^(diff --git |index |--- |\+\+\+ |new file mode|deleted file mode)/u.test(l));
-  // évite une ligne vide finale
-  if (lines.at(-1) === '') lines.pop();
-  for (const [i, line] of lines.entries()) {
-    const t = line.startsWith('@@') ? tags.hunk : line.startsWith('+') ? tags.add : line.startsWith('-') ? tags.del : line.startsWith('\\') ? tags.meta : null;
-    const content = i === lines.length - 1 ? line : `${line}\n`;
-    const offset = buffer.get_char_count();
-    buffer.insert(buffer.get_end_iter(), content, -1);
-    if (t !== null) buffer.apply_tag(t, buffer.get_iter_at_offset(offset), buffer.get_end_iter());
-  }
-}
 
 function FileRow({ file }: { file: FileDiff }): JSX.Element {
   const st = statusOf(file);
@@ -94,22 +63,10 @@ export function openDiffWindow(parent: Gtk.Widget, source: DiffSource): void {
   windows.set(source.directory, dialog);
 
   // ------------------------------------------------ diff (droite)
-  const buffer = new Gtk.TextBuffer();
-  const diffView = new Gtk.TextView({
-    buffer,
-    editable: false,
-    cursorVisible: false,
-    monospace: true,
-    wrapMode: Gtk.WrapMode.CHAR,
-    topMargin: 12,
-    bottomMargin: 12,
-    leftMargin: 12,
-    rightMargin: 12,
-    cssClasses: ['diff-view'],
-  });
+  const diff = createDiffView();
   const contentTitle = new Adw.WindowTitle({ title: '', subtitle: '' });
   const contentStack = new Gtk.Stack({ transitionType: Gtk.StackTransitionType.CROSSFADE });
-  contentStack.add_named(new Gtk.ScrolledWindow({ child: diffView, vexpand: true }), 'diff');
+  contentStack.add_named(diff.widget, 'diff');
   contentStack.add_named(new Adw.StatusPage({ iconName: 'document-edit-symbolic', title: 'Choisis un fichier' }), 'none');
   const contentHeader = new Adw.HeaderBar({ titleWidget: contentTitle });
   const contentView = new Adw.ToolbarView({ content: contentStack });
@@ -162,7 +119,7 @@ export function openDiffWindow(parent: Gtk.Widget, source: DiffSource): void {
     selected = file.file;
     contentTitle.title = basename(file.file);
     contentTitle.subtitle = `${statusOf(file).label} · +${file.additions} −${file.deletions}`;
-    fillPatch(buffer, file.patch ?? '');
+    diff.show(file.file, file.patch ?? '');
     contentStack.visibleChildName = 'diff';
     split.showContent = true;
   };

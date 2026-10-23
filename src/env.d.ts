@@ -8,3 +8,4 @@ import '@girs/adw-1';
 import '@girs/soup-3.0';
 import '@girs/pango-1.0';
 import '@girs/gsound-1.0';
+import '@girs/gtksource-5';

@@ -206,6 +206,9 @@ importers:
       '@girs/gtk-4.0':
         specifier: 5.5.0
         version: 5.5.0
+      '@girs/gtksource-5':
+        specifier: 5.5.0
+        version: 5.5.0
       '@girs/pango-1.0':
         specifier: 5.5.0
         version: 5.5.0
@@ -427,6 +430,9 @@ packages:
 
   '@girs/gtk-4.0@5.5.0':
     resolution: {integrity: sha512-bDsHBbgmLaxvx3w10i10AicLGNNpEHiBEHHAZUUTutOkt1GRYjHBwC9iR7MRly9ZPL0aFE+c8hJjEXBflg8MtA==}
+
+  '@girs/gtksource-5@5.5.0':
+    resolution: {integrity: sha512-sLX8IWpaETanuiWHPIgpUPcy0eeiKAWez8PV86fvweECfsYoxijjEi9eb2glbLGDYMFvbZ7kR9L/Dhbexea3dw==}
 
   '@girs/harfbuzz-0.0@5.5.0':
     resolution: {integrity: sha512-LBGqoUvRW6BhE0Nu3zoP51TwYu6EWCSuIwIHgdnf5SAWy3pAgfVCG/uiytJoWBgGxy6k6gsM8Dm2rjHUqcaL3g==}
@@ -956,6 +962,24 @@ snapshots:
       '@girs/gobject-2.0': 5.5.0
       '@girs/graphene-1.0': 5.5.0
       '@girs/gsk-4.0': 5.5.0
+      '@girs/harfbuzz-0.0': 5.5.0
+      '@girs/pango-1.0': 5.5.0
+      '@girs/pangocairo-1.0': 5.5.0
+
+  '@girs/gtksource-5@5.5.0':
+    dependencies:
+      '@girs/cairo-1.0': 5.5.0
+      '@girs/freetype2-2.0': 5.5.0
+      '@girs/gdk-4.0': 5.5.0
+      '@girs/gdkpixbuf-2.0': 5.5.0
+      '@girs/gio-2.0': 5.5.0
+      '@girs/gjs': 5.5.0
+      '@girs/glib-2.0': 5.5.0
+      '@girs/gmodule-2.0': 5.5.0
+      '@girs/gobject-2.0': 5.5.0
+      '@girs/graphene-1.0': 5.5.0
+      '@girs/gsk-4.0': 5.5.0
+      '@girs/gtk-4.0': 5.5.0
       '@girs/harfbuzz-0.0': 5.5.0
       '@girs/pango-1.0': 5.5.0
       '@girs/pangocairo-1.0': 5.5.0

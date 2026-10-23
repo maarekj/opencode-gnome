@@ -16,6 +16,7 @@
     pkgs.libadwaita
     pkgs.libsoup_3 # client HTTP/SSE vers opencode serve
     pkgs.gsound # sons d'événement (thème de sons du bureau) pour les notifications
+    pkgs.gtksourceview5 # vue de code (diffs : coloration syntaxique)
     pkgs.glib # gdbus, glib-compile-schemas, glib-compile-resources
     pkgs.gobject-introspection
     pkgs.curl # spikes / debug de l'API opencode
