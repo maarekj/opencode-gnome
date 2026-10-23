@@ -18,10 +18,10 @@ export interface ModelRef {
 
 export interface ComposerProps {
   busy: Accessor<boolean>;
-  /** Agent et modèle utilisés en dernier dans la session (présélection). */
-  initial: () => { agent?: string; model?: ModelRef };
+  /** Agent, modèle et niveau de raisonnement de la session (présélection). */
+  initial: () => { agent?: string; model?: ModelRef; variant?: string };
   loadChoices: () => Promise<{ agents: Agent[]; providers: Providers }>;
-  send: (text: string, agent: string | undefined, model: ModelRef | undefined, files: readonly Attachment[]) => Promise<boolean>;
+  send: (text: string, choice: { agent?: string; model?: ModelRef; variant?: string }, files: readonly Attachment[]) => Promise<boolean>;
   /** Contexte utilisé par la session. */
   context: Accessor<ContextUsage | null>;
   /** Affiche un message d'erreur. */
@@ -56,6 +56,9 @@ function fill(dd: Gtk.DropDown, items: readonly string[], selected: string | und
   dd.selected = index === -1 ? 0 : index;
 }
 
+/** Libellé « Par défaut » du menu de raisonnement (aucune variante envoyée). */
+const DEFAULT_VARIANT = 'Par défaut';
+
 const selectedString = (dd: Gtk.DropDown): string | undefined => {
   const item = dd.selectedItem;
   return item instanceof Gtk.StringObject ? item.string : undefined;
@@ -86,7 +89,7 @@ function ContextGauge({ context, limits }: { context: Accessor<ContextUsage | nu
           : [
               `Contexte : ${i.tokens.toLocaleString('fr-FR')} tokens`,
               i.limit === null ? 'Limite du modèle inconnue' : `Limite : ${i.limit.toLocaleString('fr-FR')} tokens (${Math.round((i.ratio ?? 0) * 100)} %)`,
-              `Modèle : ${i.providerID}/${i.modelID}`,
+              `Modèle : ${i.providerID}/${i.modelID}${i.variant === undefined ? '' : ` (${i.variant})`}`,
               ...(i.cost > 0 ? [`Coût : ${i.cost.toFixed(2)} $`] : []),
             ].join('\n'),
       )}
@@ -115,6 +118,24 @@ function ContextGauge({ context, limits }: { context: Accessor<ContextUsage | nu
 export function Composer(props: ComposerProps): JSX.Element {
   const agentDD = stringDropDown('Agent', false);
   const modelDD = stringDropDown('Modèle', true);
+  const variantDD = stringDropDown('Niveau de raisonnement (Ctrl+T)', false);
+  variantDD.visible = false;
+  /** « fournisseur/modèle » -> variantes disponibles, dans l'ordre du serveur */
+  let variants = new Map<string, readonly string[]>();
+  /** agent -> variante définie dans sa config */
+  let agentVariants = new Map<string, string>();
+  /** Remplit le menu de raisonnement pour le modèle sélectionné, en gardant `wanted` s'il existe. */
+  const fillVariants = (wanted: string | undefined): void => {
+    const list = variants.get(selectedString(modelDD) ?? '') ?? [];
+    variantDD.visible = list.length > 0;
+    fill(variantDD, [DEFAULT_VARIANT, ...list], wanted !== undefined && list.includes(wanted) ? wanted : DEFAULT_VARIANT);
+  };
+  modelDD.connect('notify::selected', () => fillVariants(selectedString(variantDD)));
+  /** Passe à la variante suivante (Ctrl+T, comme la console). */
+  const cycleVariant = (): void => {
+    const n = variantDD.model?.get_n_items() ?? 0;
+    if (variantDD.visible && n > 1) variantDD.selected = (variantDD.selected + 1) % n;
+  };
   const buffer = new Gtk.TextBuffer();
   let sending = false;
   const [files, setFiles] = createState<readonly Attachment[]>([]);
@@ -147,6 +168,8 @@ export function Composer(props: ComposerProps): JSX.Element {
       const { agents, providers } = await props.loadChoices();
       const init = props.initial();
       const names = agents.filter((a) => a.mode !== 'subagent' && a.hidden !== true).map((a) => a.name);
+      agentVariants = new Map(agents.flatMap((a) => (typeof a.variant === 'string' ? [[a.name, a.variant] as const] : [])));
+      variants = new Map(providers.providers.flatMap((p) => Object.entries(p.models).map(([id, m]) => [`${p.id}/${id}`, Object.keys(m.variants ?? {})] as const)));
       fill(agentDD, names, init.agent ?? 'build');
       setLimits(
         new Map(
@@ -158,6 +181,7 @@ export function Composer(props: ComposerProps): JSX.Element {
       const models = providers.providers.flatMap((p) => Object.keys(p.models).map((id) => `${p.id}/${id}`)).toSorted();
       const fallback = Object.entries(providers.default).map(([p, m]) => `${p}/${m}`)[0];
       fill(modelDD, models, init.model === undefined ? fallback : modelKey(init.model));
+      fillVariants(init.variant ?? agentVariants.get(init.agent ?? 'build'));
     } catch (e) {
       console.error(e);
     }
@@ -170,11 +194,16 @@ export function Composer(props: ComposerProps): JSX.Element {
     if ((text === '' && attached.length === 0) || sending) return;
     const agent = selectedString(agentDD);
     const model = selectedString(modelDD);
+    const variant = variantDD.visible ? selectedString(variantDD) : undefined;
     const slash = model?.indexOf('/') ?? -1;
-    const ref = model === undefined || slash === -1 ? undefined : { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
+    const choice = {
+      ...(agent === undefined ? {} : { agent }),
+      ...(model === undefined || slash === -1 ? {} : { model: { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) } }),
+      ...(variant === undefined || variant === DEFAULT_VARIANT ? {} : { variant }),
+    };
     sending = true;
     const go = async (): Promise<void> => {
-      const ok = await props.send(text, agent, ref, attached);
+      const ok = await props.send(text, choice, attached);
       sending = false;
       if (ok) {
         buffer.text = '';
@@ -236,6 +265,10 @@ export function Composer(props: ComposerProps): JSX.Element {
               const enter = keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter;
               const ctrl = (state & Gdk.ModifierType.CONTROL_MASK) !== 0;
               const shift = (state & Gdk.ModifierType.SHIFT_MASK) !== 0;
+              if (ctrl && (keyval === Gdk.KEY_t || keyval === Gdk.KEY_T)) {
+                cycleVariant();
+                return true;
+              }
               if (enter && (SEND_WITH_CTRL ? ctrl : !shift && !ctrl)) {
                 submit();
                 return true;
@@ -267,6 +300,7 @@ export function Composer(props: ComposerProps): JSX.Element {
         />
         {agentDD}
         {modelDD}
+        {variantDD}
         <Gtk.Label
           hexpand
           xalign={1}

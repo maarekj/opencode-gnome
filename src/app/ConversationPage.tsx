@@ -76,19 +76,19 @@ export function createConversationPage(opts: {
       busy,
       initial: () => {
         const s = view.peek()?.session;
+        // variante : celle de la session, sinon celle du dernier tour de l'assistant
+        const variant = s?.model?.variant ?? conversation.context.peek()?.variant;
         return {
           ...(s?.agent === undefined ? {} : { agent: s.agent }),
           ...(s?.model === undefined ? {} : { model: { providerID: s.model.providerID, modelID: s.model.id } }),
+          ...(variant === undefined ? {} : { variant }),
         };
       },
       loadChoices: async () => {
         const [agents, providers] = await Promise.all([client.agents(dir()), client.providers(dir())]);
         return { agents, providers };
       },
-      send: (text, agent, model, files) =>
-        attempt(toast, 'Envoi impossible', () =>
-          client.prompt(sessionID, dir(), text, { files, ...(agent === undefined ? {} : { agent }), ...(model === undefined ? {} : { model }) }),
-        ),
+      send: (text, choice, files) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { files, ...choice })),
       toast,
       context: conversation.context,
       abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),

@@ -104,7 +104,7 @@ export class OpencodeClient {
     sessionID: string,
     directory: string,
     text: string,
-    opts: { agent?: string; model?: { providerID: string; modelID: string }; files?: readonly Attachment[] } = {},
+    opts: { agent?: string; model?: { providerID: string; modelID: string }; variant?: string; files?: readonly Attachment[] } = {},
   ): Promise<void> {
     const { files = [], ...rest } = opts;
     // Les fournisseurs refusent les types non pris en charge (xlsx, zip…), et l'erreur se répète

@@ -14,6 +14,8 @@ export interface ContextUsage {
   readonly tokens: number;
   readonly providerID: string;
   readonly modelID: string;
+  /** niveau de raisonnement du dernier tour */
+  readonly variant?: string;
   /** coût cumulé des messages chargés */
   readonly cost: number;
 }
@@ -115,7 +117,7 @@ export class Conversation {
     [this.questions, this.#setQuestions] = createState<readonly QuestionRequest[]>([]);
     [this.diffVersion, this.#setDiffVersion] = createState(0);
     [this.context, this.#setContext] = createState<ContextUsage | null>(null, {
-      equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.cost === b?.cost,
+      equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.variant === b?.variant && a?.cost === b?.cost,
     });
   }
 
@@ -235,7 +237,13 @@ export class Conversation {
       if (last === null || info.id > last.id) last = info;
     }
     if (last === null) return;
-    this.#setContext({ tokens: contextTokens(last), providerID: last.providerID ?? '', modelID: last.modelID ?? '', cost });
+    this.#setContext({
+      tokens: contextTokens(last),
+      providerID: last.providerID ?? '',
+      modelID: last.modelID ?? '',
+      ...(last.variant === undefined ? {} : { variant: last.variant }),
+      cost,
+    });
   }
 
   #upsertMessage(info: MessageInfo): void {

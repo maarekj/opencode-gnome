@@ -20,7 +20,7 @@ export const Session = z.looseObject({
   parentID: z.optional(z.string()),
   title: z.string(),
   agent: z.optional(z.string()),
-  model: z.optional(z.looseObject({ id: z.string(), providerID: z.string() })),
+  model: z.optional(z.looseObject({ id: z.string(), providerID: z.string(), variant: z.optional(z.string()) })),
   cost: z.optional(z.number()),
   time: Time,
   /** présent dans /experimental/session */
@@ -73,6 +73,8 @@ export const MessageInfo = z.looseObject({
   modelID: z.optional(z.string()),
   providerID: z.optional(z.string()),
   cost: z.optional(z.number()),
+  /** niveau de raisonnement utilisé (low, high…) */
+  variant: z.optional(z.string()),
   tokens: z.optional(
     z.looseObject({
       input: z.number(),
@@ -114,11 +116,26 @@ export type QuestionInfo = z.output<typeof QuestionInfo>;
 export const QuestionRequest = z.looseObject({ id: z.string(), sessionID: z.string(), questions: z.array(QuestionInfo), tool: z.optional(RequestTool) });
 export type QuestionRequest = z.output<typeof QuestionRequest>;
 
-export const Agent = z.looseObject({ name: z.string(), mode: z.optional(z.string()), hidden: z.optional(z.nullable(z.boolean())), description: z.optional(z.string()) });
+export const Agent = z.looseObject({
+  name: z.string(),
+  mode: z.optional(z.string()),
+  hidden: z.optional(z.nullable(z.boolean())),
+  description: z.optional(z.string()),
+  variant: z.optional(z.nullable(z.string())),
+});
 export type Agent = z.output<typeof Agent>;
 
+export const ProviderModel = z.looseObject({
+  id: z.string(),
+  name: z.optional(z.string()),
+  limit: z.optional(z.looseObject({ context: z.number() })),
+  /** niveaux de raisonnement disponibles (nom -> options), dans l'ordre du serveur */
+  variants: z.optional(z.record(z.string(), z.unknown())),
+});
+export type ProviderModel = z.output<typeof ProviderModel>;
+
 export const Providers = z.looseObject({
-  providers: z.array(z.looseObject({ id: z.string(), name: z.optional(z.string()), models: z.record(z.string(), z.looseObject({ id: z.string(), name: z.optional(z.string()), limit: z.optional(z.looseObject({ context: z.number() })) })) })),
+  providers: z.array(z.looseObject({ id: z.string(), name: z.optional(z.string()), models: z.record(z.string(), ProviderModel) })),
   default: z.record(z.string(), z.string()),
 });
 export type Providers = z.output<typeof Providers>;

@@ -14,6 +14,9 @@ https://github.com/maarekj/opencode-gnome/issues
 - #9 Terminaux persistants par projet (zellij)
 - #13 Écran de préférences : terminal et modèle par défaut
 - #14 Niveau de raisonnement du modèle (variant : low, high…) dans le compositeur
+- #16 Horodatage des messages et durée de réponse / réflexion de l'agent
+- #17 Bouton pour afficher / masquer tous les appels d'outils dans la conversation
+- #18 Barre latérale en arborescence : projets en dossiers, sessions dessous avec activité et menu
 
 ## Idées à trier
 (idées pas encore transformées en issue)

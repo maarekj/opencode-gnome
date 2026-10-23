@@ -206,7 +206,7 @@ function activityIcon(view: SessionView): JSX.Element | null {
 function SessionRow({ view, actions }: { view: SessionView; actions: Actions }): JSX.Element {
   const s = view.session;
   const title = s.title === '' ? 'Sans titre' : s.title;
-  const meta = [fmtRelative(updatedAt(view)), s.agent, s.model?.id, fmtCost(s.cost)].filter((x) => x !== undefined && x !== '').join('  ·  ');
+  const meta = [fmtRelative(updatedAt(view)), s.agent, s.model === undefined ? undefined : s.model.variant === undefined ? s.model.id : `${s.model.id} (${s.model.variant})`, fmtCost(s.cost)].filter((x) => x !== undefined && x !== '').join('  ·  ');
   const act = actions.sessionActions(s);
   return (
     <Adw.ActionRow
