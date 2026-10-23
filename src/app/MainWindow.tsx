@@ -13,6 +13,7 @@ import { attachCommand, openTerminal } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag, type ConversationPageHandle } from './ConversationPage.tsx';
 import type { Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
+import { openFolder } from './OpenFolder.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { TerminalManager } from '../shared/terminals.ts';
 import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
@@ -57,6 +58,7 @@ interface ProjectActions {
   newSession: (directory: string) => void;
   /** opencode dans un terminal, nouvelle session */
   attach: (directory: string) => void;
+  toast: (message: string) => void;
 }
 
 function ProjectRow({
@@ -94,6 +96,7 @@ function ProjectRow({
           [
             { label: 'Nouvelle session', activate: () => actions.newSession(project.path) },
             { label: 'Ouvrir opencode dans le terminal', activate: () => actions.attach(project.path) },
+            { label: 'Ouvrir le dossier', activate: () => openFolder(self, project.path, actions.toast) },
           ],
         ]);
       }}
@@ -430,6 +433,16 @@ function SessionsPage({ store, current, actions, terminals }: { store: Store; cu
         <Adw.HeaderBar $type="top">
           <Adw.WindowTitle $type="title" title={current((p) => p?.name ?? 'opencode')} subtitle={current((p) => (p === null ? '' : prettyPath(p.path)))} />
           <Gtk.Button $type="end" iconName="tab-new-symbolic" tooltipText="Nouvelle session" sensitive={key((k) => k !== null)} onClicked={newSession} />
+          <Gtk.Button
+            $type="end"
+            iconName="folder-open-symbolic"
+            tooltipText="Ouvrir le dossier"
+            sensitive={key((k) => k !== null)}
+            onClicked={(self: Gtk.Button) => {
+              const p = current.peek();
+              if (p !== null) openFolder(self, p.path, actions.toast);
+            }}
+          />
         </Adw.HeaderBar>
         <Gtk.Box $type="top">
           <TerminalBar project={current((p) => p?.path ?? null)} ctx={terminals} />
@@ -785,6 +798,7 @@ export function MainWindow({
                 toggleFavorite: (path) => settings.toggleFavorite(path),
                 newSession: (dir) => actions.newSession(dir),
                 attach: (dir) => actions.attach(dir),
+                toast: (m) => actions.toast(m),
               },
             }),
           )}

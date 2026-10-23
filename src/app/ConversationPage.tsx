@@ -10,6 +10,7 @@ import { errorMessage } from '../shared/errors.ts';
 import type { Session } from '../shared/schemas.ts';
 import { builtinCommands } from './Builtins.ts';
 import { Composer } from './Composer.tsx';
+import { openFolder } from './OpenFolder.ts';
 import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
 import { openDiffWindow } from './DiffWindow.tsx';
@@ -183,6 +184,12 @@ export function createConversationPage(opts: {
                 const v = view.peek();
                 if (v !== null) attach(v.session.directory, sessionID);
               }}
+            />
+            <Gtk.Button
+              $type="end"
+              iconName="folder-open-symbolic"
+              tooltipText="Ouvrir le dossier"
+              onClicked={(self: Gtk.Button) => openFolder(self, dir(), toast)}
             />
           </Adw.HeaderBar>
           <Gtk.Box $type="top">
