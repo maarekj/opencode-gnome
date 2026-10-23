@@ -1,4 +1,5 @@
 // Markdown -> Gtk widgets (blocks from src/shared/markdown.ts).
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import Pango from 'gi://Pango';
 import { parseMarkdown, type Block } from '../shared/markdown.ts';
@@ -127,13 +128,60 @@ export function Markdown({ text }: { text: string }): JSX.Element {
 // ---------------------------------------------------------------- vue texte unique (sélection libre)
 
 /** Les liens Pango (`<a>`) ne sont pas gérés par GtkTextBuffer : rendus comme du texte souligné. */
-const linksAsText = (markup: string): string =>
+const ttAsSpan = (markup: string): string =>
   markup
-    .replaceAll(/<a href="[^"]*">/gu, '<span underline="single" foreground="#3584e4">')
-    .replaceAll('</a>', '</span>')
     // <tt> n'est pas appliqué par GtkTextBuffer : police monospace explicite
     .replaceAll('<tt>', '<span font_family="monospace" background="#8080801a">')
     .replaceAll('</tt>', '</span>');
+
+const LINK = /<a href="([^"]*)">(.*?)<\/a>/gu;
+
+/** Lien (TextTag) -> URL, pour les clics. */
+const linkUrls = new WeakMap<Gtk.TextTag, string>();
+
+/** Décode les entités échappées par le parseur (`&amp;`…) dans une URL. */
+const unescapeUrl = (u: string): string =>
+  u.replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
+
+/** URL du lien sous la position (x, y) de la vue, s'il y en a un. */
+function linkAt(view: Gtk.TextView, x: number, y: number): string | null {
+  const [bx, by] = view.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, Math.round(x), Math.round(y));
+  const [found, iter] = view.get_iter_at_location(bx, by);
+  if (!found) return null;
+  for (const tag of iter.get_tags()) {
+    const url = linkUrls.get(tag);
+    if (url !== undefined) return url;
+  }
+  return null;
+}
+
+/** Rend les liens cliquables : curseur main au survol, ouverture au clic (sans sélection en cours). */
+function enableLinks(view: Gtk.TextView): void {
+  const motion = new Gtk.EventControllerMotion();
+  let hovering = false;
+  motion.connect('motion', (_c: Gtk.EventControllerMotion, x: number, y: number) => {
+    const on = linkAt(view, x, y) !== null;
+    if (on !== hovering) {
+      hovering = on;
+      view.set_cursor_from_name(on ? 'pointer' : 'text');
+    }
+  });
+  view.add_controller(motion);
+  const click = new Gtk.GestureClick({ button: 1 });
+  click.connect('released', (_g: Gtk.GestureClick, n: number, x: number, y: number) => {
+    if (n !== 1 || view.buffer.get_has_selection()) return;
+    const url = linkAt(view, x, y);
+    if (url === null) return;
+    // tests : le lien est journalisé au lieu d'ouvrir le navigateur
+    if (GLib.getenv('OPENCODE_GNOME_TEST_LINKS') !== null) {
+      console.log(`LIEN ${url}`);
+      return;
+    }
+    const root = view.get_root();
+    new Gtk.UriLauncher({ uri: url }).launch(root instanceof Gtk.Window ? root : null, null, null);
+  });
+  view.add_controller(click);
+}
 
 function tags(buffer: Gtk.TextBuffer): Record<'para' | 'h1' | 'h2' | 'h3' | 'item' | 'quote' | 'code' | 'codeEnd' | 'rule', Gtk.TextTag> {
   const table = buffer.get_tag_table();
@@ -157,11 +205,30 @@ function tags(buffer: Gtk.TextBuffer): Record<'para' | 'h1' | 'h2' | 'h3' | 'ite
 }
 
 /** Insère du markup Pango ; texte brut si le markup est invalide. */
-function insertMarkup(buffer: Gtk.TextBuffer, markup: string, plain: string): void {
+function insertMarkup(buffer: Gtk.TextBuffer, markup: string): void {
+  // les <a> ne sont pas gérés par GtkTextBuffer : chaque lien devient un TextTag associé à son URL
+  let last = 0;
+  for (const m of markup.matchAll(LINK)) {
+    insertSpan(buffer, markup.slice(last, m.index));
+    const start = buffer.get_char_count();
+    insertSpan(buffer, m[2] ?? '');
+    const url = unescapeUrl(m[1] ?? '');
+    const tag = new Gtk.TextTag({ underline: Pango.Underline.SINGLE, foreground: '#3584e4' });
+    buffer.get_tag_table().add(tag);
+    linkUrls.set(tag, url);
+    buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_end_iter());
+    last = m.index + m[0].length;
+  }
+  insertSpan(buffer, markup.slice(last));
+}
+
+/** Markup Pango sans lien ; texte sans balises si le markup est invalide. */
+function insertSpan(buffer: Gtk.TextBuffer, markup: string): void {
+  if (markup === '') return;
   try {
-    buffer.insert_markup(buffer.get_end_iter(), linksAsText(markup), -1);
+    buffer.insert_markup(buffer.get_end_iter(), ttAsSpan(markup), -1);
   } catch {
-    buffer.insert(buffer.get_end_iter(), plain, -1);
+    buffer.insert(buffer.get_end_iter(), unescapeUrl(markup.replaceAll(/<[^>]+>/gu, '')), -1);
   }
 }
 
@@ -185,6 +252,7 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
     hexpand: true,
   });
   const t = tags(buffer);
+  enableLinks(view);
   const tables: Gtk.Widget[] = [];
   const blocks = parseMarkdown(text);
   blocks.forEach((b, i) => {
@@ -192,25 +260,25 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
     const last = i === blocks.length - 1;
     switch (b.kind) {
       case 'paragraph':
-        insertMarkup(buffer, b.markup, b.markup);
+        insertMarkup(buffer, b.markup);
         tagFrom(buffer, t.para, start);
         break;
       case 'heading':
-        insertMarkup(buffer, b.markup, b.markup);
+        insertMarkup(buffer, b.markup);
         tagFrom(buffer, b.level === 1 ? t.h1 : b.level === 2 ? t.h2 : t.h3, start);
         break;
       case 'item': {
         const indent = 8 + b.depth * 18;
         const itemTag = new Gtk.TextTag({ leftMargin: indent + 16, indent: -16 });
         buffer.get_tag_table().add(itemTag);
-        insertMarkup(buffer, `<span foreground="#9a9996">${b.bullet}</span>  ${b.markup}`, b.markup);
+        insertMarkup(buffer, `<span foreground="#9a9996">${b.bullet}</span>  ${b.markup}`);
         tagFrom(buffer, itemTag, start);
         // espacement réduit entre éléments d'une même liste
         tagFrom(buffer, blocks[i + 1]?.kind === 'item' ? t.item : t.para, start);
         break;
       }
       case 'quote':
-        insertMarkup(buffer, b.markup, b.markup);
+        insertMarkup(buffer, b.markup);
         tagFrom(buffer, t.quote, start);
         break;
       case 'code': {

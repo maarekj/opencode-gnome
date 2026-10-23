@@ -25,6 +25,7 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   (`opencode serve --port 4799` + `OPENCODE_GNOME_URL=http://127.0.0.1:4799`) : sur le serveur
   partagé, la session de l'agent en cours fait bouger l'ordre des projets pendant le test.
   `OPENCODE_GNOME_TIMING=1` : temps de construction de la conversation dans les logs.
+  `OPENCODE_GNOME_TEST_LINKS=1` : un clic sur un lien est journalisé (`LIEN url`) au lieu d'ouvrir le navigateur.
   Ne pas toucher aux réglages de l'utilisateur en test : `XDG_CONFIG_HOME=/tmp/...`.
 
 ## Conventions

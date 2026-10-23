@@ -18,6 +18,8 @@ https://github.com/maarekj/opencode-gnome/issues
 - #17 Bouton pour afficher / masquer tous les appels d'outils dans la conversation
 - #18 Barre latérale en arborescence : projets en dossiers, sessions dessous avec activité et menu
 - #19 Commandes « / » dans le compositeur : complétion des commandes, skills et commandes intégrées
+- #20 Mentions « @ » dans le compositeur : complétion des fichiers du projet
+- #21 Historique des prompts de la session avec Haut / Bas dans le compositeur
 
 ## Idées à trier
 (idées pas encore transformées en issue)
@@ -28,4 +30,3 @@ https://github.com/maarekj/opencode-gnome/issues
 - Commandes des agents exécutées sans l'environnement devenv/direnv du projet (serveur systemd) :
   étudier `direnv exec`.
 - Menu d'actions de la session aussi dans l'en-tête de la conversation (renommer, forker, supprimer).
-- Liens cliquables dans les messages (perdus avec le rendu TextView de #5) : TextTag + clic.
