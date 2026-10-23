@@ -32,31 +32,100 @@ export function MarkupLabel({ markup, css = [], hexpand = false }: { markup: str
   );
 }
 
-export function Table({ header, rows }: { header: string[]; rows: string[][] }): JSX.Element {
-  // Lignes en Gtk.Box horizontales homogènes (colonnes de même largeur, alignées d'une ligne à
-  // l'autre). Ni Gtk.Grid ni ScrolledWindow : ils calculent mal la hauteur des labels repliés.
-  const columns = Math.max(header.length, ...rows.map((r) => r.length));
-  return (
-    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={6} cssClasses={['card', 'md-table']}>
-      {[header, ...rows].map((row, y) => (
-        <Gtk.Box homogeneous spacing={18}>
-          {Array.from({ length: columns }, (_v, x) => (
-            <Gtk.Label
-              wrap
-              wrapMode={Pango.WrapMode.WORD_CHAR}
-              xalign={0}
-              valign={Gtk.Align.START}
-              selectable
-              $={(self: Gtk.Label) => {
-                const cell = row[x] ?? '';
-                setMarkup(self, y === 0 ? `<b>${cell}</b>` : cell);
-              }}
-            />
-          ))}
-        </Gtk.Box>
-      ))}
-    </Gtk.Box>
+const COLUMN_SPACING = 18;
+const TABLE_PADDING = 24; // .md-table : 12 px à gauche et à droite
+
+/** Longueur visible d'une cellule (markup retiré), pour répartir les colonnes. */
+const visibleLength = (markup: string): number => markup.replaceAll(/<[^>]+>/gu, '').replaceAll(/&[a-z#0-9]+;/gu, 'x').length;
+
+/** Mots d'une cellule (markup retiré, entités décodées). */
+const wordsOf = (markup: string): string[] =>
+  markup
+    .replaceAll(/<[^>]+>/gu, '')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&amp;', '&')
+    .split(/\s+/u)
+    .filter((w) => w !== '');
+
+interface ColumnSizes {
+  /** plus long mot de chaque colonne (une colonne ne coupe pas ses mots, jusqu'à 20 caractères) */
+  readonly longest: string[];
+  /** poids pour répartir le reste (longueur du contenu, plafonnée) */
+  readonly weights: number[];
+}
+
+function columnSizes(rows: readonly (readonly string[])[], columns: number): ColumnSizes {
+  const col = (x: number): string[] => rows.map((r) => r[x] ?? '');
+  const longest = Array.from({ length: columns }, (_v, x) =>
+    col(x)
+      .flatMap((c) => wordsOf(c))
+      .map((w) => w.slice(0, 20))
+      .reduce((a, w) => (w.length > a.length ? w : a), ''),
   );
+  const lengths = Array.from({ length: columns }, (_v, x) => Math.min(60, Math.max(2, ...col(x).map((c) => visibleLength(c)))));
+  const total = lengths.reduce((a, b) => a + b, 0);
+  return { longest, weights: lengths.map((l) => l / total) };
+}
+
+/** Cellules de chaque tableau, par colonne (pour fixer leur largeur). */
+const tableColumns = new WeakMap<Gtk.Widget, { sizes: ColumnSizes; cells: Gtk.Label[][]; mins?: number[] }>();
+
+/** Fixe la largeur totale d'un tableau : chaque colonne reçoit sa part. */
+export function setTableWidth(table: Gtk.Widget, width: number): void {
+  table.widthRequest = width;
+  const info = tableColumns.get(table);
+  if (info === undefined) return;
+  const { longest, weights } = info.sizes;
+  const free = Math.max(0, width - TABLE_PADDING - COLUMN_SPACING * (weights.length - 1));
+  // chaque colonne a au moins la largeur de son plus long mot ; le reste est réparti selon le contenu
+  // mesuré une fois avec la police réelle (en gras : l'en-tête l'est)
+  info.mins ??= longest.map((word) => {
+    const layout = table.create_pango_layout(null);
+    layout.set_markup(`<b>${GLib.markup_escape_text(word, -1)}</b>`, -1);
+    return layout.get_pixel_size()[0] + 2;
+  });
+  const mins = info.mins;
+  const minTotal = mins.reduce((a, b) => a + b, 0);
+  const widths =
+    minTotal >= free
+      ? mins.map((m) => Math.floor((m / Math.max(1, minTotal)) * free))
+      : (() => {
+          // poids appliqués au total, sans descendre sous le minimum
+          const target = weights.map((w) => w * free);
+          const fixed = target.map((t, x) => t < (mins[x] ?? 0));
+          const rest = free - mins.reduce((a, m, x) => a + (fixed[x] === true ? m : 0), 0);
+          const restWeight = weights.reduce((a, w, x) => a + (fixed[x] === true ? 0 : w), 0) || 1;
+          return weights.map((w, x) => (fixed[x] === true ? (mins[x] ?? 0) : Math.floor((w / restWeight) * rest)));
+        })();
+  widths.forEach((w, x) => {
+    for (const cell of info.cells[x] ?? []) cell.widthRequest = Math.max(10, w);
+  });
+}
+
+export function Table({ header, rows }: { header: string[]; rows: string[][] }): Gtk.Widget {
+  // Lignes en Gtk.Box horizontales ; la largeur de chaque colonne est fixée par setTableWidth,
+  // proportionnellement à son contenu. Ni Gtk.Grid ni ScrolledWindow : ils calculent mal la
+  // hauteur des labels repliés.
+  const all = [header, ...rows];
+  const columns = Math.max(...all.map((r) => r.length));
+  const cells: Gtk.Label[][] = Array.from({ length: columns }, () => []);
+  const table = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6, cssClasses: ['card', 'md-table'] });
+  all.forEach((row, y) => {
+    const line = new Gtk.Box({ spacing: COLUMN_SPACING });
+    for (let x = 0; x < columns; x += 1) {
+      const label = new Gtk.Label({ wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, xalign: 0, valign: Gtk.Align.START, selectable: true });
+      const cell = row[x] ?? '';
+      setMarkup(label, y === 0 ? `<b>${cell}</b>` : cell);
+      cells[x]?.push(label);
+      line.append(label);
+    }
+    table.append(line);
+  });
+  tableColumns.set(table, { sizes: columnSizes(all, columns), cells });
+  return table;
 }
 
 const HEADING_CSS: Readonly<Record<number, string>> = { 1: 'title-2', 2: 'title-3' };
@@ -238,26 +307,51 @@ const tagFrom = (buffer: Gtk.TextBuffer, tag: Gtk.TextTag, offset: number): void
 };
 
 /**
- * Markdown rendu dans un seul Gtk.TextView non éditable : la sélection s'étend librement sur
- * tout le message (paragraphes, titres, listes, code). Les tableaux sont des widgets ancrés.
+ * Force GtkTextView à recalculer toute sa mise en page : un simple queue_resize ne suffit pas
+ * quand la taille d'un widget ancré change (hauteur restée figée, texte non redessiné).
  */
-export function MarkdownView({ text }: { text: string }): Gtk.TextView {
-  const buffer = new Gtk.TextBuffer();
-  const view = new Gtk.TextView({
-    buffer,
-    editable: false,
-    cursorVisible: false,
-    wrapMode: Gtk.WrapMode.WORD_CHAR,
-    cssClasses: ['markdown-view'],
-    hexpand: true,
-  });
-  const t = tags(buffer);
-  enableLinks(view);
-  const tables: Gtk.Widget[] = [];
+function relayout(view: Gtk.TextView): void {
+  const mode = view.wrapMode;
+  view.wrapMode = mode === Gtk.WrapMode.NONE ? Gtk.WrapMode.CHAR : Gtk.WrapMode.NONE;
+  view.wrapMode = mode;
+  view.queue_resize();
+}
+
+/**
+ * Markdown rendu dans des Gtk.TextView non éditables : la sélection s'étend librement sur
+ * les paragraphes, titres, listes et code. Les tableaux sont des widgets entre deux zones de texte.
+ */
+export function MarkdownView({ text }: { text: string }): Gtk.Widget {
   const blocks = parseMarkdown(text);
+  // un message sans tableau : un seul TextView (sélection libre sur tout le message)
+  const segments = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
+  let current: { view: Gtk.TextView; buffer: Gtk.TextBuffer; t: ReturnType<typeof tags> } | null = null;
+  const textView = (): NonNullable<typeof current> => {
+    if (current !== null) return current;
+    const buffer = new Gtk.TextBuffer();
+    const view = new Gtk.TextView({ buffer, editable: false, cursorVisible: false, wrapMode: Gtk.WrapMode.WORD_CHAR, cssClasses: ['markdown-view'], hexpand: true });
+    enableLinks(view);
+    fixHeight(view);
+    segments.append(view);
+    current = { view, buffer, t: tags(buffer) };
+    return current;
+  };
+
   blocks.forEach((b, i) => {
+    // les tableaux sont des widgets à part, entre deux zones de texte
+    if (b.kind === 'table') {
+      const table = Table({ header: b.header, rows: b.rows });
+      table.marginTop = 4;
+      table.marginBottom = 14;
+      segments.append(table);
+      fitTable(table);
+      current = null;
+      return;
+    }
+    const { buffer, t } = textView();
+    // séparateur avec le bloc précédent de la même zone de texte
+    if (buffer.get_char_count() > 0) buffer.insert(buffer.get_end_iter(), '\n', -1);
     const start = buffer.get_char_count();
-    const last = i === blocks.length - 1;
     switch (b.kind) {
       case 'paragraph':
         insertMarkup(buffer, b.markup);
@@ -289,15 +383,6 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
         buffer.apply_tag(t.codeEnd, lastLine, buffer.get_end_iter());
         break;
       }
-      case 'table': {
-        const anchor = buffer.create_child_anchor(buffer.get_end_iter());
-        const table = Table({ header: b.header, rows: b.rows });
-        if (table instanceof Gtk.Widget) {
-          view.add_child_at_anchor(table, anchor);
-          tables.push(table);
-        }
-        break;
-      }
       case 'rule':
         buffer.insert(buffer.get_end_iter(), '⁂', -1);
         tagFrom(buffer, t.rule, start);
@@ -305,38 +390,51 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
       default:
         assertNever(b);
     }
-    if (!last) {
-      buffer.insert(buffer.get_end_iter(), '\n', -1);
-    }
   });
-  // GtkTextView calcule sa hauteur pour une largeur donnée de manière asynchrone : quand il est
-  // construit hors écran (largeur 0), sa première hauteur peut rester figée sur une seule ligne.
-  // À chaque changement de largeur, on relance le calcul et on cale les tableaux ancrés.
-  // Tableaux : GtkTextView alloue les widgets ancrés à leur largeur minimale, on la cale donc sur
-  // la largeur de la vue. Pour ne pas bloquer le rétrécissement, quand la zone de défilement
-  // (largeur de la fenêtre) change, les tableaux sont d'abord réduits, puis recalés.
+  return segments;
+}
+
+/**
+ * GtkTextView calcule sa hauteur pour une largeur donnée de manière asynchrone : construit hors
+ * écran (largeur 0), sa première hauteur peut rester figée sur une ligne. À chaque changement
+ * de largeur, on relance le calcul.
+ */
+function fixHeight(view: Gtk.TextView): void {
   let width = -1;
-  let outer = -1;
-  let shrinking = false;
   view.add_tick_callback(() => {
-    if (tables.length > 0) {
-      const sw = view.get_ancestor(Gtk.ScrolledWindow.$gtype)?.get_width() ?? 0;
-      if (sw !== outer) {
-        outer = sw;
-        shrinking = true;
-        for (const table of tables) table.widthRequest = 100;
-        view.queue_resize();
-        return true;
-      }
-    }
     const w = view.get_width();
-    if ((w !== width || shrinking) && w > 0) {
+    if (w !== width && w > 0) {
       width = w;
-      shrinking = false;
-      for (const table of tables) table.widthRequest = Math.max(100, w - 4);
-      view.queue_resize();
+      relayout(view);
     }
     return true;
   });
-  return view;
+}
+
+/**
+ * Largeur d'un tableau calée sur la place disponible (celle de son parent). Pour ne pas bloquer
+ * le rétrécissement de la fenêtre, quand la zone de défilement change de largeur, le tableau
+ * est d'abord réduit, puis recalé sur la nouvelle largeur du parent.
+ */
+function fitTable(table: Gtk.Widget): void {
+  let outer = -1;
+  let width = -1;
+  let shrinking = false;
+  table.add_tick_callback(() => {
+    const parent = table.get_parent();
+    const sw = table.get_ancestor(Gtk.ScrolledWindow.$gtype)?.get_width() ?? 0;
+    if (sw !== outer) {
+      outer = sw;
+      shrinking = true;
+      setTableWidth(table, 100);
+      return true;
+    }
+    const w = parent?.get_width() ?? 0;
+    if ((w !== width || shrinking) && w > 0) {
+      width = w;
+      shrinking = false;
+      setTableWidth(table, w);
+    }
+    return true;
+  });
 }

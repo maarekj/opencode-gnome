@@ -3,23 +3,15 @@
 Les fonctionnalités planifiées sont suivies dans les issues GitHub :
 https://github.com/maarekj/opencode-gnome/issues
 
-- #1 Questions et permissions dans le flux de la conversation
-- #2 États distincts « en cours » / « en attente » (barre latérale, store)
-- #3 Images et fichiers : affichage et envoi dans le prompt
-- #4 Actions sur les sessions : supprimer, renommer, forker, menu contextuel
-- #5 Sélection de texte sur plusieurs paragraphes + bouton Copier
-- #6 Fichiers modifiés : utiliser l'état git du répertoire (liste + diff)
+Issues ouvertes (retirer une issue de la liste quand elle est fermée) :
+
 - #7 Extension GNOME Shell : indicateur et notifications
-- #8 Projets favoris : mode « Favoris » / « Tous » dans la barre latérale
-- #9 Terminaux persistants par projet (zellij)
-- #13 Écran de préférences : terminal et modèle par défaut
-- #14 Niveau de raisonnement du modèle (variant : low, high…) dans le compositeur
-- #16 Horodatage des messages et durée de réponse / réflexion de l'agent
-- #17 Bouton pour afficher / masquer tous les appels d'outils dans la conversation
+- #9 Terminaux persistants par projet (zellij) : devenv up, pnpm dev…
 - #18 Barre latérale en arborescence : projets en dossiers, sessions dessous avec activité et menu
 - #19 Commandes « / » dans le compositeur : complétion des commandes, skills et commandes intégrées
 - #20 Mentions « @ » dans le compositeur : complétion des fichiers du projet
 - #21 Historique des prompts de la session avec Haut / Bas dans le compositeur
+- #25 Liste de tâches (todolist) de la session dans la conversation
 
 ## Idées à trier
 (idées pas encore transformées en issue)
