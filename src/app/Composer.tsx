@@ -2,30 +2,70 @@
 // Ctrl+Entrée envoie, Entrée insère un saut de ligne (SEND_WITH_CTRL pour inverser).
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import GObject from 'gi://GObject';
 import { createComputed, createState, onCleanup, type Accessor } from 'gnim';
 import type { ContextUsage } from '../shared/conversation.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { attachmentFromFile, attachmentFromTexture, attachmentsFromClipboard, AttachmentView, pickFiles } from './Attachments.tsx';
+import { CompletionPopover, type CompletionItem } from './Completion.ts';
 import { keyedBox } from './KeyedBox.ts';
-import type { Agent, Attachment, Providers } from '../shared/schemas.ts';
+import type { Agent, Attachment, Command, Mention, Providers } from '../shared/schemas.ts';
 
 export interface ModelRef {
   readonly providerID: string;
   readonly modelID: string;
 }
 
+/** Agent, modèle et niveau de raisonnement choisis dans le compositeur. */
+export interface Choice {
+  readonly agent?: string;
+  readonly model?: ModelRef;
+  readonly variant?: string;
+}
+
+/** Contenu d'un envoi : pièces jointes et mentions `@` encore présentes dans le texte. */
+export interface Payload {
+  readonly files: readonly Attachment[];
+  readonly mentions: readonly Mention[];
+}
+
+/** Commande propre à l'app (équivalent des commandes intégrées de la TUI). */
+export interface BuiltinCommand {
+  readonly name: string;
+  readonly description: string;
+  /** arguments attendus, affichés en texte indicatif */
+  readonly hints?: string;
+  /** Exécute la commande ; un texte retourné remplace le contenu de la zone de saisie. */
+  readonly run: (args: string, choice: Choice) => Promise<string | null>;
+}
+
 export interface ComposerProps {
   busy: Accessor<boolean>;
   /** Agent, modèle et niveau de raisonnement de la session (présélection). */
-  initial: () => { agent?: string; model?: ModelRef; variant?: string };
+  initial: () => Choice;
   /**
    * Agents, modèles et défauts. `defaults` : modèles à présélectionner pour une session sans
    * modèle, par priorité (le premier qui existe) ; `defaultVariant` : variante associée au premier.
    */
-  loadChoices: () => Promise<{ agents: Agent[]; providers: Providers; defaults: readonly string[]; defaultVariant?: string }>;
-  send: (text: string, choice: { agent?: string; model?: ModelRef; variant?: string }, files: readonly Attachment[]) => Promise<boolean>;
+  loadChoices: () => Promise<{
+    agents: Agent[];
+    providers: Providers;
+    defaults: readonly string[];
+    defaultVariant?: string;
+  }>;
+  send: (text: string, choice: Choice, payload: Payload) => Promise<boolean>;
+  /** Commandes du serveur pour le répertoire de la session. */
+  loadCommands: () => Promise<Command[]>;
+  /** Exécute une commande du serveur (`POST /session/{id}/command`). */
+  runCommand: (name: string, args: string, choice: Choice, payload: Payload) => Promise<boolean>;
+  builtins: readonly BuiltinCommand[];
+  /** Recherche floue de fichiers ou dossiers du projet (chemins relatifs, dossiers terminés par `/`). */
+  findFiles: (query: string, cancellable: Gio.Cancellable) => Promise<string[]>;
+  /** Prompts déjà envoyés dans la session, du plus ancien au plus récent. */
+  history: () => readonly string[];
   /** Contexte utilisé par la session. */
   context: Accessor<ContextUsage | null>;
   /** Affiche un message d'erreur. */
@@ -119,6 +159,41 @@ function ContextGauge({ context, limits }: { context: Accessor<ContextUsage | nu
   );
 }
 
+const SOURCE_BADGE: Readonly<Record<string, string>> = {
+  command: 'commande',
+  skill: 'skill',
+  mcp: 'MCP',
+};
+
+/** Arguments attendus d'une commande du serveur : `$ARGUMENTS` -> « arguments », `$1 $2` tels quels. */
+const hintsText = (hints: readonly string[] | null | undefined): string | undefined => {
+  const list = (hints ?? []).map((h) => (h === '$ARGUMENTS' ? 'arguments' : h));
+  return list.length === 0 ? undefined : list.join(' ');
+};
+
+/** Filtre insensible à la casse : correspondances par préfixe d'abord, puis par sous-chaîne. */
+function rank<T>(items: readonly T[], query: string, name: (t: T) => string): T[] {
+  const q = query.toLowerCase();
+  const prefix = items.filter((t) => name(t).toLowerCase().startsWith(q));
+  const inner = items.filter((t) => !name(t).toLowerCase().startsWith(q) && name(t).toLowerCase().includes(q));
+  return [...prefix, ...inner];
+}
+
+/** Commande proposée : intégrée à l'app ou du serveur. */
+interface CommandEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly badge: string;
+  readonly hints: string | undefined;
+  readonly builtin?: BuiltinCommand;
+}
+
+/** Délai d'anti-rebond de la recherche de fichiers (ms). */
+const FIND_DELAY_MS = 100;
+const FIND_LIMIT = 20;
+
+const folderIcon = Gio.content_type_get_symbolic_icon('inode/directory');
+
 export function Composer(props: ComposerProps): JSX.Element {
   const agentDD = stringDropDown('Agent', false);
   const modelDD = stringDropDown('Modèle', true);
@@ -197,29 +272,343 @@ export function Composer(props: ComposerProps): JSX.Element {
   };
   void choose();
 
+  // ---------------------------------------------------------------- commandes « / »
+  /** Commandes du serveur (rechargées à chaque ouverture de la liste) */
+  let serverCommands: readonly Command[] = [];
+  const loadCommands = async (): Promise<void> => {
+    try {
+      serverCommands = await props.loadCommands();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  void loadCommands();
+  const commandEntries = (): CommandEntry[] => {
+    const builtins = props.builtins.map((b): CommandEntry => ({ name: b.name, description: b.description, badge: 'intégrée', builtin: b, hints: b.hints }));
+    const taken = new Set(builtins.map((b) => b.name));
+    const server = serverCommands
+      .filter((c) => !taken.has(c.name))
+      .map((c): CommandEntry => ({ name: c.name, description: c.description ?? '', badge: SOURCE_BADGE[c.source ?? 'command'] ?? c.source ?? 'commande', hints: hintsText(c.hints) }));
+    return [...builtins, ...server];
+  };
+  /** Commande désignée par le premier mot du texte (`/nom …`), si elle existe. */
+  const commandOf = (text: string): { entry: CommandEntry; args: string } | null => {
+    const m = /^\/(\S+)(?:\s+([\s\S]*))?$/u.exec(text);
+    if (m === null) return null;
+    const entry = commandEntries().find((c) => c.name === m[1]);
+    return entry === undefined ? null : { entry, args: (m[2] ?? '').trim() };
+  };
+  /** Texte indicatif : arguments attendus par la commande en cours de saisie. */
+  const [hint, setHint] = createState(HINT);
+
+  // ---------------------------------------------------------------- mentions « @ »
+  const mentionTag = new Gtk.TextTag({
+    name: 'mention',
+    foreground: '#3584e4',
+    underline: 1 /* Pango.Underline.SINGLE */,
+  });
+  buffer.tagTable.add(mentionTag);
+  /** `@chemin` inséré par complétion -> dossier ou non */
+  const mentioned = new Map<string, boolean>();
+  /** Plages de mentions encore intactes, dans l'ordre du texte. */
+  const mentionRanges = (): {
+    start: Gtk.TextIter;
+    end: Gtk.TextIter;
+    text: string;
+  }[] => {
+    const out: { start: Gtk.TextIter; end: Gtk.TextIter; text: string }[] = [];
+    const it = buffer.get_start_iter();
+    for (;;) {
+      if (!it.starts_tag(mentionTag) && !it.forward_to_tag_toggle(mentionTag)) break;
+      if (!it.starts_tag(mentionTag)) break;
+      const start = it.copy();
+      it.forward_to_tag_toggle(mentionTag);
+      const end = it.copy();
+      const text = buffer.get_slice(start, end, true);
+      // modifiée à la main (texte collé derrière, caractères effacés) : plus une mention
+      const after = end.get_char();
+      if (mentioned.has(text) && (end.is_end() || /\s/u.test(after))) out.push({ start, end, text });
+      if (end.is_end()) break;
+    }
+    return out;
+  };
+  /** Mentions du texte envoyé (`trimmed` : nombre de caractères retirés en tête). */
+  const collectMentions = (trimmed: number): Mention[] =>
+    mentionRanges().map(({ start, text }) => {
+      const offset = buffer.get_slice(buffer.get_start_iter(), start, true).length - trimmed;
+      return {
+        path: text.slice(1),
+        directory: mentioned.get(text) === true,
+        start: offset,
+        end: offset + text.length,
+      };
+    });
+
+  // ---------------------------------------------------------------- historique (#21)
+  /** position dans l'historique (0 = prompt le plus récent), null hors historique */
+  let historyIndex: number | null = null;
+  let historyList: readonly string[] = [];
+  /** modification du texte par l'app (rappel, complétion) : ne quitte pas l'historique */
+  let programmatic = false;
+  const setText = (text: string): void => {
+    programmatic = true;
+    buffer.text = text;
+    buffer.place_cursor(buffer.get_end_iter());
+    programmatic = false;
+  };
+  const historyEntries = (): string[] => {
+    const out: string[] = [];
+    for (const t of props.history().toReversed()) if (t !== '' && out.at(-1) !== t) out.push(t);
+    return out;
+  };
+
+  // ---------------------------------------------------------------- envoi
+  const clear = (): void => {
+    setText('');
+    mentioned.clear();
+    setFiles([]);
+    historyIndex = null;
+  };
   const submit = (): void => {
-    const text = buffer.text.trim();
+    const raw = buffer.text;
+    const text = raw.trim();
     const attached = files.peek();
     if ((text === '' && attached.length === 0) || sending) return;
     const agent = selectedString(agentDD);
     const model = selectedString(modelDD);
     const variant = variantDD.visible ? selectedString(variantDD) : undefined;
     const slash = model?.indexOf('/') ?? -1;
-    const choice = {
+    const choice: Choice = {
       ...(agent === undefined ? {} : { agent }),
-      ...(model === undefined || slash === -1 ? {} : { model: { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) } }),
+      ...(model === undefined || slash === -1
+        ? {}
+        : {
+            model: {
+              providerID: model.slice(0, slash),
+              modelID: model.slice(slash + 1),
+            },
+          }),
       ...(variant === undefined || variant === DEFAULT_VARIANT ? {} : { variant }),
     };
+    const payload: Payload = {
+      files: attached,
+      mentions: collectMentions(raw.length - raw.trimStart().length),
+    };
+    const command = commandOf(text);
     sending = true;
     const go = async (): Promise<void> => {
-      const ok = await props.send(text, choice, attached);
-      sending = false;
-      if (ok) {
-        buffer.text = '';
-        setFiles([]);
+      if (command?.entry.builtin !== undefined) {
+        const builtin = command.entry.builtin;
+        clear();
+        sending = false;
+        try {
+          const restored = await builtin.run(command.args, choice);
+          if (restored !== null && buffer.text === '') setText(restored);
+        } catch (e) {
+          props.toast(`/${builtin.name} : ${errorMessage(e)}`);
+          if (buffer.text === '') setText(text);
+        }
+        return;
       }
+      if (command !== null) {
+        // la requête ne répond qu'à la fin du tour : la zone de saisie est libérée tout de suite
+        clear();
+        sending = false;
+        const ok = await props.runCommand(command.entry.name, command.args, choice, payload);
+        if (!ok && buffer.text === '') setText(text);
+        return;
+      }
+      const ok = await props.send(text, choice, payload);
+      sending = false;
+      if (ok) clear();
     };
     void go();
+  };
+
+  /** Complétion « / » et « @ », historique, suppression des mentions d'un bloc. */
+  const setupTextView = (view: Gtk.TextView): void => {
+    const popover = new CompletionPopover(view);
+    const cursorIter = (): Gtk.TextIter => buffer.get_iter_at_mark(buffer.get_insert());
+    /** remplace [start, end[ par `text` ; `tag` : mise en évidence comme mention */
+    const replace = (start: number, end: number, text: string, tag: boolean): void => {
+      programmatic = true;
+      const a = buffer.get_iter_at_offset(start);
+      const b = buffer.get_iter_at_offset(end);
+      buffer.delete(a, b);
+      const at = buffer.get_iter_at_offset(start);
+      buffer.insert(at, text, -1);
+      if (tag) buffer.apply_tag(mentionTag, buffer.get_iter_at_offset(start), buffer.get_iter_at_offset(start + GLib.utf8_strlen(text, -1)));
+      programmatic = false;
+    };
+
+    let findCancel: Gio.Cancellable | null = null;
+    let findTimer: number | null = null;
+    let wasSlash = false;
+    const stopFind = (): void => {
+      if (findTimer !== null) GLib.source_remove(findTimer);
+      findTimer = null;
+      findCancel?.cancel();
+      findCancel = null;
+    };
+
+    /** Recherche les fichiers de `query` et affiche la liste ; la mention remplacera [start, end[. */
+    const searchFiles = async (query: string, cancellable: Gio.Cancellable, startOffset: number, endOffset: number): Promise<void> => {
+      let paths: string[];
+      try {
+        paths = await props.findFiles(query, cancellable);
+      } catch (e) {
+        if (!cancellable.is_cancelled()) console.error(e);
+        return;
+      }
+      if (cancellable.is_cancelled()) return;
+      const items = paths.slice(0, FIND_LIMIT).map((path): CompletionItem => {
+        const directory = path.endsWith('/');
+        const trimmed = directory ? path.slice(0, -1) : path;
+        const slashAt = trimmed.lastIndexOf('/');
+        const name = trimmed.slice(slashAt + 1) + (directory ? '/' : '');
+        const [type] = Gio.content_type_guess(name, null);
+        return {
+          title: name,
+          subtitle: slashAt === -1 ? '' : trimmed.slice(0, slashAt + 1),
+          icon: directory ? folderIcon : Gio.content_type_get_symbolic_icon(type),
+          accept: () => {
+            const mention = `@${path}`;
+            mentioned.set(mention, directory);
+            replace(startOffset, endOffset, mention, true);
+            const after = startOffset + GLib.utf8_strlen(mention, -1);
+            // un dossier poursuit la complétion dans son contenu, un fichier est suivi d'une espace
+            if (!directory) replace(after, after, ' ', false);
+            buffer.place_cursor(buffer.get_iter_at_offset(after + (directory ? 0 : 1)));
+            if (directory) update();
+          },
+        };
+      });
+      popover.show(items, buffer.get_iter_at_offset(startOffset));
+    };
+
+    const update = (): void => {
+      const cursor = cursorIter();
+      const before = buffer.get_slice(buffer.get_start_iter(), cursor, true);
+      // commande : texte commençant par « / », curseur dans le premier mot
+      const slash = /^\/(\S*)$/u.exec(before);
+      const command = commandOf(buffer.text.trim());
+      setHint(command?.entry.hints === undefined ? HINT : `/${command.entry.name} ${command.entry.hints}`);
+      if (slash !== null) {
+        stopFind();
+        if (!wasSlash) void loadCommands().then(update);
+        wasSlash = true;
+        const query = slash[1] ?? '';
+        const wordEnd = cursor.copy();
+        while (!wordEnd.is_end() && !/\s/u.test(wordEnd.get_char())) wordEnd.forward_char();
+        const end = wordEnd.get_offset();
+        const items = rank(commandEntries(), query, (c) => c.name).map((c): CompletionItem => ({
+          title: `/${c.name}`,
+          subtitle: c.description.split('\n')[0] ?? '',
+          badge: c.badge,
+          accept: () => {
+            replace(0, end, `/${c.name} `, false);
+            buffer.place_cursor(buffer.get_iter_at_offset(c.name.length + 2));
+          },
+        }));
+        popover.show(items, buffer.get_start_iter());
+        return;
+      }
+      wasSlash = false;
+      // mention : mot sous le curseur commençant par « @ » (en début de texte ou après une espace)
+      const at = /(?:^|\s)@(\S*)$/u.exec(before);
+      if (at === null) {
+        stopFind();
+        popover.hide();
+        return;
+      }
+      const query = at[1] ?? '';
+      const startOffset = cursor.get_offset() - GLib.utf8_strlen(query, -1) - 1;
+      const wordEnd = cursor.copy();
+      while (!wordEnd.is_end() && !/\s/u.test(wordEnd.get_char())) wordEnd.forward_char();
+      const endOffset = wordEnd.get_offset();
+      stopFind();
+      const cancellable = new Gio.Cancellable();
+      findCancel = cancellable;
+      findTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FIND_DELAY_MS, () => {
+        findTimer = null;
+        void searchFiles(query, cancellable, startOffset, endOffset);
+        return GLib.SOURCE_REMOVE;
+      });
+    };
+
+    // mise à jour regroupée (changement de texte + déplacement du curseur dans la même frappe)
+    let queued = false;
+    const schedule = (): void => {
+      if (queued) return;
+      queued = true;
+      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        queued = false;
+        if (view.has_focus) update();
+        return GLib.SOURCE_REMOVE;
+      });
+    };
+    buffer.connect('changed', () => {
+      if (!programmatic) historyIndex = null;
+      schedule();
+    });
+    buffer.connect('notify::cursor-position', schedule);
+    view.connect('destroy', stopFind);
+
+    /** curseur sur la première / dernière ligne affichée */
+    const onFirstLine = (): boolean => !view.backward_display_line(cursorIter());
+    const onLastLine = (): boolean => !view.forward_display_line(cursorIter());
+    const recall = (index: number | null): void => {
+      historyIndex = index;
+      setText(index === null ? '' : (historyList[index] ?? ''));
+      popover.hide();
+    };
+
+    // phase de capture : avant les raccourcis de déplacement du TextView
+    const keys = new Gtk.EventControllerKey({
+      propagationPhase: Gtk.PropagationPhase.CAPTURE,
+    });
+    keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
+      if (popover.key(keyval, state)) return true;
+      const mods = state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.ALT_MASK);
+      if (mods !== 0) return false;
+      switch (keyval) {
+        case Gdk.KEY_Up:
+        case Gdk.KEY_KP_Up:
+          if (historyIndex === null) {
+            if (buffer.text !== '') return false;
+            historyList = historyEntries();
+            if (historyList.length === 0) return false;
+            recall(0);
+            return true;
+          }
+          if (!onFirstLine()) return false;
+          // premier prompt atteint : on s'arrête, sans boucler
+          if (historyIndex + 1 < historyList.length) recall(historyIndex + 1);
+          return true;
+        case Gdk.KEY_Down:
+        case Gdk.KEY_KP_Down:
+          if (historyIndex === null || !onLastLine()) return false;
+          recall(historyIndex === 0 ? null : historyIndex - 1);
+          return true;
+        case Gdk.KEY_Escape:
+          if (historyIndex === null) return false;
+          recall(null);
+          return true;
+        case Gdk.KEY_BackSpace: {
+          // mention supprimée d'un bloc
+          const [hasSelection] = buffer.get_selection_bounds();
+          const cursor = cursorIter();
+          if (hasSelection || !cursor.ends_tag(mentionTag)) return false;
+          const range = mentionRanges().find((r) => r.end.equal(cursor));
+          if (range === undefined) return false;
+          buffer.delete(range.start, range.end);
+          return true;
+        }
+        default:
+          return false;
+      }
+    });
+    view.add_controller(keys);
   };
 
   return (
@@ -285,6 +674,7 @@ export function Composer(props: ComposerProps): JSX.Element {
               return false;
             });
             self.add_controller(keys);
+            setupTextView(self);
             // Ctrl+V : image ou fichiers du presse-papier en pièces jointes, sinon collage normal du texte
             self.connect('paste-clipboard', () => {
               const clipboard = self.get_clipboard();
@@ -313,7 +703,7 @@ export function Composer(props: ComposerProps): JSX.Element {
           {modelDD}
           {variantDD}
           <ContextGauge context={props.context} limits={limits} />
-          <Gtk.Label valign={Gtk.Align.CENTER} cssClasses={['dim-label', 'caption']} label={HINT} />
+          <Gtk.Label valign={Gtk.Align.CENTER} cssClasses={['dim-label', 'caption']} label={hint} />
         </Adw.WrapBox>
         <Gtk.Button
           iconName="media-playback-stop-symbolic"

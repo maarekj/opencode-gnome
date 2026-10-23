@@ -131,6 +131,8 @@ export class Conversation {
   #signature = '';
   #unsubscribe: (() => void) | null = null;
   #disposed = false;
+  /** premier message annulé (masqué avec les suivants) */
+  #revert: string | null = null;
 
   constructor(store: Store, sessionID: string) {
     this.#store = store;
@@ -200,6 +202,34 @@ export class Conversation {
     }
     this.#setLoading(false);
     this.#flush();
+  }
+
+  /** Masque les messages annulés (`/undo`) à partir de `messageID` ; null : tout afficher. */
+  setRevert(messageID: string | null): void {
+    if (messageID === this.#revert) return;
+    this.#revert = messageID;
+    this.#structureChanged = true;
+    this.#flush();
+  }
+
+  /**
+   * Messages de l'utilisateur chargés, du plus ancien au plus récent, avec leur texte
+   * (parties `text` non synthétiques, repères « [Image N] » retirés).
+   */
+  userMessages(): { id: string; text: string }[] {
+    const out: { id: string; text: string }[] = [];
+    for (const id of [...this.#messages.keys()].toSorted()) {
+      const m = this.#messages.get(id);
+      if (m?.info.role !== 'user') continue;
+      const text = m.parts
+        .map((p) => this.#parts.get(p)?.value)
+        .filter((p): p is Part => p?.type === 'text' && p.synthetic !== true && p.ignored !== true)
+        .map((p) => stripImageMarkers(p.text ?? ''))
+        .join('\n')
+        .trim();
+      out.push({ id, text });
+    }
+    return out;
   }
 
   dispose(): void {
@@ -347,8 +377,9 @@ export class Conversation {
     if (!this.#structureChanged) return;
     this.#structureChanged = false;
     const blocks: Block[] = [];
-    // les identifiants opencode sont triables chronologiquement
-    const ids = [...this.#messages.keys()].toSorted();
+    // les identifiants opencode sont triables chronologiquement ; messages annulés masqués
+    const revert = this.#revert;
+    const ids = [...this.#messages.keys()].toSorted().filter((id) => revert === null || id < revert);
     // dernier message de l'agent de chaque tour : le pied de tour vient après lui
     const lastOfTurn = new Map<string, string>();
     for (const id of ids) {

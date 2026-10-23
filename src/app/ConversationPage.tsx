@@ -7,7 +7,10 @@ import { Conversation } from '../shared/conversation.ts';
 import type { Settings } from '../shared/settings.ts';
 import { prettyPath, type Activity, type Store } from '../shared/store.ts';
 import { errorMessage } from '../shared/errors.ts';
+import type { Session } from '../shared/schemas.ts';
+import { builtinCommands } from './Builtins.ts';
 import { Composer } from './Composer.tsx';
+import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
 import { openDiffWindow } from './DiffWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
@@ -50,6 +53,8 @@ export function createConversationPage(opts: {
   sessionID: string;
   attach: (directory: string, sessionID?: string) => void;
   toast: (message: string) => void;
+  newSession: (directory: string) => void;
+  sessionActions: (session: Session) => SessionActions;
 }): ConversationPageHandle {
   const { store, settings, sessionID, attach, toast } = opts;
   return createRoot((dispose) => {
@@ -73,6 +78,10 @@ export function createConversationPage(opts: {
       return v === null ? '' : ACTIVITY_LABEL[v.activity] || prettyPath(v.session.directory);
     });
     const busy = view((v) => v !== null && v.activity !== 'idle');
+    // messages annulés par /undo (ici ou dans la TUI) : masqués jusqu'au prochain prompt
+    const revert = view((v) => v?.session.revert?.messageID ?? null);
+    conversation.setRevert(revert.peek());
+    revert.subscribe(() => conversation.setRevert(revert.peek()));
     const client = store.client;
     const dir = (): string => conversation.directory ?? view.peek()?.session.directory ?? GLib.get_home_dir();
 
@@ -96,7 +105,33 @@ export function createConversationPage(opts: {
         const defaults = [defaultModel, config?.model ?? undefined].filter((m): m is string => m !== undefined && m !== '');
         return { agents, providers, defaults, ...(defaultModel === undefined || defaultVariant === undefined ? {} : { defaultVariant }) };
       },
-      send: (text, choice, files) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { files, ...choice })),
+      send: (text, choice, payload) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { ...payload, ...choice })),
+      loadCommands: () => client.commands(dir()),
+      runCommand: (name, args, choice, payload) => attempt(toast, `/${name}`, () => client.command(sessionID, dir(), name, args, { ...payload, ...choice })),
+      builtins: builtinCommands({
+        client,
+        sessionID,
+        dir,
+        session: () => store.session(sessionID) ?? view.peek()?.session,
+        userMessages: () => conversation.userMessages(),
+        toast,
+        newSession: opts.newSession,
+        sessionActions: opts.sessionActions,
+        attach,
+        parent: () => {
+          if (!(page instanceof Gtk.Widget)) throw new TypeError('widget attendu');
+          return page;
+        },
+      }),
+      findFiles: async (query, cancellable) => {
+        // fichiers et dossiers : les dossiers permettent de descendre dans l'arborescence
+        const [files, dirs] = await Promise.all([
+          client.findFiles(dir(), query, { limit: 20, cancellable }),
+          client.findFiles(dir(), query, { type: 'directory', limit: 5, cancellable }),
+        ]);
+        return query.endsWith('/') ? [...dirs, ...files] : [...files.slice(0, 15), ...dirs, ...files.slice(15)];
+      },
+      history: () => conversation.userMessages().map((m) => m.text),
       toast,
       context: conversation.context,
       abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),

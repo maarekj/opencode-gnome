@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
-import { Agent, AppEvent, type Attachment, FileDiff, GlobalEnvelope, Health, MessageWithParts, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { Agent, AppEvent, type Attachment, Command, FileDiff, type Mention, SharedSession, GlobalEnvelope, Health, MessageWithParts, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
 Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
@@ -18,6 +18,24 @@ const encoder = new TextEncoder();
 /** Types de fichiers que les modèles lisent directement en pièce jointe. */
 export const isModelReadable = (mime: string): boolean =>
   mime.startsWith('image/') || mime === 'application/pdf' || mime.startsWith('text/') || mime === 'application/json';
+
+export interface PromptOptions {
+  agent?: string;
+  model?: { providerID: string; modelID: string };
+  variant?: string;
+  files?: readonly Attachment[];
+  mentions?: readonly Mention[];
+}
+
+/** Parties `file` des mentions `@chemin`, au format de la TUI (le serveur lit le fichier ou liste le dossier). */
+const mentionParts = (directory: string, mentions: readonly Mention[]): object[] =>
+  mentions.map((m) => ({
+    type: 'file',
+    mime: m.directory ? 'application/x-directory' : 'text/plain',
+    filename: m.path,
+    url: GLib.filename_to_uri(GLib.build_filenamev([directory, m.path]), null),
+    source: { type: 'file', path: m.path, text: { value: `@${m.path}`, start: m.start, end: m.end } },
+  }));
 
 export class OpencodeClient {
   readonly url: string;
@@ -36,13 +54,19 @@ export class OpencodeClient {
     return `${this.url}${path}${params.length > 0 ? `?${params.join('&')}` : ''}`;
   }
 
-  async request<S extends z.ZodMiniType>(method: string, path: string, schema: S, opts: { query?: Query; body?: unknown } = {}): Promise<z.output<S>> {
+  async request<S extends z.ZodMiniType>(
+    method: string,
+    path: string,
+    schema: S,
+    opts: { query?: Query; body?: unknown; long?: boolean; cancellable?: Gio.Cancellable } = {},
+  ): Promise<z.output<S>> {
     const msg = Soup.Message.new(method, this.#uri(path, opts.query));
     if (msg === null) throw new Error(`URL invalide : ${this.url}${path}`);
     if (opts.body !== undefined) {
       msg.set_request_body_from_bytes('application/json', new GLib.Bytes(encoder.encode(JSON.stringify(opts.body))));
     }
-    const bytes = await this.#session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const session = opts.long === true ? this.#stream : this.#session;
+    const bytes = await session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, opts.cancellable ?? null);
     const data = bytes.get_data();
     const text = data === null ? '' : decoder.decode(data);
     const status: number = msg.get_status();
@@ -105,13 +129,8 @@ export class OpencodeClient {
   }
 
   /** Envoie un prompt sans attendre la réponse (elle arrive par le flux d'événements). */
-  async prompt(
-    sessionID: string,
-    directory: string,
-    text: string,
-    opts: { agent?: string; model?: { providerID: string; modelID: string }; variant?: string; files?: readonly Attachment[] } = {},
-  ): Promise<void> {
-    const { files = [], ...rest } = opts;
+  async prompt(sessionID: string, directory: string, text: string, opts: PromptOptions = {}): Promise<void> {
+    const { files = [], mentions = [], ...rest } = opts;
     // Les fournisseurs refusent les types non pris en charge (xlsx, zip…), et l'erreur se répète
     // à chaque tour car la pièce jointe reste dans l'historique : ces fichiers sont transmis par
     // leur chemin, l'agent les ouvre avec ses outils.
@@ -122,11 +141,62 @@ export class OpencodeClient {
     const parts = [
       ...(fullText === '' ? [] : [{ type: 'text', text: fullText }]),
       ...direct.map((f) => ({ type: 'file', mime: f.mime, filename: f.filename, url: f.url })),
+      ...mentionParts(directory, mentions),
     ];
     await this.request('POST', `/session/${encodeURIComponent(sessionID)}/prompt_async`, z.unknown(), {
       query: { directory },
       body: { parts, ...rest },
     });
+  }
+
+  /** Commandes disponibles dans le répertoire (serveur, utilisateur, projet, skills, MCP). */
+  commands(directory: string): Promise<Command[]> {
+    return this.get('/command', z.array(Command), { directory });
+  }
+
+  /**
+   * Exécute une commande comme la TUI. La requête ne répond qu'à la fin du tour de l'agent :
+   * session HTTP sans délai d'expiration, la progression arrive par le flux d'événements.
+   */
+  async command(sessionID: string, directory: string, command: string, args: string, opts: PromptOptions = {}): Promise<void> {
+    const { files = [], mentions = [], model, ...rest } = opts;
+    const parts = [...files.map((f) => ({ type: 'file', mime: f.mime, filename: f.filename, url: f.url })), ...mentionParts(directory, mentions)];
+    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/command`, z.unknown(), {
+      query: { directory },
+      body: { command, arguments: args, ...rest, ...(model === undefined ? {} : { model: `${model.providerID}/${model.modelID}` }), ...(parts.length === 0 ? {} : { parts }) },
+      long: true,
+    });
+  }
+
+  /** Compacte la session (résumé par le modèle donné), comme `/compact`. */
+  async summarize(sessionID: string, directory: string, model: { providerID: string; modelID: string }): Promise<void> {
+    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/summarize`, z.unknown(), { query: { directory }, body: model, long: true });
+  }
+
+  /** Annule les messages à partir de `messageID` (et les modifications de fichiers associées). */
+  async revert(sessionID: string, directory: string, messageID: string): Promise<void> {
+    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/revert`, z.unknown(), { query: { directory }, body: { messageID } });
+  }
+
+  /** Rétablit tous les messages annulés. */
+  async unrevert(sessionID: string, directory: string): Promise<void> {
+    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/unrevert`, z.unknown(), { query: { directory } });
+  }
+
+  /** Partage la session ; retourne le lien public. */
+  async share(sessionID: string, directory: string): Promise<string | null> {
+    const s = await this.request('POST', `/session/${encodeURIComponent(sessionID)}/share`, SharedSession, { query: { directory } });
+    return s.share?.url ?? null;
+  }
+
+  async unshare(sessionID: string, directory: string): Promise<void> {
+    await this.request('DELETE', `/session/${encodeURIComponent(sessionID)}/share`, z.unknown(), { query: { directory } });
+  }
+
+  /** Recherche floue de fichiers (ou dossiers) du répertoire, triée par pertinence, `.gitignore` respecté. */
+  findFiles(directory: string, query: string, opts: { type?: 'file' | 'directory'; limit?: number; cancellable?: Gio.Cancellable } = {}): Promise<string[]> {
+    const { cancellable, ...rest } = opts;
+    return this.request('GET', '/find/file', z.array(z.string()), { query: { directory, query, ...rest }, ...(cancellable === undefined ? {} : { cancellable }) });
   }
 
   async abort(sessionID: string, directory: string): Promise<void> {

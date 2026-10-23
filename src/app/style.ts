@@ -32,6 +32,20 @@ export const STYLESHEET = `
 .composer-text {
   background: transparent;
 }
+.completion > contents {
+  padding: 4px;
+}
+.completion-list {
+  background: transparent;
+}
+.completion-list > row {
+  border-radius: 6px;
+}
+.completion-badge {
+  background: alpha(currentColor, 0.1);
+  border-radius: 999px;
+  padding: 0 8px;
+}
 .request {
   padding: 12px 14px;
 }

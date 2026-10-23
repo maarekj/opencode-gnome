@@ -22,6 +22,8 @@ export const Session = z.looseObject({
   agent: z.optional(z.string()),
   model: z.optional(z.looseObject({ id: z.string(), providerID: z.string(), variant: z.optional(z.string()) })),
   cost: z.optional(z.number()),
+  /** messages annulés (`/undo`) à partir de `messageID` */
+  revert: z.optional(z.nullable(z.looseObject({ messageID: z.string() }))),
   time: Time,
   /** présent dans /experimental/session */
   project: z.optional(z.looseObject({ id: z.string(), worktree: z.string() })),
@@ -163,6 +165,33 @@ export type VcsInfo = z.output<typeof VcsInfo>;
 export const OpencodeConfig = z.looseObject({ model: z.optional(z.nullable(z.string())) });
 export type OpencodeConfig = z.output<typeof OpencodeConfig>;
 export type FileDiff = z.output<typeof FileDiff>;
+
+/** Commande du serveur (`GET /command`) : commande intégrée, de l'utilisateur, du projet, skill ou MCP. */
+export const Command = z.looseObject({
+  name: z.string(),
+  description: z.optional(z.nullable(z.string())),
+  /** command | skill | mcp */
+  source: z.optional(z.nullable(z.string())),
+  agent: z.optional(z.nullable(z.string())),
+  model: z.optional(z.nullable(z.string())),
+  subtask: z.optional(z.nullable(z.boolean())),
+  /** arguments attendus (`$ARGUMENTS`, `$1`…) */
+  hints: z.optional(z.nullable(z.array(z.string()))),
+});
+export type Command = z.output<typeof Command>;
+
+/** Session partagée : lien public. */
+export const SharedSession = z.looseObject({ share: z.optional(z.nullable(z.looseObject({ url: z.string() }))) });
+
+/** Mention `@chemin` d'un fichier ou dossier du projet, envoyée comme partie `file` (comme la TUI). */
+export interface Mention {
+  /** chemin relatif au répertoire de la session (`src/app/` pour un dossier) */
+  readonly path: string;
+  readonly directory: boolean;
+  /** position de `@chemin` dans le texte envoyé (indices de chaîne JS) */
+  readonly start: number;
+  readonly end: number;
+}
 
 /** Pièce jointe envoyée avec un prompt (`FilePartInput`). */
 export interface Attachment {

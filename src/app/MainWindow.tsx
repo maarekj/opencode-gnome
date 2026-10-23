@@ -593,7 +593,7 @@ export function MainWindow({
       if (split !== null) split.showContent = true;
       let handle = pages.get(sessionID);
       if (handle === undefined) {
-        handle = createConversationPage({ store, settings, sessionID, attach: actions.attach, toast: actions.toast });
+        handle = createConversationPage({ store, settings, sessionID, attach: actions.attach, toast: actions.toast, newSession: actions.newSession, sessionActions: actions.sessionActions });
         pages.set(sessionID, handle);
       }
       if (nav.visiblePage === handle.page) return;
