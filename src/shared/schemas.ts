@@ -214,6 +214,13 @@ export const AppEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.deleted'), properties: z.looseObject({ sessionID: z.string() }) }),
   z.object({ type: z.literal('session.status'), properties: z.looseObject({ sessionID: z.string(), status: SessionStatus }) }),
   z.object({ type: z.literal('session.idle'), properties: z.looseObject({ sessionID: z.string() }) }),
+  z.object({
+    type: z.literal('session.error'),
+    properties: z.looseObject({
+      sessionID: z.optional(z.string()),
+      error: z.optional(z.looseObject({ name: z.optional(z.string()), data: z.optional(z.looseObject({ message: z.optional(z.string()) })) })),
+    }),
+  }),
   z.object({ type: z.enum(['permission.asked', 'permission.v2.asked']), properties: z.looseObject({ id: z.string(), sessionID: z.string() }) }),
   z.object({ type: z.enum(['permission.replied', 'permission.v2.replied']), properties: z.looseObject({ sessionID: z.string() }) }),
   z.object({

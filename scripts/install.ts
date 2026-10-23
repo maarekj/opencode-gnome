@@ -28,6 +28,7 @@ const home = os.homedir();
 const binDir = path.join(home, '.local', 'bin');
 const unitDir = path.join(home, '.config', 'systemd', 'user');
 const appsDir = path.join(home, '.local', 'share', 'applications');
+const dbusDir = path.join(home, '.local', 'share', 'dbus-1', 'services');
 
 const which = (bin: string): string => {
   const found = (process.env['PATH'] ?? '').split(':').map((d) => path.join(d, bin)).find((p) => fs.existsSync(p));
@@ -129,7 +130,17 @@ Icon=${APP_ID}
 Terminal=false
 Categories=Development;
 StartupNotify=true
-DBusActivatable=false
+DBusActivatable=true
+`,
+);
+
+// Activation D-Bus : GNOME Shell active les actions des notifications (clic, boutons) via
+// org.freedesktop.Application sur le nom de bus de l'application (DBusActivatable=true).
+write(
+  path.join(dbusDir, `${APP_ID}.service`),
+  `[D-BUS Service]
+Name=${APP_ID}
+Exec=${path.join(binDir, LAUNCHER)} --gapplication-service
 `,
 );
 

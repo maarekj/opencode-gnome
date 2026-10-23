@@ -172,6 +172,7 @@ overrides:
   '@girs/giounix-2.0': 5.5.0
   '@girs/soup-3.0': 5.5.0
   '@girs/pango-1.0': 5.5.0
+  '@girs/gsound-1.0': 5.5.0
 
 importers:
 
@@ -197,6 +198,9 @@ importers:
         specifier: 5.5.0
         version: 5.5.0
       '@girs/gobject-2.0':
+        specifier: 5.5.0
+        version: 5.5.0
+      '@girs/gsound-1.0':
         specifier: 5.5.0
         version: 5.5.0
       '@girs/gtk-4.0':
@@ -417,6 +421,9 @@ packages:
 
   '@girs/gsk-4.0@5.5.0':
     resolution: {integrity: sha512-OXGkW0sj8a+O9cGK0+pnqEPchbN4b0+1/ZgP3XU+Tdy54WEAG9N7Le0vLtO6/gZp2oLCe3QFv2Z2yxOd2WxEZA==}
+
+  '@girs/gsound-1.0@5.5.0':
+    resolution: {integrity: sha512-ogsaDuNV59BbhttwMG2L7efVt/HCPHQuGWMhkzeQ8gtXVXmacoyzUlIENqgLs+vSIrvCyu3KvpXZjvOBiiuSQg==}
 
   '@girs/gtk-4.0@5.5.0':
     resolution: {integrity: sha512-bDsHBbgmLaxvx3w10i10AicLGNNpEHiBEHHAZUUTutOkt1GRYjHBwC9iR7MRly9ZPL0aFE+c8hJjEXBflg8MtA==}
@@ -927,6 +934,14 @@ snapshots:
       '@girs/harfbuzz-0.0': 5.5.0
       '@girs/pango-1.0': 5.5.0
       '@girs/pangocairo-1.0': 5.5.0
+
+  '@girs/gsound-1.0@5.5.0':
+    dependencies:
+      '@girs/gio-2.0': 5.5.0
+      '@girs/gjs': 5.5.0
+      '@girs/glib-2.0': 5.5.0
+      '@girs/gmodule-2.0': 5.5.0
+      '@girs/gobject-2.0': 5.5.0
 
   '@girs/gtk-4.0@5.5.0':
     dependencies:

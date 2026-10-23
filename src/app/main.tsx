@@ -9,6 +9,7 @@ import { serverUrl } from '../shared/config.ts';
 import { Settings } from '../shared/settings.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
+import { Notifier } from './Notifier.ts';
 import { openPreferences } from './PreferencesDialog.tsx';
 import { STYLESHEET } from './style.ts';
 
@@ -21,6 +22,7 @@ Gtk.Window.set_default_icon_name(APP_ID);
 const store = new Store(new OpencodeClient(serverUrl()));
 const settings = new Settings();
 let api: WindowApi | null = null;
+let notifier: Notifier | null = null;
 let size: [number, number] | undefined;
 
 // ------------------------------------------------------------------ ligne de commande
@@ -48,7 +50,12 @@ const openSession = new Gio.SimpleAction({ name: 'open-session', parameterType: 
 openSession.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
   const id = param?.get_string()[0];
   if (id === undefined || id === '') return;
-  app.activate();
+  // fenêtre existante : simple present() (le jeton d'activation reçu avec l'action, ex. clic sur
+  // une notification, l'autorise à passer au premier plan) ; sinon activation normale
+  const win = app.get_active_window();
+  if (win === null) app.activate();
+  else win.present();
+  notifier?.withdraw(id);
   // la session n'est peut-être pas encore chargée : attendre le premier chargement
   if (store.projects.peek().length > 0 || store.connection.peek().state === 'error') {
     api?.openSession(id);
@@ -60,6 +67,19 @@ openSession.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | nul
   });
 });
 app.add_action(openSession);
+
+/** app.reply-permission((session, répertoire, demande, réponse)) : boutons des notifications */
+const replyPermission = new Gio.SimpleAction({ name: 'reply-permission', parameterType: new GLib.VariantType('(ssss)') });
+replyPermission.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
+  if (param === null) return;
+  const [sessionID, directory, requestID, reply] = param.deepUnpack<[string, string, string, string]>();
+  if (reply !== 'once' && reply !== 'reject') return;
+  notifier?.withdraw(sessionID);
+  store.client.replyPermission(requestID, directory, reply).catch((e: unknown) => {
+    console.error(e);
+  });
+});
+app.add_action(replyPermission);
 
 /** app.preferences : menu principal, Ctrl+, */
 const preferences = new Gio.SimpleAction({ name: 'preferences' });
@@ -106,6 +126,10 @@ app.connect('startup', () => {
 });
 
 app.connect('activate', () => {
+  // le jeton de lancement hérité de l'environnement ne sert qu'une fois : le garder ferait
+  // réutiliser un jeton périmé (refusé par GNOME) quand une action redemande le premier plan
+  GLib.unsetenv('XDG_ACTIVATION_TOKEN');
+  GLib.unsetenv('DESKTOP_STARTUP_ID');
   const existing = app.get_active_window();
   if (existing !== null) {
     existing.present();
@@ -113,6 +137,13 @@ app.connect('activate', () => {
   }
   store.start();
   settings.watch();
+  notifier ??= new Notifier({
+    app,
+    store,
+    settings,
+    // la fenêtre doit avoir le focus : sinon la session affichée mérite aussi une notification
+    focusedSession: () => (app.get_active_window()?.isActive === true ? (api?.shownSession() ?? null) : null),
+  });
   createRoot((dispose) => {
     const win = MainWindow({
       app,

@@ -63,6 +63,7 @@ export class Store {
   readonly #questions = new Map<string, Set<string>>();
   /** sessionID -> abonnés aux événements de messages (conversations ouvertes) */
   readonly #messageListeners = new Map<string, Set<(e: SessionEvent) => void>>();
+  readonly #errorListeners = new Set<(sessionID: string, message: string) => void>();
   #stop: (() => void) | null = null;
   #refreshQueued = false;
 
@@ -177,6 +178,19 @@ export class Store {
   }
 
   /** Session connue (racine), si présente. */
+  /** Première demande de permission en attente d'une session (pour y répondre depuis une notification). */
+  pendingPermission(sessionID: string): string | undefined {
+    return [...(this.#permissions.get(sessionID) ?? [])][0];
+  }
+
+  /** S'abonne aux erreurs de session (`session.error`). */
+  onSessionError(fn: (sessionID: string, message: string) => void): () => void {
+    this.#errorListeners.add(fn);
+    return () => {
+      this.#errorListeners.delete(fn);
+    };
+  }
+
   session(sessionID: string): Session | undefined {
     return this.#sessions.get(sessionID);
   }
@@ -195,6 +209,14 @@ export class Store {
         return;
       case 'server.connected':
         return;
+      case 'session.error': {
+        const { sessionID, error } = event.properties;
+        // interruption volontaire : pas une erreur à signaler
+        if (sessionID === undefined || error?.name === 'MessageAbortedError') return;
+        const message = error?.data?.message ?? error?.name ?? 'Erreur';
+        for (const fn of this.#errorListeners) fn(sessionID, message);
+        return;
+      }
       case 'session.created':
       case 'session.updated':
         if (event.properties.info.parentID === undefined) this.#sessions.set(event.properties.info.id, event.properties.info);

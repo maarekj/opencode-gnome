@@ -533,6 +533,8 @@ export interface WindowApi {
   openSession: (sessionID: string) => void;
   /** ferme la session affichée (Ctrl+W) */
   closeCurrent: () => void;
+  /** session affichée, ou null */
+  shownSession: () => string | null;
 }
 
 export function MainWindow({
@@ -716,10 +718,18 @@ export function MainWindow({
   };
 
   nav.add(asPage(SessionsPage({ store, current, actions, terminals })));
-  ready({ openSession: actions.openSession, closeCurrent: () => {
+  const shownSession = (): string | null => {
     const tag = nav.visiblePage?.tag ?? '';
-    if (tag.startsWith('session:')) actions.closeSession(tag.slice('session:'.length));
-  } });
+    return tag.startsWith('session:') ? tag.slice('session:'.length) : null;
+  };
+  ready({
+    openSession: actions.openSession,
+    closeCurrent: () => {
+      const id = shownSession();
+      if (id !== null) actions.closeSession(id);
+    },
+    shownSession,
+  });
 
   /** Ligne mise en évidence dans la barre latérale : session affichée, sinon projet courant. */
   const [shown, setShown] = createState('');

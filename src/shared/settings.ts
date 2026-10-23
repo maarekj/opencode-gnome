@@ -39,6 +39,10 @@ export const SettingsData = z.object({
   maxWidth: z.prefault(z.number(), 860),
   /** afficher les appels d'outils dans les conversations */
   showTools: z.prefault(z.boolean(), true),
+  /** notifications de bureau (session terminée, question, permission, erreur) */
+  notifications: z.prefault(z.boolean(), true),
+  /** son joué avec les notifications */
+  notificationSound: z.prefault(z.boolean(), true),
   /** terminal : nom connu (`ptyxis`…), `custom` (commande libre) ; absent = automatique */
   terminal: z.optional(z.string()),
   /** commande du terminal personnalisé (préfixe argv, ex. `foot -e`) */
@@ -50,7 +54,7 @@ export const SettingsData = z.object({
 });
 export type SettingsData = z.output<typeof SettingsData>;
 
-const DEFAULTS: SettingsData = { terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, fontScale: 100, maxWidth: 860 };
+const DEFAULTS: SettingsData = { terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860 };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -141,6 +145,14 @@ export class Settings {
     const has = this.data.peek().collapsed.includes(key);
     if (has === collapsed) return;
     this.update((d) => ({ ...d, collapsed: collapsed ? [...d.collapsed, key] : d.collapsed.filter((k) => k !== key) }));
+  }
+
+  setNotifications(on: boolean): void {
+    if (this.data.peek().notifications !== on) this.update((d) => ({ ...d, notifications: on }));
+  }
+
+  setNotificationSound(on: boolean): void {
+    if (this.data.peek().notificationSound !== on) this.update((d) => ({ ...d, notificationSound: on }));
   }
 
   setShowTools(show: boolean): void {

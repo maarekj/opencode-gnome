@@ -131,6 +131,24 @@ function conversationGroup(settings: Settings): Adw.PreferencesGroup {
     width.sensitive = !full.active;
     settings.setNumber('maxWidth', full.active ? 0 : Math.round(width.value));
   });
+  const notify = new Adw.SwitchRow({
+    title: 'Notifications',
+    subtitle: 'Session terminée, question, permission demandée ou erreur (application ouverte)',
+    active: d.notifications,
+  });
+  const sound = new Adw.SwitchRow({
+    title: 'Son',
+    subtitle: 'Avec chaque notification ; si la session est déjà affichée, seulement un son discret',
+    active: d.notificationSound,
+    sensitive: d.notifications,
+  });
+  notify.connect('notify::active', () => {
+    settings.setNotifications(notify.active);
+    sound.sensitive = notify.active;
+  });
+  sound.connect('notify::active', () => settings.setNotificationSound(sound.active));
+  group.add(notify);
+  group.add(sound);
   group.add(font);
   group.add(full);
   group.add(width);

@@ -19,3 +19,4 @@ Issues ouvertes (retirer une issue de la liste quand elle est fermée) :
 - Commandes des agents exécutées sans l'environnement devenv/direnv du projet (serveur systemd) :
   étudier `direnv exec`.
 - Menu d'actions de la session aussi dans l'en-tête de la conversation (renommer, forker, supprimer).
+- Extension GNOME Shell (mise de côté, cf. #7) : indicateur d'activité dans la barre du haut, prompt rapide.
