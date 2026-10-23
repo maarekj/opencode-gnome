@@ -81,7 +81,7 @@ function ProjectRow({
       subtitle={esc(prettyPath(project.path))}
       subtitleLines={1}
       activatable
-      cssClasses={empty ? ['project-row', 'dim-label'] : ['project-row']}
+      cssClasses={[...(empty ? ['project-row', 'dim-label'] : ['project-row']), ...(expanded && open > 0 ? ['expanded'] : [])]}
       tooltipText={empty ? 'Aucune session' : ''}
       $={(self: Adw.ActionRow) => {
         attachContextMenu(self, () => [
@@ -133,14 +133,14 @@ function ProjectRow({
 }
 
 /** Session ouverte, sous son projet : titre, activité, fermeture (×) au survol, menu contextuel. */
-function SessionTreeRow({ view, actions }: { view: SessionView; actions: ProjectActions }): JSX.Element {
+function SessionTreeRow({ view, last, actions }: { view: SessionView; last: boolean; actions: ProjectActions }): JSX.Element {
   const s = view.session;
   const title = s.title === '' ? 'Sans titre' : s.title;
   const act = actions.sessionActions(s);
   return (
     <Gtk.ListBoxRow
       name={`s:${s.id}`}
-      cssClasses={['session-tree-row']}
+      cssClasses={last ? ['session-tree-row', 'last'] : ['session-tree-row']}
       tooltipText={title}
       $={(self: Gtk.ListBoxRow) => {
         attachContextMenu(self, () => [
@@ -154,11 +154,11 @@ function SessionTreeRow({ view, actions }: { view: SessionView; actions: Project
         ]);
       }}
     >
-      <Gtk.Box spacing={8} marginStart={44} marginEnd={4} marginTop={2} marginBottom={2}>
+      <Gtk.Box spacing={8} marginStart={34} marginEnd={4} cssClasses={['session-tree-inner']}>
         <Gtk.Box widthRequest={16} valign={Gtk.Align.CENTER}>
           {treeActivity(view)}
         </Gtk.Box>
-        <Gtk.Label label={title} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} />
+        <Gtk.Label label={title} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['session-title']} />
         <Gtk.Button
           iconName="window-close-symbolic"
           tooltipText="Fermer (Ctrl+W)"
@@ -192,12 +192,12 @@ function treeActivity(view: SessionView): JSX.Element {
 /** Élément de l'arbre aplati : un projet, ou une de ses sessions ouvertes. */
 type TreeItem =
   | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly expanded: boolean }
-  | { readonly kind: 'session'; readonly view: SessionView };
+  | { readonly kind: 'session'; readonly view: SessionView; readonly last: boolean };
 
 const treeKey = (i: TreeItem): string =>
   i.kind === 'project'
     ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.expanded}`
-    : `s|${i.view.session.id}|${i.view.activity}|${i.view.session.title}`;
+    : `s|${i.view.session.id}|${i.view.activity}|${i.view.session.title}|${i.last}`;
 
 function startServer(): void {
   try {
@@ -292,13 +292,13 @@ function Sidebar({
                     });
                     const expanded = !collapsed.includes(p.key);
                     out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: open.length, expanded });
-                    if (expanded) for (const view of open) out.push({ kind: 'session', view });
+                    if (expanded) for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === open.length - 1 });
                   }
                   return out;
                 });
                 onCleanup(
                   keyedListBox(self, items, treeKey, (i) =>
-                    asWidget(i.kind === 'project' ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, expanded: i.expanded, actions }) : SessionTreeRow({ view: i.view, actions })),
+                    asWidget(i.kind === 'project' ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, expanded: i.expanded, actions }) : SessionTreeRow({ view: i.view, last: i.last, actions })),
                   ),
                 );
                 // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)

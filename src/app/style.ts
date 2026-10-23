@@ -167,4 +167,29 @@ export const STYLESHEET = `
   min-height: 22px;
   padding: 0;
 }
+
+/* barre latérale : hiérarchie projet > sessions */
+.project-row label.title {
+  font-weight: bold;
+}
+/* un projet déplié est suivi de ses sessions : espace avant le projet suivant */
+.session-tree-row.last {
+  margin-bottom: 10px;
+}
+.project-row.expanded {
+  margin-bottom: 0;
+}
+.session-tree-row {
+  min-height: 30px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* ligne-guide verticale sous le dossier du projet */
+.session-tree-inner {
+  border-left: 1px solid alpha(currentColor, 0.18);
+  padding-left: 12px;
+}
+.session-tree-row .session-title {
+  font-size: 0.93em;
+}
 `;
