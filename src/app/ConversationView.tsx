@@ -12,6 +12,7 @@ import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../sha
 import { keyedBox } from './KeyedBox.ts';
 import { MarkdownView } from './Markdown.tsx';
 import { AnsweredQuestions, PermissionCard, QuestionCard, type RequestActions } from './Requests.tsx';
+import { todosOfCall, TodoRows, todoSummary } from './TodoPanel.tsx';
 
 /** Demande en attente d'une réponse de l'utilisateur. */
 type Pending = { readonly kind: 'permission'; readonly request: PermissionRequest } | { readonly kind: 'question'; readonly request: QuestionRequest };
@@ -140,7 +141,27 @@ function ToolDetails({ part }: { part: Part }): JSX.Element {
   );
 }
 
-function ToolLine({ part: p }: { part: Part }): JSX.Element {
+/** Appel `todowrite` / `todoread` : une ligne « Liste de tâches mise à jour · 3/7 », les tâches en détail. */
+function TodoToolLine({ part: p }: { part: Part }): JSX.Element {
+  const todos = todosOfCall(p.state?.input, p.state?.metadata);
+  if (todos === null || p.state?.status === 'error') return <ToolLine part={p} generic />;
+  const label = p.tool === 'todoread' ? 'Liste de tâches consultée' : 'Liste de tâches mise à jour';
+  return (
+    <Gtk.Expander>
+      <Gtk.Box $type="label" spacing={8}>
+        <StatusIcon status={p.state?.status ?? 'pending'} />
+        <Gtk.Label label={label} cssClasses={['heading']} />
+        <Gtk.Label label={todoSummary(todos)} ellipsize={Pango.EllipsizeMode.END} xalign={0} hexpand cssClasses={['dim-label']} />
+      </Gtk.Box>
+      <Gtk.Box marginTop={6} marginStart={28}>
+        <TodoRows todos={todos} />
+      </Gtk.Box>
+    </Gtk.Expander>
+  );
+}
+
+function ToolLine({ part: p, generic = false }: { part: Part; generic?: boolean }): JSX.Element {
+  if (!generic && (p.tool === 'todowrite' || p.tool === 'todoread')) return <TodoToolLine part={p} />;
   let expanded = false;
   const waiting = p.tool === 'question' && (p.state?.status === 'running' || p.state?.status === 'pending');
   return (

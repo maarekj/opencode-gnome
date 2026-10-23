@@ -145,6 +145,14 @@ export const Providers = z.looseObject({
 });
 export type Providers = z.output<typeof Providers>;
 
+/** Tâche de la liste de tâches d'une session (outil `todowrite`). */
+export const Todo = z.looseObject({
+  content: z.string(),
+  status: z.string(), // pending | in_progress | completed | cancelled
+  priority: z.optional(z.string()), // high | medium | low
+});
+export type Todo = z.output<typeof Todo>;
+
 /** Fichier modifié dans le dépôt git (`GET /vcs/diff?mode=git`). */
 export const FileDiff = z.looseObject({ file: z.string(), status: z.optional(z.string()), additions: z.number(), deletions: z.number(), patch: z.optional(z.string()) });
 
@@ -184,6 +192,7 @@ export const AppEvent = z.discriminatedUnion('type', [
     properties: z.looseObject({ sessionID: z.string() }),
   }),
   z.object({ type: z.literal('session.diff'), properties: z.looseObject({ sessionID: z.string() }) }),
+  z.object({ type: z.literal('todo.updated'), properties: z.looseObject({ sessionID: z.string(), todos: z.array(Todo) }) }),
   z.object({ type: z.literal('project.updated'), properties: Project }),
   z.object({ type: z.literal('message.updated'), properties: z.looseObject({ sessionID: z.string(), info: MessageInfo }) }),
   z.object({ type: z.literal('message.removed'), properties: z.looseObject({ sessionID: z.string(), messageID: z.string() }) }),
@@ -196,6 +205,6 @@ export const AppEvent = z.discriminatedUnion('type', [
 ]);
 export type MessageEvent = Extract<AppEvent, { type: `message.${string}` }>;
 /** Événements transmis aux conversations ouvertes. */
-export type SessionEvent = Extract<AppEvent, { type: `message.${string}` | `permission.${string}` | `question.${string}` | 'session.diff' }>;
+export type SessionEvent = Extract<AppEvent, { type: `message.${string}` | `permission.${string}` | `question.${string}` | 'session.diff' | 'todo.updated' }>;
 export type AppEvent = z.output<typeof AppEvent>;
 export type AppEventEnvelope = { directory: string | null; event: AppEvent };

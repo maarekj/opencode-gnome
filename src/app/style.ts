@@ -124,6 +124,14 @@ export const STYLESHEET = `
   opacity: 1;
 }
 
+.todo-panel .todo-header {
+  padding: 6px 12px;
+  border-radius: 12px;
+}
+.todo-row.in_progress .heading {
+  color: var(--accent-color);
+}
+
 .stamp {
   font-size: 0.8em;
   margin: 0 4px;

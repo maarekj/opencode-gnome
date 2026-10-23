@@ -6,7 +6,7 @@
 import GLib from 'gi://GLib';
 import { createState, type Accessor, type Setter } from 'gnim';
 import { errorMessage } from './errors.ts';
-import type { MessageInfo, Part, PermissionRequest, QuestionRequest, SessionEvent } from './schemas.ts';
+import type { MessageInfo, Part, PermissionRequest, QuestionRequest, SessionEvent, Todo } from './schemas.ts';
 import type { Store } from './store.ts';
 
 export interface ContextUsage {
@@ -108,8 +108,11 @@ export class Conversation {
   readonly context: Accessor<ContextUsage | null>;
   /** Incrémenté quand la session modifie des fichiers (`session.diff`, outils d'édition terminés). */
   readonly diffVersion: Accessor<number>;
+  /** Liste de tâches de la session (remplacée en entier à chaque `todo.updated`). */
+  readonly todos: Accessor<readonly Todo[]>;
 
   readonly #store: Store;
+  readonly #setTodos: Setter<readonly Todo[]>;
   readonly #setBlocks: Setter<readonly Block[]>;
   readonly #setLoading: Setter<boolean>;
   readonly #setError: Setter<string | null>;
@@ -138,6 +141,7 @@ export class Conversation {
     [this.permissions, this.#setPermissions] = createState<readonly PermissionRequest[]>([]);
     [this.questions, this.#setQuestions] = createState<readonly QuestionRequest[]>([]);
     [this.diffVersion, this.#setDiffVersion] = createState(0);
+    [this.todos, this.#setTodos] = createState<readonly Todo[]>([], { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
     [this.context, this.#setContext] = createState<ContextUsage | null>(null, {
       equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.variant === b?.variant && a?.cost === b?.cost,
     });
@@ -165,7 +169,18 @@ export class Conversation {
   /** Charge l'historique et suit les événements. Les événements reçus pendant le chargement sont conservés. */
   async start(): Promise<void> {
     this.#unsubscribe ??= this.#store.onSessionEvents(this.sessionID, (e) => this.#apply(e));
-    await Promise.all([this.reload(), this.reloadRequests()]);
+    await Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]);
+  }
+
+  async reloadTodos(): Promise<void> {
+    const dir = this.directory;
+    if (dir === null) return;
+    try {
+      const todos = await this.#store.client.todos(this.sessionID, dir);
+      if (!this.#disposed) this.#setTodos(todos);
+    } catch {
+      // liste absente : rien à afficher
+    }
   }
 
   async reload(): Promise<void> {
@@ -209,6 +224,9 @@ export class Conversation {
         return;
       case 'session.diff':
         this.#setDiffVersion(this.diffVersion.peek() + 1);
+        return;
+      case 'todo.updated':
+        this.#setTodos(e.properties.todos);
         return;
       case 'message.updated':
         this.#upsertMessage(e.properties.info);

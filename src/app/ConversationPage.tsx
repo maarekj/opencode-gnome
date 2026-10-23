@@ -11,6 +11,7 @@ import { Composer } from './Composer.tsx';
 import { ConversationView } from './ConversationView.tsx';
 import { openDiffWindow } from './DiffWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
+import { TodoPanel } from './TodoPanel.tsx';
 
 const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
   idle: '',
@@ -145,6 +146,7 @@ export function createConversationPage(opts: {
           </Adw.HeaderBar>
           <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} showTools={showTools} maxWidth={settings.data((d) => d.maxWidth)} />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
+            <TodoPanel todos={conversation.todos} />
             {composer}
           </Gtk.Box>
         </Adw.ToolbarView>

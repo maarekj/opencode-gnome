@@ -189,6 +189,7 @@ export class Store {
       case 'message.part.removed':
       case 'message.part.delta':
       case 'session.diff':
+      case 'todo.updated':
         // haute fréquence (streaming) : uniquement pour les conversations ouvertes
         this.#notify(event);
         return;
