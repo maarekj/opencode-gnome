@@ -44,6 +44,7 @@ async function attempt(toast: (m: string) => void, what: string, fn: () => Promi
 }
 
 export const sessionTag = (sessionID: string): string => `session:${sessionID}`;
+export const subagentTag = (sessionID: string): string => `subagent:${sessionID}`;
 
 /**
  * Crée la page d'une session. Elle n'est pas détruite en quittant l'écran : son état (prompt en
@@ -58,15 +59,23 @@ export function createConversationPage(opts: {
   newSession: (directory: string) => void;
   sessionActions: (session: Session) => SessionActions;
   terminals: TerminalContext;
+  /** ouvre la conversation d'un sous-agent (au-dessus de cette page) */
+  openSubagent: (sessionID: string) => void;
+  /** session d'un sous-agent : lecture seule (pas de compositeur ni de terminaux) */
+  child?: boolean;
 }): ConversationPageHandle {
   const { store, settings, sessionID, attach, toast, terminals } = opts;
+  const child = opts.child === true;
   return createRoot((dispose) => {
     const conversation = new Conversation(store, sessionID);
     // chargement réseau immédiat (non bloquant) ; widgets construits après l'animation d'entrée
     void conversation.start();
     const [revealed, setRevealed] = createState(false);
 
+    if (child) store.loadChild(sessionID).catch((e: unknown) => toast(`Sous-agent introuvable : ${errorMessage(e)}`));
     const view = createComputed(() => {
+      const sub = store.children().get(sessionID);
+      if (sub !== undefined) return sub;
       for (const p of store.projects()) {
         const found = p.sessions.find((s) => s.session.id === sessionID);
         if (found !== undefined) return found;
@@ -75,12 +84,18 @@ export function createConversationPage(opts: {
     });
     /** racine du projet de la session (terminaux persistants) */
     const projectPath = createMemo(() => store.projects().find((p) => p.sessions.some((s) => s.session.id === sessionID))?.path ?? null);
-    const title = view((v) => (v === null || v.session.title === '' ? 'Session' : v.session.title));
+    const title = view((v) => {
+      if (v === null || v.session.title === '') return child ? 'Sous-agent' : 'Session';
+      // « Description (@explore subagent) » -> « @explore · Description »
+      const m = /^(.*) \(@(\S+) subagent\)$/u.exec(v.session.title);
+      return m === null ? v.session.title : `@${m[2] ?? ''} · ${m[1] ?? ''}`;
+    });
     const subtitle = createComputed(() => {
       if (conversation.questions().length > 0) return ACTIVITY_LABEL.question;
       if (conversation.permissions().length > 0) return ACTIVITY_LABEL.permission;
       const v = view();
-      return v === null ? '' : ACTIVITY_LABEL[v.activity] || prettyPath(v.session.directory);
+      if (v === null) return '';
+      return ACTIVITY_LABEL[v.activity] || (child ? `Sous-agent · ${prettyPath(v.session.directory)}` : prettyPath(v.session.directory));
     });
     const busy = view((v) => v !== null && v.activity !== 'idle');
     // messages annulés par /undo (ici ou dans la TUI) : masqués jusqu'au prochain prompt
@@ -151,7 +166,7 @@ export function createConversationPage(opts: {
     const showTools = settings.data((d) => d.showTools);
 
     const page = (
-      <Adw.NavigationPage title={title} tag={sessionTag(sessionID)}>
+      <Adw.NavigationPage title={title} tag={child ? subagentTag(sessionID) : sessionTag(sessionID)}>
         <Adw.ToolbarView>
           <Adw.HeaderBar $type="top">
             <Adw.WindowTitle $type="title" title={title} subtitle={subtitle} />
@@ -192,13 +207,30 @@ export function createConversationPage(opts: {
               onClicked={(self: Gtk.Button) => openFolder(self, dir(), toast)}
             />
           </Adw.HeaderBar>
-          <Gtk.Box $type="top">
+          <Gtk.Box $type="top" visible={!child}>
             <TerminalBar project={projectPath} ctx={terminals} />
           </Gtk.Box>
-          <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} showTools={showTools} maxWidth={settings.data((d) => d.maxWidth)} />
+          <ConversationView
+            conversation={conversation}
+            revealed={revealed}
+            actions={requestActions}
+            showTools={showTools}
+            maxWidth={settings.data((d) => d.maxWidth)}
+            subagents={{
+              activity: (id) => store.activity(id),
+              // republié à chaque changement de statut / demande (toutes sessions)
+              changed: store.children,
+              track: (id) => {
+                const c = new Conversation(store, id);
+                void c.start();
+                return c;
+              },
+              open: opts.openSubagent,
+            }}
+          />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
             <TodoPanel todos={conversation.todos} />
-            {composer}
+            {child ? null : composer}
           </Gtk.Box>
         </Adw.ToolbarView>
       </Adw.NavigationPage>

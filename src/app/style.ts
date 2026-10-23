@@ -32,6 +32,16 @@ export const STYLESHEET = `
 .composer-text {
   background: transparent;
 }
+.subagent-card {
+  padding: 0;
+}
+.subagent-head {
+  padding: 8px 12px;
+  border-radius: 12px;
+}
+.subagent-report {
+  margin: 0 12px 10px 12px;
+}
 .completion > contents {
   padding: 4px;
 }

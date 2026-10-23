@@ -11,7 +11,7 @@ import { esc, fmtCost, fmtRelative } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import { attachCommand, openTerminal } from '../shared/terminal.ts';
-import { createConversationPage, sessionTag, type ConversationPageHandle } from './ConversationPage.tsx';
+import { createConversationPage, sessionTag, subagentTag, type ConversationPageHandle } from './ConversationPage.tsx';
 import type { Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { openFolder } from './OpenFolder.ts';
@@ -728,6 +728,36 @@ export function MainWindow({
     handle.dispose();
   };
 
+  /** pages des sous-agents, empilées au-dessus de la session parente, libérées une fois retirées */
+  const subPages = new Map<string, ConversationPageHandle>();
+  const pageOptions = () => ({
+    store,
+    settings,
+    attach: actions.attach,
+    toast: actions.toast,
+    newSession: actions.newSession,
+    sessionActions: actions.sessionActions,
+    terminals,
+    openSubagent,
+  });
+  const openSubagent = (sessionID: string): void => {
+    let handle = subPages.get(sessionID);
+    if (handle === undefined) {
+      handle = createConversationPage({ ...pageOptions(), sessionID, child: true });
+      subPages.set(sessionID, handle);
+    }
+    if (nav.visiblePage === handle.page) return;
+    if (nav.find_page(subagentTag(sessionID)) === null) nav.push(handle.page);
+    else nav.pop_to_page(handle.page);
+  };
+  nav.connect('notify::visible-page', () => {
+    for (const [id, handle] of subPages) {
+      if (nav.find_page(subagentTag(id)) !== null) continue;
+      subPages.delete(id);
+      handle.dispose();
+    }
+  });
+
   const toast = (title: string): void => {
     overlay?.add_toast(new Adw.Toast({ title: esc(title), timeout: 4 }));
   };
@@ -818,7 +848,7 @@ export function MainWindow({
       if (split !== null) split.showContent = true;
       let handle = pages.get(sessionID);
       if (handle === undefined) {
-        handle = createConversationPage({ store, settings, sessionID, attach: actions.attach, toast: actions.toast, newSession: actions.newSession, sessionActions: actions.sessionActions, terminals });
+        handle = createConversationPage({ ...pageOptions(), sessionID });
         pages.set(sessionID, handle);
       }
       if (nav.visiblePage === handle.page) return;
@@ -839,6 +869,7 @@ export function MainWindow({
     const key = current.peek()?.key;
     if (switching || key === undefined) return;
     const tag = nav.visiblePage?.tag ?? '';
+    if (tag.startsWith('subagent:')) return;
     lastView.set(key, tag.startsWith('session:') ? tag.slice('session:'.length) : null);
   });
 
@@ -869,6 +900,8 @@ export function MainWindow({
     closeCurrent: () => {
       const id = shownSession();
       if (id !== null) actions.closeSession(id);
+      // Ctrl+W sur un sous-agent : retour à la session parente
+      else if ((nav.visiblePage?.tag ?? '').startsWith('subagent:')) nav.pop();
     },
     shownSession,
   });
@@ -877,6 +910,8 @@ export function MainWindow({
   const [shown, setShown] = createState('');
   const updateShown = (): void => {
     const tag = nav.visiblePage?.tag ?? '';
+    // sous-agent : la session parente reste mise en évidence
+    if (tag.startsWith('subagent:')) return;
     setShown(tag.startsWith('session:') ? `s:${tag.slice('session:'.length)}` : `p:${current.peek()?.key ?? ''}`);
   };
   nav.connect('notify::visible-page', updateShown);

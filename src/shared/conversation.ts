@@ -151,7 +151,7 @@ export class Conversation {
 
   /** Répertoire de la session (requis par les appels qui ciblent une instance opencode). */
   get directory(): string | null {
-    return this.#directory ?? this.#store.session(this.sessionID)?.directory ?? null;
+    return this.#directory ?? this.#store.session(this.sessionID)?.directory ?? this.#store.children.peek().get(this.sessionID)?.session.directory ?? null;
   }
 
   /** Recharge les permissions et questions en attente de cette session. */
@@ -171,7 +171,10 @@ export class Conversation {
   /** Charge l'historique et suit les événements. Les événements reçus pendant le chargement sont conservés. */
   async start(): Promise<void> {
     this.#unsubscribe ??= this.#store.onSessionEvents(this.sessionID, (e) => this.#apply(e));
-    await Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]);
+    // répertoire inconnu avant le chargement (session de sous-agent) : demandes rechargées ensuite
+    const known = this.directory !== null;
+    await (known ? Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]) : this.reload());
+    if (!known) await Promise.all([this.reloadRequests(), this.reloadTodos()]);
   }
 
   async reloadTodos(): Promise<void> {

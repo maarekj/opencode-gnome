@@ -6,6 +6,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
 import { stripImageMarkers, type Block, type Conversation, type TurnInfo } from '../shared/conversation.ts';
+import type { Activity } from '../shared/store.ts';
 import { AttachmentView } from './Attachments.tsx';
 import { esc, fmtDuration, fmtFullDate, fmtStamp } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../shared/schemas.ts';
@@ -48,12 +49,24 @@ class CardRegistry {
   }
 }
 
+/** Accès aux sessions des sous-agents (outil `task`). */
+export interface SubagentContext {
+  /** activité d'une session (travail, permission ou question en attente) ; `changed` change avec elle */
+  readonly activity: (sessionID: string) => Activity;
+  readonly changed: Accessor<unknown>;
+  /** suit la session du sous-agent en direct ; libérée avec `dispose()` */
+  readonly track: (sessionID: string) => Conversation;
+  /** ouvre la conversation du sous-agent */
+  readonly open: (sessionID: string) => void;
+}
+
 interface FlowContext {
   readonly conversation: Conversation;
   readonly actions: RequestActions;
   readonly cards: CardRegistry;
   /** afficher les appels d'outils (bascule globale) */
   readonly showTools: Accessor<boolean>;
+  readonly subagents: SubagentContext | undefined;
 }
 
 /**
@@ -187,6 +200,113 @@ function ToolLine({ part: p, generic = false }: { part: Part; generic?: boolean 
   );
 }
 
+/** Rapport final d'un sous-agent, sans l'enveloppe `<task …><task_result>`. */
+const taskReport = (output: unknown): string => {
+  const raw = asText(output);
+  const m = /<task_result>\n?([\s\S]*?)\n?<\/task_result>/u.exec(raw);
+  return (m?.[1] ?? raw).trim();
+};
+
+const SUBAGENT_WAITING: Partial<Record<Activity, string>> = { permission: 'Permission demandée', question: 'Question en attente' };
+
+/**
+ * Délégation à un sous-agent (outil `task`) : carte toujours visible, avec l'avancement en direct
+ * (outils appelés, outil en cours), les demandes en attente du sous-agent et son rapport final.
+ * Un clic ouvre la conversation du sous-agent.
+ */
+function SubagentCard({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): JSX.Element {
+  const childID = part((p) => field(p.state?.metadata, 'sessionId') ?? null);
+  const status = part((p) => p.state?.status ?? 'pending');
+  const running = status((st) => st === 'pending' || st === 'running');
+  // suivi en direct de la session du sous-agent, dès qu'il travaille et tant que la carte existe
+  // (les sous-agents déjà terminés au chargement ne sont pas suivis : pas de décompte d'outils)
+  const [tracker, setTracker] = createState<Conversation | null>(null);
+  const follow = (): void => {
+    const id = childID.peek();
+    if (tracker.peek() !== null || id === null || ctx.subagents === undefined || !running.peek()) return;
+    setTracker(ctx.subagents.track(id));
+  };
+  follow();
+  const unsubscribe = [childID.subscribe(follow), running.subscribe(follow)];
+  onCleanup(() => {
+    for (const u of unsubscribe) u();
+    tracker.peek()?.dispose();
+  });
+  const activity = createComputed((): Activity => {
+    const id = childID();
+    if (id === null || ctx.subagents === undefined) return 'idle';
+    ctx.subagents.changed();
+    return ctx.subagents.activity(id);
+  });
+  const progress = createComputed((): string => {
+    const p = part();
+    const st = p.state?.status ?? 'pending';
+    const c = tracker();
+    const tools = c === null ? [] : c.blocks().filter((b) => b.kind === 'tool').map((b) => b.part());
+    const count = tools.length === 0 ? '' : `${tools.length} outil${tools.length > 1 ? 's' : ''}`;
+    if (st === 'pending' || st === 'running') {
+      const current = tools.findLast((t) => t.state?.status === 'running' || t.state?.status === 'pending');
+      const now = current === undefined ? 'en cours…' : `${current.tool ?? 'outil'} · ${toolSummary(current.tool ?? '', current.state)}`;
+      return count === '' ? now : `${count} · ${now}`;
+    }
+    const { start, end } = p.state?.time ?? {};
+    const took = start === undefined || end === undefined ? '' : fmtDuration(end - start);
+    const verdict = st === 'error' ? 'Échec' : 'Terminé';
+    return [took === '' ? verdict : `${verdict} en ${took}`, count].filter((x) => x !== '').join(' · ');
+  });
+  const report = part((p) => (p.state?.status === 'completed' ? taskReport(p.state.output) : ''));
+  const error = part((p) => (p.state?.status === 'error' ? asText(p.state.error) : ''));
+  const p0 = part.peek();
+  const agent = field(p0.state?.input, 'subagent_type') ?? 'sous-agent';
+  return (
+    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['card', 'subagent-card']}>
+      <Gtk.Button
+        cssClasses={['flat', 'subagent-head']}
+        sensitive={childID((id) => id !== null && ctx.subagents !== undefined)}
+        tooltipText="Ouvrir la conversation du sous-agent"
+        onClicked={() => {
+          const id = childID.peek();
+          if (id !== null) ctx.subagents?.open(id);
+        }}
+      >
+        <Gtk.Box spacing={10}>
+          <Gtk.Stack visibleChildName={status((st) => (st === 'pending' || st === 'running' ? 'run' : st === 'error' ? 'error' : 'done'))} valign={Gtk.Align.CENTER}>
+            <Adw.Spinner $type="named" name="run" />
+            <Gtk.Image $type="named" name="error" iconName="dialog-error-symbolic" cssClasses={['error']} />
+            <Gtk.Image $type="named" name="done" iconName="object-select-symbolic" cssClasses={['dim-label']} />
+          </Gtk.Stack>
+          <Gtk.Box orientation={Gtk.Orientation.VERTICAL} hexpand spacing={2}>
+            <Gtk.Box spacing={8}>
+              <Gtk.Label label={`@${agent}`} cssClasses={['heading', 'accent']} />
+              <Gtk.Label
+                label={part((pp) => field(pp.state?.input, 'description') ?? pp.state?.title ?? '')}
+                ellipsize={Pango.EllipsizeMode.END}
+                xalign={0}
+                hexpand
+                cssClasses={['heading']}
+              />
+            </Gtk.Box>
+            <Gtk.Label label={progress} ellipsize={Pango.EllipsizeMode.END} xalign={0} cssClasses={['dim-label', 'caption']} />
+          </Gtk.Box>
+          <Gtk.Label
+            label={activity((a) => SUBAGENT_WAITING[a] ?? '')}
+            visible={activity((a) => SUBAGENT_WAITING[a] !== undefined)}
+            valign={Gtk.Align.CENTER}
+            cssClasses={['waiting-badge']}
+          />
+          <Gtk.Image iconName="go-next-symbolic" valign={Gtk.Align.CENTER} cssClasses={['dim-label']} />
+        </Gtk.Box>
+      </Gtk.Button>
+      <Gtk.Expander label="Rapport" visible={report((r) => r !== '')} cssClasses={['subagent-report']}>
+        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} marginTop={6}>
+          <With value={report}>{(r: string) => MarkdownView({ text: r })}</With>
+        </Gtk.Box>
+      </Gtk.Expander>
+      <Gtk.Label label={error} visible={error((e) => e !== '')} xalign={0} wrap selectable cssClasses={['error', 'subagent-report']} />
+    </Gtk.Box>
+  );
+}
+
 /**
  * Appel d'outil. Si une permission ou une question attend une réponse pour cet appel, la carte
  * correspondante est affichée à sa place, dans le flux. Une question répondue devient un rappel replié.
@@ -201,6 +321,18 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
     // la carte n'est reconstruite que si la demande change (conserve les choix en cours)
     { equals: (a, b) => a?.request.id === b?.request.id },
   );
+  // sous-agent : carte dédiée, toujours visible (le nom de l'outil ne change pas) ; une permission
+  // demandée pour l'appel lui-même (`permission.task: ask`) s'affiche au-dessus
+  if (part.peek().tool === 'task') {
+    return (
+      <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={8}>
+        <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
+          <With value={pending}>{(pd: Pending | null) => (pd === null ? <Gtk.Box /> : RequestCard({ pending: pd, ctx }))}</With>
+        </Gtk.Box>
+        <SubagentCard part={part} ctx={ctx} />
+      </Gtk.Box>
+    );
+  }
   // masqué par la bascule, sauf demande en attente, erreur ou question
   const visible = createComputed(() => ctx.showTools() || pending() !== null || alwaysShown(part()));
   return (
@@ -506,6 +638,7 @@ export function ConversationView({
   actions,
   showTools,
   maxWidth,
+  subagents,
 }: {
   conversation: Conversation;
   revealed: Accessor<boolean>;
@@ -513,10 +646,11 @@ export function ConversationView({
   showTools: Accessor<boolean>;
   /** largeur maximale (px, 0 = toute la largeur) */
   maxWidth: Accessor<number>;
+  subagents?: SubagentContext;
 }): JSX.Element {
   // spinner tant que l'animation d'entrée n'est pas finie ou que rien n'est chargé
   const showLoading = createComputed(() => !revealed() || (conversation.loading() && conversation.blocks().length === 0));
-  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry(), showTools };
+  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry(), showTools, subagents };
 
   // demandes non rattachées à un appel d'outil affiché : en fin de conversation
   const orphans = createComputed((): Pending[] => {

@@ -50,10 +50,15 @@ export const prettyPath = (p: string): string => (p === home ? '~' : p.startsWit
 export class Store {
   readonly projects: Accessor<readonly ProjectView[]>;
   readonly connection: Accessor<Connection>;
+  /** Sessions de sous-agents (`parentID`) vues depuis le démarrage, avec leur activité. */
+  readonly children: Accessor<ReadonlyMap<string, SessionView>>;
   readonly client: OpencodeClient;
 
   readonly #setProjects: (v: readonly ProjectView[]) => void;
   readonly #setConnection: (v: Connection) => void;
+  readonly #setChildren: (v: ReadonlyMap<string, SessionView>) => void;
+  /** sessions de sous-agents (hors barre latérale) */
+  readonly #children = new Map<string, Session>();
   readonly #projects = new Map<string, Project>();
   readonly #sessions = new Map<string, Session>();
   readonly #status = new Map<string, 'busy' | 'retry'>();
@@ -75,6 +80,9 @@ export class Store {
     this.connection = connection;
     this.#setProjects = setProjects;
     this.#setConnection = setConnection;
+    const [children, setChildren] = createState<ReadonlyMap<string, SessionView>>(new Map());
+    this.children = children;
+    this.#setChildren = setChildren;
   }
 
   start(): void {
@@ -195,6 +203,15 @@ export class Store {
     return this.#sessions.get(sessionID);
   }
 
+  /** Charge une session de sous-agent (inconnue tant qu'aucun événement ne l'a signalée). */
+  async loadChild(sessionID: string): Promise<void> {
+    if (this.#children.has(sessionID)) return;
+    const s = await this.client.session(sessionID);
+    if (s.parentID === undefined) return;
+    this.#children.set(s.id, s);
+    this.#publish();
+  }
+
   #onEvent({ event }: AppEventEnvelope): void {
     switch (event.type) {
       case 'message.updated':
@@ -220,9 +237,11 @@ export class Store {
       case 'session.created':
       case 'session.updated':
         if (event.properties.info.parentID === undefined) this.#sessions.set(event.properties.info.id, event.properties.info);
+        else this.#children.set(event.properties.info.id, event.properties.info);
         break;
       case 'session.deleted':
         this.#sessions.delete(event.properties.sessionID);
+        this.#children.delete(event.properties.sessionID);
         this.#status.delete(event.properties.sessionID);
         this.#permissions.delete(event.properties.sessionID);
         this.#questions.delete(event.properties.sessionID);
@@ -321,6 +340,7 @@ export class Store {
         updated: first === undefined ? (this.#projects.get(key)?.time?.updated ?? 0) : (first.time.updated ?? first.time.created),
       };
     });
+    this.#setChildren(new Map([...this.#children.values()].map((c) => [c.id, { session: c, activity: this.activity(c.id) }])));
     // projets avec sessions d'abord (activité récente en tête), projets vides en bas
     this.#setProjects(views.toSorted((a, b) => Number(a.sessions.length === 0) - Number(b.sessions.length === 0) || b.updated - a.updated));
   }

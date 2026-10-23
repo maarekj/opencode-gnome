@@ -108,6 +108,10 @@ export class OpencodeClient {
     return this.get(`/session/${encodeURIComponent(sessionID)}/todo`, z.array(Todo), { directory });
   }
 
+  session(sessionID: string): Promise<Session> {
+    return this.get(`/session/${encodeURIComponent(sessionID)}`, Session);
+  }
+
   createSession(directory: string): Promise<Session> {
     return this.request('POST', '/session', Session, { query: { directory }, body: {} });
   }
