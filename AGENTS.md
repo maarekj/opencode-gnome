@@ -50,6 +50,11 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - Ne jamais toucher au dossier d'un autre agent, ni arrêter son serveur de test.
 - Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise, puis
   commenter « En cours dans <dossier> » sur l'issue.
+- En prenant une issue, **renommer sa session opencode** : `[Agent N] - #<numéro> <titre de l'issue>`
+  (N = 1 pour `opencode-gnome`, 2 à 4 pour les worktrees). Sa propre session est la plus
+  récemment mise à jour dans son dossier :
+  `curl -s "http://127.0.0.1:4096/experimental/session?roots=true&limit=50" | jq -r --arg d "$PWD" '[.[]|select(.directory==$d)]|max_by(.time.updated).id'`, puis
+  `curl -s -X PATCH "http://127.0.0.1:4096/session/<id>?directory=$PWD" -H 'content-type: application/json' -d '{"title":"…"}'`.
 - **Aucun commit, rebase, fusion ni push sans l'ordre explicite de l'utilisateur.** Une fois
   l'implémentation prête (`pnpm check` OK, captures faites), installer l'application
   (`node scripts/install.ts`), présenter ce qu'il faut tester et attendre sa validation.
