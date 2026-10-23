@@ -105,11 +105,20 @@ export function createConversationPage(opts: {
       rejectQuestion: (id) => void attempt(toast, 'Réponse impossible', () => client.rejectQuestion(id, dir())).then(() => conversation.reloadRequests()),
     };
 
+    const showTools = settings.data((d) => d.showTools);
+
     const page = (
       <Adw.NavigationPage title={title} tag={sessionTag(sessionID)}>
         <Adw.ToolbarView>
           <Adw.HeaderBar $type="top">
             <Adw.WindowTitle $type="title" title={title} subtitle={subtitle} />
+            <Gtk.ToggleButton
+              $type="end"
+              iconName="applications-engineering-symbolic"
+              active={showTools}
+              tooltipText={showTools((v) => (v ? "Masquer les appels d'outils (Ctrl+Maj+O)" : "Afficher les appels d'outils (Ctrl+Maj+O)"))}
+              onToggled={(self: Gtk.ToggleButton) => settings.setShowTools(self.active)}
+            />
             <Gtk.Button
               $type="end"
               iconName="document-edit-symbolic"
@@ -134,7 +143,7 @@ export function createConversationPage(opts: {
               }}
             />
           </Adw.HeaderBar>
-          <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} />
+          <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} showTools={showTools} />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
             {composer}
           </Gtk.Box>

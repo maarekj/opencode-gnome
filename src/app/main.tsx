@@ -67,6 +67,16 @@ preferences.connect('activate', () => {
 app.add_action(preferences);
 app.set_accels_for_action('app.preferences', ['<Control>comma']);
 
+/** app.toggle-tools : afficher / masquer les appels d'outils (Ctrl+Maj+O) */
+const toggleTools = new Gio.SimpleAction({ name: 'toggle-tools' });
+toggleTools.connect('activate', () => {
+  const t0 = Date.now();
+  settings.setShowTools(!settings.data.peek().showTools);
+  if (GLib.getenv('OPENCODE_GNOME_TIMING') !== null) console.log(`TIMING bascule outils ${Date.now() - t0} ms`);
+});
+app.add_action(toggleTools);
+app.set_accels_for_action('app.toggle-tools', ['<Control><Shift>o']);
+
 // ------------------------------------------------------------------ fenêtre
 
 app.connect('startup', () => {

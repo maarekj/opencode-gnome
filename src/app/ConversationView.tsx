@@ -51,7 +51,15 @@ interface FlowContext {
   readonly conversation: Conversation;
   readonly actions: RequestActions;
   readonly cards: CardRegistry;
+  /** afficher les appels d'outils (bascule globale) */
+  readonly showTools: Accessor<boolean>;
 }
+
+/**
+ * Appel d'outil toujours affiché, même quand les outils sont masqués : erreur, ou question
+ * (dialogue avec l'utilisateur plutôt qu'outillage).
+ */
+const alwaysShown = (p: Part): boolean => p.state?.status === 'error' || p.tool === 'question';
 
 const pendingList = (c: Conversation): Pending[] => [
   ...c.permissions().map((request): Pending => ({ kind: 'permission', request })),
@@ -172,8 +180,10 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
     // la carte n'est reconstruite que si la demande change (conserve les choix en cours)
     { equals: (a, b) => a?.request.id === b?.request.id },
   );
+  // masqué par la bascule, sauf demande en attente, erreur ou question
+  const visible = createComputed(() => ctx.showTools() || pending() !== null || alwaysShown(part()));
   return (
-    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['tool-call']}>
+    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['tool-call']} visible={visible}>
       <With value={pending}>
         {(pd: Pending | null) =>
           pd === null ? (
@@ -349,6 +359,41 @@ function stickToBottom(scrolled: Gtk.ScrolledWindow): void {
 }
 
 /**
+ * Garde la position de lecture quand les outils sont masqués / affichés : le premier bloc
+ * visible en haut de l'écran (hors outils) reste au même endroit après la bascule.
+ */
+function keepReadingPosition(blocks: Gtk.Box, showTools: Accessor<boolean>): void {
+  const unsubscribe = showTools.subscribe(() => {
+    const scrolled = blocks.get_ancestor(Gtk.ScrolledWindow.$gtype);
+    if (!(scrolled instanceof Gtk.ScrolledWindow)) return;
+    const adj = scrolled.get_vadjustment();
+    // collé en bas : stickToBottom s'en charge
+    if (adj.value + adj.pageSize >= adj.upper - 40) return;
+    // ancre : premier message (pas un outil) dont le bas est sous le haut de l'écran
+    let anchor: Gtk.Widget | null = null;
+    let before = 0;
+    for (let w = blocks.get_first_child(); w !== null; w = w.get_next_sibling()) {
+      if (w.has_css_class('tool-call') || !w.get_visible()) continue;
+      const [ok, rect] = w.compute_bounds(scrolled);
+      if (ok && rect.get_y() + rect.get_height() > 0) {
+        anchor = w;
+        before = rect.get_y();
+        break;
+      }
+    }
+    if (anchor === null) return;
+    const target = anchor;
+    // après la nouvelle mise en page, recaler l'ancre au même endroit
+    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      const [ok, rect] = target.compute_bounds(scrolled);
+      if (ok) adj.value += rect.get_y() - before;
+      return GLib.SOURCE_REMOVE;
+    });
+  });
+  onCleanup(unsubscribe);
+}
+
+/**
  * Pastille « demande en attente » : visible quand une demande attend une réponse et qu'aucune
  * de ses cartes n'est à l'écran. Un clic fait défiler jusqu'à la première carte.
  */
@@ -434,10 +479,20 @@ function Pastille({ ctx, scrolled }: { ctx: FlowContext; scrolled: Gtk.ScrolledW
   );
 }
 
-export function ConversationView({ conversation, revealed, actions }: { conversation: Conversation; revealed: Accessor<boolean>; actions: RequestActions }): JSX.Element {
+export function ConversationView({
+  conversation,
+  revealed,
+  actions,
+  showTools,
+}: {
+  conversation: Conversation;
+  revealed: Accessor<boolean>;
+  actions: RequestActions;
+  showTools: Accessor<boolean>;
+}): JSX.Element {
   // spinner tant que l'animation d'entrée n'est pas finie ou que rien n'est chargé
   const showLoading = createComputed(() => !revealed() || (conversation.loading() && conversation.blocks().length === 0));
-  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry() };
+  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry(), showTools };
 
   // demandes non rattachées à un appel d'outil affiché : en fin de conversation
   const orphans = createComputed((): Pending[] => {
@@ -472,7 +527,14 @@ export function ConversationView({ conversation, revealed, actions }: { conversa
       }}
     >
       <Adw.Clamp maximumSize={860} tighteningThreshold={600}>
-        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={14} marginTop={18} marginBottom={24} marginStart={18} marginEnd={18}>
+        <Gtk.Box
+          orientation={Gtk.Orientation.VERTICAL}
+          spacing={14}
+          marginTop={18}
+          marginBottom={24}
+          marginStart={18}
+          marginEnd={18}
+        >
           <Adw.Banner
             revealed={conversation.error((e) => e !== null)}
             title={conversation.error((e) => esc(e ?? ''))}
@@ -483,6 +545,7 @@ export function ConversationView({ conversation, revealed, actions }: { conversa
             orientation={Gtk.Orientation.VERTICAL}
             spacing={14}
             $={(self: Gtk.Box) => {
+              keepReadingPosition(self, showTools);
               whenRevealed(() => {
                 const t0 = Date.now();
                 const stop = keyedBox(self, conversation.blocks, (b) => b.id, (b) => BlockView({ block: b, ctx }));

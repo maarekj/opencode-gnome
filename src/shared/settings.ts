@@ -14,6 +14,8 @@ export const SettingsData = z.object({
   favorites: z.prefault(z.array(z.string()), []),
   /** mode de la barre latérale */
   sidebarMode: z.prefault(SidebarMode, 'all'),
+  /** afficher les appels d'outils dans les conversations */
+  showTools: z.prefault(z.boolean(), true),
   /** terminal : nom connu (`ptyxis`…), `custom` (commande libre) ; absent = automatique */
   terminal: z.optional(z.string()),
   /** commande du terminal personnalisé (préfixe argv, ex. `foot -e`) */
@@ -25,7 +27,7 @@ export const SettingsData = z.object({
 });
 export type SettingsData = z.output<typeof SettingsData>;
 
-const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all' };
+const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all', showTools: true };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -97,6 +99,10 @@ export class Settings {
       const { [key]: _old, ...rest } = d;
       return value === undefined ? rest : { ...rest, [key]: value };
     });
+  }
+
+  setShowTools(show: boolean): void {
+    if (this.data.peek().showTools !== show) this.update((d) => ({ ...d, showTools: show }));
   }
 
   setSidebarMode(mode: SidebarMode): void {
