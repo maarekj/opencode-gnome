@@ -85,6 +85,15 @@ app.connect('startup', () => {
   const display = Gdk.Display.get_default();
   // oxlint-disable-next-line typescript/no-deprecated -- seule API exposée par GJS pour un style global
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+  // taille du texte de la conversation (préférences), appliquée en direct
+  const fontCss = new Gtk.CssProvider();
+  const applyFont = (): void => {
+    fontCss.load_from_string(`.conversation { font-size: ${settings.data.peek().fontScale}%; }`);
+  };
+  applyFont();
+  settings.data.subscribe(applyFont);
+  // oxlint-disable-next-line typescript/no-deprecated -- seule API exposée par GJS pour un style global
+  if (display !== null) Gtk.StyleContext.add_provider_for_display(display, fontCss, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
 });
 
 app.connect('activate', () => {

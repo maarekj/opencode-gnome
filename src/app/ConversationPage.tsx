@@ -143,7 +143,7 @@ export function createConversationPage(opts: {
               }}
             />
           </Adw.HeaderBar>
-          <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} showTools={showTools} />
+          <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} showTools={showTools} maxWidth={settings.data((d) => d.maxWidth)} />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
             {composer}
           </Gtk.Box>

@@ -484,11 +484,14 @@ export function ConversationView({
   revealed,
   actions,
   showTools,
+  maxWidth,
 }: {
   conversation: Conversation;
   revealed: Accessor<boolean>;
   actions: RequestActions;
   showTools: Accessor<boolean>;
+  /** largeur maximale (px, 0 = toute la largeur) */
+  maxWidth: Accessor<number>;
 }): JSX.Element {
   // spinner tant que l'animation d'entrée n'est pas finie ou que rien n'est chargé
   const showLoading = createComputed(() => !revealed() || (conversation.loading() && conversation.blocks().length === 0));
@@ -526,7 +529,11 @@ export function ConversationView({
         stickToBottom(self);
       }}
     >
-      <Adw.Clamp maximumSize={860} tighteningThreshold={600}>
+      <Adw.Clamp
+        cssClasses={['conversation']}
+        maximumSize={maxWidth((w) => (w <= 0 ? 100_000 : w))}
+        tighteningThreshold={maxWidth((w) => (w <= 0 ? 100_000 : Math.round(w * 0.7)))}
+      >
         <Gtk.Box
           orientation={Gtk.Orientation.VERTICAL}
           spacing={14}

@@ -1,8 +1,8 @@
 // Zone de saisie du prompt : texte multiligne, agent, modèle, envoyer / interrompre.
 // Ctrl+Entrée envoie, Entrée insère un saut de ligne (SEND_WITH_CTRL pour inverser).
+import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
 import Gtk from 'gi://Gtk?version=4.0';
-import Pango from 'gi://Pango';
 import GObject from 'gi://GObject';
 import { createComputed, createState, onCleanup, type Accessor } from 'gnim';
 import type { ContextUsage } from '../shared/conversation.ts';
@@ -301,25 +301,23 @@ export function Composer(props: ComposerProps): JSX.Element {
         />
       </Gtk.ScrolledWindow>
       <Gtk.Box spacing={6} marginStart={6} marginEnd={6} marginBottom={6}>
-        <Gtk.Button
-          iconName="mail-attachment-symbolic"
-          tooltipText="Joindre des fichiers ou des images (ou coller / glisser-déposer)"
-          cssClasses={['flat', 'circular']}
-          onClicked={(self: Gtk.Button) => attach(pickFiles(self))}
-        />
-        {agentDD}
-        {modelDD}
-        {variantDD}
-        <Gtk.Label
-          hexpand
-          xalign={1}
-          ellipsize={Pango.EllipsizeMode.END}
-          cssClasses={['dim-label', 'caption']}
-          label={HINT}
-        />
-        <ContextGauge context={props.context} limits={limits} />
+        {/* les menus passent à la ligne quand la fenêtre est étroite (pas de largeur minimale imposée) */}
+        <Adw.WrapBox childSpacing={6} lineSpacing={6} hexpand valign={Gtk.Align.CENTER}>
+          <Gtk.Button
+            iconName="mail-attachment-symbolic"
+            tooltipText="Joindre des fichiers ou des images (ou coller / glisser-déposer)"
+            cssClasses={['flat', 'circular']}
+            onClicked={(self: Gtk.Button) => attach(pickFiles(self))}
+          />
+          {agentDD}
+          {modelDD}
+          {variantDD}
+          <ContextGauge context={props.context} limits={limits} />
+          <Gtk.Label valign={Gtk.Align.CENTER} cssClasses={['dim-label', 'caption']} label={HINT} />
+        </Adw.WrapBox>
         <Gtk.Button
           iconName="media-playback-stop-symbolic"
+          valign={Gtk.Align.END}
           tooltipText="Interrompre"
           cssClasses={['circular', 'destructive-action']}
           visible={props.busy}
@@ -327,7 +325,7 @@ export function Composer(props: ComposerProps): JSX.Element {
             props.abort();
           }}
         />
-        <Gtk.Button iconName="go-up-symbolic" tooltipText={SEND_WITH_CTRL ? 'Envoyer (Ctrl+Entrée)' : 'Envoyer (Entrée)'} cssClasses={['circular', 'suggested-action']} onClicked={submit} />
+        <Gtk.Button iconName="go-up-symbolic" valign={Gtk.Align.END} tooltipText={SEND_WITH_CTRL ? 'Envoyer (Ctrl+Entrée)' : 'Envoyer (Entrée)'} cssClasses={['circular', 'suggested-action']} onClicked={submit} />
       </Gtk.Box>
     </Gtk.Box>
   );

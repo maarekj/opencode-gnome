@@ -14,6 +14,10 @@ export const SettingsData = z.object({
   favorites: z.prefault(z.array(z.string()), []),
   /** mode de la barre latérale */
   sidebarMode: z.prefault(SidebarMode, 'all'),
+  /** taille du texte de la conversation, en % */
+  fontScale: z.prefault(z.number(), 100),
+  /** largeur maximale de la conversation en px (0 = toute la largeur) */
+  maxWidth: z.prefault(z.number(), 860),
   /** afficher les appels d'outils dans les conversations */
   showTools: z.prefault(z.boolean(), true),
   /** terminal : nom connu (`ptyxis`…), `custom` (commande libre) ; absent = automatique */
@@ -27,7 +31,7 @@ export const SettingsData = z.object({
 });
 export type SettingsData = z.output<typeof SettingsData>;
 
-const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all', showTools: true };
+const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all', showTools: true, fontScale: 100, maxWidth: 860 };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -99,6 +103,10 @@ export class Settings {
       const { [key]: _old, ...rest } = d;
       return value === undefined ? rest : { ...rest, [key]: value };
     });
+  }
+
+  setNumber(key: 'fontScale' | 'maxWidth', value: number): void {
+    if (this.data.peek()[key] !== value) this.update((d) => ({ ...d, [key]: value }));
   }
 
   setShowTools(show: boolean): void {

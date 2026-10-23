@@ -107,8 +107,39 @@ function modelGroup(settings: Settings, providers: Promise<Providers>): Adw.Pref
   return group;
 }
 
+/** Groupe « Conversation » : taille du texte et largeur maximale, appliquées en direct. */
+function conversationGroup(settings: Settings): Adw.PreferencesGroup {
+  const group = new Adw.PreferencesGroup({ title: 'Conversation' });
+  const d = settings.data.peek();
+  const font = new Adw.SpinRow({
+    title: 'Taille du texte',
+    subtitle: 'En % de la taille normale',
+    adjustment: new Gtk.Adjustment({ lower: 70, upper: 200, stepIncrement: 5, pageIncrement: 10, value: d.fontScale }),
+  });
+  font.connect('notify::value', () => settings.setNumber('fontScale', Math.round(font.value)));
+  const full = new Adw.SwitchRow({ title: 'Toute la largeur', subtitle: 'La conversation occupe toute la largeur de la fenêtre', active: d.maxWidth <= 0 });
+  const width = new Adw.SpinRow({
+    title: 'Largeur maximale',
+    subtitle: 'En pixels',
+    sensitive: d.maxWidth > 0,
+    adjustment: new Gtk.Adjustment({ lower: 400, upper: 3000, stepIncrement: 20, pageIncrement: 100, value: d.maxWidth <= 0 ? 860 : d.maxWidth }),
+  });
+  width.connect('notify::value', () => {
+    if (!full.active) settings.setNumber('maxWidth', Math.round(width.value));
+  });
+  full.connect('notify::active', () => {
+    width.sensitive = !full.active;
+    settings.setNumber('maxWidth', full.active ? 0 : Math.round(width.value));
+  });
+  group.add(font);
+  group.add(full);
+  group.add(width);
+  return group;
+}
+
 export function openPreferences(parent: Gtk.Widget, settings: Settings, providers: Promise<Providers>): void {
   const page = new Adw.PreferencesPage({ title: 'Général', iconName: 'preferences-system-symbolic' });
+  page.add(conversationGroup(settings));
   page.add(terminalGroup(settings));
   page.add(modelGroup(settings, providers));
   const dialog = new Adw.PreferencesDialog({ title: 'Préférences', searchEnabled: false });

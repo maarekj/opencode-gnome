@@ -293,7 +293,16 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
         const anchor = buffer.create_child_anchor(buffer.get_end_iter());
         const table = Table({ header: b.header, rows: b.rows });
         if (table instanceof Gtk.Widget) {
-          view.add_child_at_anchor(table, anchor);
+          // enveloppe sans largeur minimale (défilement horizontal externe) : la largeur imposée
+          // au tableau n'empêche pas la conversation de rétrécir
+          const wrapper = new Gtk.ScrolledWindow({
+            child: table,
+            hscrollbarPolicy: Gtk.PolicyType.EXTERNAL,
+            vscrollbarPolicy: Gtk.PolicyType.NEVER,
+            propagateNaturalWidth: true,
+            propagateNaturalHeight: true,
+          });
+          view.add_child_at_anchor(wrapper, anchor);
           tables.push(table);
         }
         break;
@@ -311,7 +320,7 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
   });
   // GtkTextView calcule sa hauteur pour une largeur donnée de manière asynchrone : quand il est
   // construit hors écran (largeur 0), sa première hauteur peut rester figée sur une seule ligne.
-  // À chaque changement de largeur, on relance le calcul (et on cale les tableaux ancrés).
+  // À chaque changement de largeur, on relance le calcul et on cale les tableaux ancrés.
   let width = -1;
   view.add_tick_callback(() => {
     const w = view.get_width();
