@@ -309,17 +309,18 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
       buffer.insert(buffer.get_end_iter(), '\n', -1);
     }
   });
-  // les widgets ancrés prennent leur largeur naturelle : on les cale sur la largeur de la vue
-  if (tables.length > 0) {
-    let width = -1;
-    view.add_tick_callback(() => {
-      const w = view.get_width();
-      if (w !== width && w > 0) {
-        width = w;
-        for (const table of tables) table.widthRequest = Math.max(100, w - 4);
-      }
-      return true;
-    });
-  }
+  // GtkTextView calcule sa hauteur pour une largeur donnée de manière asynchrone : quand il est
+  // construit hors écran (largeur 0), sa première hauteur peut rester figée sur une seule ligne.
+  // À chaque changement de largeur, on relance le calcul (et on cale les tableaux ancrés).
+  let width = -1;
+  view.add_tick_callback(() => {
+    const w = view.get_width();
+    if (w !== width && w > 0) {
+      width = w;
+      for (const table of tables) table.widthRequest = Math.max(100, w - 4);
+      view.queue_resize();
+    }
+    return true;
+  });
   return view;
 }
