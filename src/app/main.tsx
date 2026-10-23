@@ -16,6 +16,8 @@ import { STYLESHEET } from './style.ts';
 export const APP_ID = GLib.getenv('OPENCODE_GNOME_APP_ID') ?? 'io.github.maarekj.OpencodeGnome';
 
 const app = new Adw.Application({ applicationId: APP_ID, flags: Gio.ApplicationFlags.DEFAULT_FLAGS });
+// icône installée sous l'identifiant de l'application (scripts/install.ts)
+Gtk.Window.set_default_icon_name(APP_ID);
 const store = new Store(new OpencodeClient(serverUrl()));
 const settings = new Settings();
 let api: WindowApi | null = null;

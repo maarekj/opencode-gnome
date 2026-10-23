@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Icône d'opencode-gnome : logo d'opencode (sst/opencode, licence MIT) au style GNOME. -->
+  <defs>
+    <linearGradient id="fond" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d3846"/>
+      <stop offset="1" stop-color="#241f31"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#62a0ea"/>
+      <stop offset="1" stop-color="#1c71d8"/>
+    </linearGradient>
+  </defs>
+  <!-- socle (relief GNOME) puis face -->
+  <rect x="8" y="12" width="112" height="108" rx="20" fill="#1a1625"/>
+  <rect x="8" y="8" width="112" height="106" rx="20" fill="url(#fond)"/>
+  <!-- « O » d'opencode : cadre blanc, moitié basse de l'intérieur à la couleur d'accent -->
+  <path d="M36 26h56v70H36z M50 40v42h28V40z" fill="#ffffff" fill-rule="evenodd"/>
+  <rect x="50" y="54" width="28" height="28" fill="url(#accent)"/>
+</svg>

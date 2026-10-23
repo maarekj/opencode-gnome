@@ -100,6 +100,24 @@ exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "
   0o755,
 );
 
+// Icône (data/icons) installée sous l'identifiant de l'application ; worktree : pastille numérotée.
+const iconsDir = path.join(home, '.local', 'share', 'icons', 'hicolor');
+const badge =
+  variant === ''
+    ? ''
+    : `  <circle cx="106" cy="106" r="16" fill="#deddda" stroke="#241f31" stroke-width="3"/>
+  <text x="106" y="106" dy="0.35em" text-anchor="middle" font-family="Cantarell, sans-serif" font-weight="bold" font-size="${variant.length > 1 ? 13 : 20}" fill="#3d3846">${variant}</text>
+`;
+const icon = fs.readFileSync(path.join(root, 'data', 'icons', 'app.svg'), 'utf8').replace('</svg>', `${badge}</svg>`);
+write(path.join(iconsDir, 'scalable', 'apps', `${APP_ID}.svg`), icon);
+write(path.join(iconsDir, 'symbolic', 'apps', `${APP_ID}-symbolic.svg`), fs.readFileSync(path.join(root, 'data', 'icons', 'app-symbolic.svg'), 'utf8'));
+try {
+  // le thème hicolor n'est relu qu'à la mise à jour de son horodatage
+  fs.utimesSync(iconsDir, new Date(), new Date());
+} catch {
+  // dossier absent : rien à rafraîchir
+}
+
 write(
   path.join(appsDir, `${APP_ID}.desktop`),
   `[Desktop Entry]
@@ -107,7 +125,7 @@ Type=Application
 Name=${variant === '' ? 'opencode' : `opencode (${variant})`}
 Comment=Sessions opencode${variant === '' ? '' : ` — worktree ${path.basename(root)}`}
 Exec=${path.join(binDir, LAUNCHER)}
-Icon=utilities-terminal
+Icon=${APP_ID}
 Terminal=false
 Categories=Development;
 StartupNotify=true
