@@ -3,6 +3,7 @@ import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
+import Pango from 'gi://Pango';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtCost, fmtRelative } from '../shared/format.ts';
@@ -13,7 +14,7 @@ import { createConversationPage, sessionTag } from './ConversationPage.tsx';
 import type { Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { keyedListBox } from './KeyedBox.ts';
-import { askDelete, attachSessionMenu, type SessionActions } from './SessionMenu.ts';
+import { askDelete, askRename, attachSessionMenu, type SessionActions } from './SessionMenu.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
 
@@ -27,6 +28,8 @@ interface Actions {
   newSession: (directory: string) => void;
   /** Actions du menu d'une session (ouvrir, terminal, renommer, forker, supprimer). */
   sessionActions: (session: Session) => SessionActions;
+  /** Ferme une session ouverte (retirée de la barre latérale). */
+  closeSession: (sessionID: string) => void;
 }
 
 // ---------------------------------------------------------------- barre latérale
@@ -38,6 +41,15 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n > 1 ?
  * pastille orange avec le nombre de sessions qui attendent une réponse. Projets vides atténués.
  */
 interface ProjectActions {
+  /** affiche la liste complète des sessions du projet */
+  showList: (key: string) => void;
+  /** ouvre une session (onglet) */
+  openSession: (sessionID: string) => void;
+  /** ferme une session ouverte */
+  closeSession: (sessionID: string) => void;
+  /** déplie / replie un projet */
+  toggle: (key: string) => void;
+  sessionActions: (session: Session) => SessionActions;
   isFavorite: (path: string) => boolean;
   toggleFavorite: (path: string) => void;
   newSession: (directory: string) => void;
@@ -45,11 +57,26 @@ interface ProjectActions {
   attach: (directory: string) => void;
 }
 
-function ProjectRow({ project, favorite, actions }: { project: ProjectView; favorite: boolean; actions: ProjectActions }): JSX.Element {
+function ProjectRow({
+  project,
+  favorite,
+  open,
+  expanded,
+  actions,
+}: {
+  project: ProjectView;
+  favorite: boolean;
+  /** nombre de sessions ouvertes du projet */
+  open: number;
+  expanded: boolean;
+  actions: ProjectActions;
+}): JSX.Element {
   const empty = project.sessions.length === 0;
+  // replié (ou sans session ouverte) : résumé d'activité sur la ligne du projet
+  const summary = !expanded || open === 0;
   return (
     <Adw.ActionRow
-      name={project.key}
+      name={`p:${project.key}`}
       title={esc(project.name)}
       subtitle={esc(prettyPath(project.path))}
       subtitleLines={1}
@@ -59,6 +86,7 @@ function ProjectRow({ project, favorite, actions }: { project: ProjectView; favo
       $={(self: Adw.ActionRow) => {
         attachContextMenu(self, () => [
           [
+            { label: 'Toutes les sessions…', activate: () => actions.showList(project.key) },
             { label: actions.isFavorite(project.path) ? 'Retirer des favoris' : 'Ajouter aux favoris', activate: () => actions.toggleFavorite(project.path) },
           ],
           [
@@ -68,9 +96,22 @@ function ProjectRow({ project, favorite, actions }: { project: ProjectView; favo
         ]);
       }}
     >
-      <Gtk.Image $type="prefix" iconName="folder-symbolic" />
-      {project.working > 0 ? <Adw.Spinner $type="suffix" tooltipText={plural(project.working, 'session en cours', 'sessions en cours')} /> : null}
-      {project.waiting > 0 ? (
+      {/* add_prefix insère en tête : l'icône est déclarée avant la flèche pour être à sa droite */}
+      <Gtk.Image $type="prefix" iconName={expanded && open > 0 ? 'folder-open-symbolic' : 'folder-symbolic'} />
+      {open > 0 ? (
+        <Gtk.Button
+          $type="prefix"
+          iconName={expanded ? 'pan-down-symbolic' : 'pan-end-symbolic'}
+          tooltipText={expanded ? 'Replier' : 'Déplier'}
+          valign={Gtk.Align.CENTER}
+          cssClasses={['flat', 'circular', 'expander-button']}
+          onClicked={() => actions.toggle(project.key)}
+        />
+      ) : (
+        <Gtk.Box $type="prefix" widthRequest={24} />
+      )}
+      {project.working > 0 && summary ? <Adw.Spinner $type="suffix" tooltipText={plural(project.working, 'session en cours', 'sessions en cours')} /> : null}
+      {project.waiting > 0 && summary ? (
         <Gtk.Label
           $type="suffix"
           label={String(project.waiting)}
@@ -91,6 +132,73 @@ function ProjectRow({ project, favorite, actions }: { project: ProjectView; favo
   );
 }
 
+/** Session ouverte, sous son projet : titre, activité, fermeture (×) au survol, menu contextuel. */
+function SessionTreeRow({ view, actions }: { view: SessionView; actions: ProjectActions }): JSX.Element {
+  const s = view.session;
+  const title = s.title === '' ? 'Sans titre' : s.title;
+  const act = actions.sessionActions(s);
+  return (
+    <Gtk.ListBoxRow
+      name={`s:${s.id}`}
+      cssClasses={['session-tree-row']}
+      tooltipText={title}
+      $={(self: Gtk.ListBoxRow) => {
+        attachContextMenu(self, () => [
+          [
+            { label: 'Ouvrir dans le terminal', activate: act.openInTerminal },
+            { label: 'Renommer…', activate: () => askRename(self, title, act.rename) },
+            { label: 'Forker', activate: act.fork },
+          ],
+          [{ label: 'Fermer', activate: () => actions.closeSession(s.id) }],
+          [{ label: 'Supprimer…', activate: () => askDelete(self, title, act.delete) }],
+        ]);
+      }}
+    >
+      <Gtk.Box spacing={8} marginStart={44} marginEnd={4} marginTop={2} marginBottom={2}>
+        <Gtk.Box widthRequest={16} valign={Gtk.Align.CENTER}>
+          {treeActivity(view)}
+        </Gtk.Box>
+        <Gtk.Label label={title} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} />
+        <Gtk.Button
+          iconName="window-close-symbolic"
+          tooltipText="Fermer (Ctrl+W)"
+          valign={Gtk.Align.CENTER}
+          cssClasses={['flat', 'circular', 'close-button']}
+          onClicked={() => actions.closeSession(s.id)}
+        />
+      </Gtk.Box>
+    </Gtk.ListBoxRow>
+  );
+}
+
+/** Indicateur d'activité compact d'une session de l'arbre. */
+function treeActivity(view: SessionView): JSX.Element {
+  switch (view.activity) {
+    case 'busy':
+      return <Adw.Spinner tooltipText="En cours" />;
+    case 'retry':
+      return <Gtk.Image iconName="view-refresh-symbolic" cssClasses={['warning']} tooltipText="Nouvel essai" />;
+    case 'question':
+      return <Gtk.Image iconName="help-about-symbolic" cssClasses={['warning']} tooltipText="Question en attente" />;
+    case 'permission':
+      return <Gtk.Image iconName="dialog-warning-symbolic" cssClasses={['warning']} tooltipText="Permission demandée" />;
+    case 'idle':
+      return <Gtk.Image iconName="chat-message-new-symbolic" cssClasses={['dim-label']} />;
+    default:
+      return <Gtk.Box />;
+  }
+}
+
+/** Élément de l'arbre aplati : un projet, ou une de ses sessions ouvertes. */
+type TreeItem =
+  | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly expanded: boolean }
+  | { readonly kind: 'session'; readonly view: SessionView };
+
+const treeKey = (i: TreeItem): string =>
+  i.kind === 'project'
+    ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.expanded}`
+    : `s|${i.view.session.id}|${i.view.activity}|${i.view.session.title}`;
+
 function startServer(): void {
   try {
     Gio.Subprocess.new(['systemctl', '--user', 'start', SERVER_UNIT], Gio.SubprocessFlags.NONE);
@@ -105,12 +213,15 @@ function Sidebar({
   projects,
   select,
   actions,
+  shown,
 }: {
   store: Store;
   settings: Settings;
   projects: Accessor<readonly ProjectView[]>;
   select: (key: string) => void;
   actions: ProjectActions;
+  /** ligne à mettre en évidence : `s:<session affichée>` ou `p:<projet>` */
+  shown: Accessor<string>;
 }): JSX.Element {
   const conn = store.connection;
   const mode = settings.data((d) => d.sidebarMode);
@@ -163,17 +274,46 @@ function Sidebar({
             <Gtk.ListBox
               cssClasses={['navigation-sidebar']}
               onRowActivated={(_self: Gtk.ListBox, row: Gtk.ListBoxRow) => {
-                select(row.name);
+                const name = row.name;
+                if (name.startsWith('s:')) actions.openSession(name.slice(2));
+                else if (name.startsWith('p:')) select(name.slice(2));
               }}
               $={(self: Gtk.ListBox) => {
+                // arbre aplati : chaque projet, puis ses sessions ouvertes (ordre d'ouverture) s'il est déplié
+                const items = createComputed((): TreeItem[] => {
+                  const { openSessions, collapsed } = settings.data();
+                  const favs = favorites();
+                  const out: TreeItem[] = [];
+                  for (const p of projects()) {
+                    const byID = new Map(p.sessions.map((v) => [v.session.id, v]));
+                    const open = openSessions.flatMap((id) => {
+                      const v = byID.get(id);
+                      return v === undefined ? [] : [v];
+                    });
+                    const expanded = !collapsed.includes(p.key);
+                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: open.length, expanded });
+                    if (expanded) for (const view of open) out.push({ kind: 'session', view });
+                  }
+                  return out;
+                });
                 onCleanup(
-                  keyedListBox(
-                    self,
-                    createComputed(() => projects().map((p) => ({ p, favorite: favorites().includes(p.path) }))),
-                    ({ p, favorite }) => `${p.key}|${p.working}|${p.waiting}|${p.sessions.length === 0}|${p.name}|${favorite}`,
-                    ({ p, favorite }) => asWidget(ProjectRow({ project: p, favorite, actions })),
+                  keyedListBox(self, items, treeKey, (i) =>
+                    asWidget(i.kind === 'project' ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, expanded: i.expanded, actions }) : SessionTreeRow({ view: i.view, actions })),
                   ),
                 );
+                // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)
+                const highlight = (): void => {
+                  const name = shown.peek();
+                  let target: Gtk.ListBoxRow | null = null;
+                  for (let i = 0, row = self.get_row_at_index(0); row !== null; i += 1, row = self.get_row_at_index(i)) {
+                    if (row.name === name) target = row;
+                  }
+                  if (target === null) self.unselect_all();
+                  else if (self.get_selected_row() !== target) self.select_row(target);
+                };
+                highlight();
+                onCleanup(shown.subscribe(highlight));
+                onCleanup(items.subscribe(highlight));
               }}
             />
           </Gtk.ScrolledWindow>
@@ -319,6 +459,8 @@ function asPage(o: JSX.Element): Adw.NavigationPage {
 
 export interface WindowApi {
   openSession: (sessionID: string) => void;
+  /** ferme la session affichée (Ctrl+W) */
+  closeCurrent: () => void;
 }
 
 export function MainWindow({
@@ -401,10 +543,22 @@ export function MainWindow({
         run('Suppression impossible', async () => {
           await store.client.deleteSession(session.id, session.directory);
           if (nav.find_page(sessionTag(session.id)) !== null) nav.pop_to_tag('sessions');
+          settings.closeSessions([session.id]);
           store.removeSession(session.id);
           actions.toast('Session supprimée');
         }),
     }),
+    closeSession: (sessionID) => {
+      const shownTag = nav.visiblePage?.tag ?? '';
+      settings.closeSessions([sessionID]);
+      if (shownTag !== sessionTag(sessionID)) return;
+      // session affichée : une autre session ouverte du même projet, sinon la liste du projet
+      const project = store.projects.peek().find((p) => p.sessions.some((v) => v.session.id === sessionID));
+      const ids = new Set(project?.sessions.map((v) => v.session.id) ?? []);
+      const next = settings.data.peek().openSessions.findLast((id) => ids.has(id));
+      if (next === undefined) nav.pop_to_tag('sessions');
+      else actions.openSession(next);
+    },
     newSession: (directory) => {
       const create = async (): Promise<void> => {
         try {
@@ -419,7 +573,11 @@ export function MainWindow({
     },
     openSession: (sessionID) => {
       const project = store.projects.peek().find((p) => p.sessions.some((v) => v.session.id === sessionID));
-      if (project !== undefined) setSelected(project.key);
+      if (project !== undefined) {
+        setSelected(project.key);
+        settings.setCollapsed(project.key, false);
+      }
+      settings.openSession(sessionID);
       if (split !== null) split.showContent = true;
       const existing = nav.find_page(sessionTag(sessionID));
       if (existing !== null) {
@@ -463,7 +621,29 @@ export function MainWindow({
   };
 
   nav.add(asPage(SessionsPage({ store, current, actions })));
-  ready({ openSession: actions.openSession });
+  ready({ openSession: actions.openSession, closeCurrent: () => {
+    const tag = nav.visiblePage?.tag ?? '';
+    if (tag.startsWith('session:')) actions.closeSession(tag.slice('session:'.length));
+  } });
+
+  /** Ligne mise en évidence dans la barre latérale : session affichée, sinon projet courant. */
+  const [shown, setShown] = createState('');
+  const updateShown = (): void => {
+    const tag = nav.visiblePage?.tag ?? '';
+    setShown(tag.startsWith('session:') ? `s:${tag.slice('session:'.length)}` : `p:${current.peek()?.key ?? ''}`);
+  };
+  nav.connect('notify::visible-page', updateShown);
+  onCleanup(current.subscribe(updateShown));
+
+  // sessions ouvertes qui n'existent plus (supprimées ailleurs) : retirées, une fois chargées
+  onCleanup(
+    store.projects.subscribe(() => {
+      if (store.connection.peek().state !== 'connected') return;
+      const known = new Set(store.projects.peek().flatMap((p) => p.sessions.map((v) => v.session.id)));
+      const gone = settings.data.peek().openSessions.filter((id) => !known.has(id));
+      if (gone.length > 0) settings.closeSessions(gone);
+    }),
+  );
 
   return (
     <Adw.ApplicationWindow application={app} title="opencode" defaultWidth={size?.[0] ?? 1100} defaultHeight={size?.[1] ?? 720}>
@@ -482,7 +662,16 @@ export function MainWindow({
               settings,
               projects: visibleProjects,
               select,
+              shown,
               actions: {
+                showList: (key) => {
+                  select(key);
+                  nav.pop_to_tag('sessions');
+                },
+                openSession: (id) => actions.openSession(id),
+                closeSession: (id) => actions.closeSession(id),
+                toggle: (key) => settings.setCollapsed(key, !settings.data.peek().collapsed.includes(key)),
+                sessionActions: (session) => actions.sessionActions(session),
                 isFavorite: (path) => settings.isFavorite(path),
                 toggleFavorite: (path) => settings.toggleFavorite(path),
                 newSession: (dir) => actions.newSession(dir),

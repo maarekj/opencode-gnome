@@ -78,6 +78,12 @@ toggleTools.connect('activate', () => {
 app.add_action(toggleTools);
 app.set_accels_for_action('app.toggle-tools', ['<Control><Shift>o']);
 
+/** app.close-session : ferme la session affichée (Ctrl+W) */
+const closeSession = new Gio.SimpleAction({ name: 'close-session' });
+closeSession.connect('activate', () => api?.closeCurrent());
+app.add_action(closeSession);
+app.set_accels_for_action('app.close-session', ['<Control>w']);
+
 // ------------------------------------------------------------------ fenêtre
 
 app.connect('startup', () => {

@@ -136,4 +136,21 @@ export const STYLESHEET = `
   font-size: 0.8em;
   margin: 0 4px;
 }
+
+.session-tree-row .close-button {
+  opacity: 0;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+}
+.session-tree-row:hover .close-button,
+.session-tree-row:selected .close-button,
+.session-tree-row .close-button:focus-visible {
+  opacity: 1;
+}
+.expander-button {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+}
 `;

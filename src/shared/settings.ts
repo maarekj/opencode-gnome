@@ -14,6 +14,10 @@ export const SettingsData = z.object({
   favorites: z.prefault(z.array(z.string()), []),
   /** mode de la barre latérale */
   sidebarMode: z.prefault(SidebarMode, 'all'),
+  /** sessions ouvertes (onglets de la barre latérale), dans l'ordre d'ouverture */
+  openSessions: z.prefault(z.array(z.string()), []),
+  /** projets repliés dans la barre latérale (clés de projet) */
+  collapsed: z.prefault(z.array(z.string()), []),
   /** taille du texte de la conversation, en % */
   fontScale: z.prefault(z.number(), 100),
   /** largeur maximale de la conversation en px (0 = toute la largeur) */
@@ -31,7 +35,7 @@ export const SettingsData = z.object({
 });
 export type SettingsData = z.output<typeof SettingsData>;
 
-const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all', showTools: true, fontScale: 100, maxWidth: 860 };
+const DEFAULTS: SettingsData = { favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], showTools: true, fontScale: 100, maxWidth: 860 };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -107,6 +111,21 @@ export class Settings {
 
   setNumber(key: 'fontScale' | 'maxWidth', value: number): void {
     if (this.data.peek()[key] !== value) this.update((d) => ({ ...d, [key]: value }));
+  }
+
+  /** Ajoute une session aux sessions ouvertes (à la fin), si elle n'y est pas. */
+  openSession(id: string): void {
+    if (!this.data.peek().openSessions.includes(id)) this.update((d) => ({ ...d, openSessions: [...d.openSessions, id] }));
+  }
+
+  closeSessions(ids: readonly string[]): void {
+    if (ids.some((id) => this.data.peek().openSessions.includes(id))) this.update((d) => ({ ...d, openSessions: d.openSessions.filter((x) => !ids.includes(x)) }));
+  }
+
+  setCollapsed(key: string, collapsed: boolean): void {
+    const has = this.data.peek().collapsed.includes(key);
+    if (has === collapsed) return;
+    this.update((d) => ({ ...d, collapsed: collapsed ? [...d.collapsed, key] : d.collapsed.filter((k) => k !== key) }));
   }
 
   setShowTools(show: boolean): void {
