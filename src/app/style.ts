@@ -123,4 +123,9 @@ export const STYLESHEET = `
 .copyable .copy-button:focus-visible {
   opacity: 1;
 }
+
+.stamp {
+  font-size: 0.8em;
+  margin: 0 4px;
+}
 `;

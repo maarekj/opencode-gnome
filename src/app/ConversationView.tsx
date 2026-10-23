@@ -5,9 +5,9 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
-import { stripImageMarkers, type Block, type Conversation } from '../shared/conversation.ts';
+import { stripImageMarkers, type Block, type Conversation, type TurnInfo } from '../shared/conversation.ts';
 import { AttachmentView } from './Attachments.tsx';
-import { esc } from '../shared/format.ts';
+import { esc, fmtDuration, fmtFullDate, fmtStamp } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../shared/schemas.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { MarkdownView } from './Markdown.tsx';
@@ -196,6 +196,37 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
 
 const text = (part: Accessor<Part>): Accessor<string> => part((p) => p.text ?? '');
 
+/** « Réflexion · 5,5 s », « Réflexion… » pendant la génération. */
+const reasoningLabel = (p: Part): string => {
+  const { start, end } = p.time ?? {};
+  if (start === undefined) return 'Réflexion';
+  if (end === undefined) return 'Réflexion…';
+  // réflexion instantanée (résumé vide) : pas de « 0,0 s »
+  return end - start < 100 ? 'Réflexion' : `Réflexion · ${fmtDuration(end - start)}`;
+};
+
+/** Heure d'un message, date complète en infobulle. */
+function Stamp({ ms }: { ms: number }): JSX.Element {
+  return <Gtk.Label label={fmtStamp(ms)} tooltipText={fmtFullDate(ms)} halign={Gtk.Align.END} cssClasses={['dim-label', 'caption', 'stamp']} />;
+}
+
+const turnLabel = (t: TurnInfo): string => (t.completed === undefined ? '' : `${fmtStamp(t.completed)} · répondu en ${fmtDuration(t.completed - t.created)}`);
+const turnTooltip = (t: TurnInfo): string => (t.completed === undefined ? '' : `Terminé le ${fmtFullDate(t.completed)}`);
+
+/** Pied de tour de l'agent : heure de fin et durée totale du tour (rien tant qu'il est en cours). */
+function TurnFooter({ turn }: { turn: Accessor<TurnInfo> | undefined }): JSX.Element {
+  if (turn === undefined) return <Gtk.Box />;
+  return (
+    <Gtk.Label
+      label={turn(turnLabel)}
+      tooltipText={turn(turnTooltip)}
+      visible={turn((t) => t.completed !== undefined)}
+      halign={Gtk.Align.START}
+      cssClasses={['dim-label', 'caption', 'stamp']}
+    />
+  );
+}
+
 /** Copie du texte dans le presse-papier. */
 function copyText(widget: Gtk.Widget, value: string): void {
   widget.get_clipboard().set_content(Gdk.ContentProvider.new_for_bytes('text/plain;charset=utf-8', new GLib.Bytes(new TextEncoder().encode(value))));
@@ -235,14 +266,22 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
   let widget: JSX.Element;
   switch (block.kind) {
     case 'user':
-      widget = <Copyable text={block.part((p) => stripImageMarkers(p.text ?? ''))} css="user-message" />;
+      widget = (
+        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={4}>
+          {block.first === true ? <Stamp ms={block.created} /> : null}
+          <Copyable text={block.part((p) => stripImageMarkers(p.text ?? ''))} css="user-message" />
+        </Gtk.Box>
+      );
+      break;
+    case 'turn':
+      widget = <TurnFooter turn={block.turn} />;
       break;
     case 'text':
       widget = <Copyable text={text(block.part)} css="assistant-message" />;
       break;
     case 'reasoning':
       widget = (
-        <Gtk.Expander label="Réflexion" cssClasses={['reasoning']}>
+        <Gtk.Expander label={block.part(reasoningLabel)} cssClasses={['reasoning']}>
           <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
             <With value={text(block.part)}>{(t: string) => MarkdownView({ text: t })}</With>
           </Gtk.Box>

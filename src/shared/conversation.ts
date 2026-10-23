@@ -27,12 +27,32 @@ export const contextTokens = (info: MessageInfo): number => {
   return t.input + t.output + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0);
 };
 
-export type BlockKind = 'user' | 'text' | 'reasoning' | 'tool' | 'file' | 'error';
+export type BlockKind = 'user' | 'text' | 'reasoning' | 'tool' | 'file' | 'error' | 'turn';
+
+/** Fin d'un tour de l'agent (pied de bloc) : heure et durée depuis le message utilisateur. */
+export interface TurnInfo {
+  /** heure du message utilisateur */
+  readonly created: number;
+  /** fin du dernier message de l'agent ; absent tant que le tour est en cours */
+  readonly completed?: number;
+}
 
 export interface Block {
   readonly id: string;
   readonly kind: BlockKind;
   readonly part: Accessor<Part>;
+  /** heure de création du message (en-tête des messages utilisateur) */
+  readonly created: number;
+  /** premier bloc visible de son message (porte l'heure) */
+  first?: boolean;
+  /** blocs `turn` : bornes du tour */
+  readonly turn?: Accessor<TurnInfo>;
+}
+
+interface TurnEntry {
+  readonly block: Block;
+  readonly set: Setter<TurnInfo>;
+  value: TurnInfo;
 }
 
 interface PartEntry {
@@ -100,6 +120,8 @@ export class Conversation {
   #directory: string | null = null;
   readonly #messages = new Map<string, MessageEntry>();
   readonly #parts = new Map<string, PartEntry>();
+  /** message utilisateur -> bloc de fin de tour */
+  readonly #turns = new Map<string, TurnEntry>();
   #structureChanged = false;
   #contextDirty = false;
   #flushQueued = false;
@@ -277,7 +299,7 @@ export class Conversation {
     }
     const kind = part.type === 'error' ? 'error' : kindOf(m.info.role, part);
     const [accessor, set] = createState<Part>(part);
-    this.#parts.set(part.id, { block: { id: part.id, kind: kind ?? 'text', part: accessor }, set, value: part, dirty: false });
+    this.#parts.set(part.id, { block: { id: part.id, kind: kind ?? 'text', part: accessor, created: m.info.time.created }, set, value: part, dirty: false });
     if (!m.parts.includes(part.id)) m.parts.push(part.id);
     this.#structureChanged = true;
   }
@@ -303,29 +325,76 @@ export class Conversation {
         entry.set(entry.value);
       }
     }
+    this.#updateTurns();
     if (!this.#structureChanged) return;
     this.#structureChanged = false;
     const blocks: Block[] = [];
     // les identifiants opencode sont triables chronologiquement
-    for (const id of [...this.#messages.keys()].toSorted()) {
+    const ids = [...this.#messages.keys()].toSorted();
+    // dernier message de l'agent de chaque tour : le pied de tour vient après lui
+    const lastOfTurn = new Map<string, string>();
+    for (const id of ids) {
+      const info = this.#messages.get(id)?.info;
+      if (info?.role === 'assistant' && info.parentID !== undefined) lastOfTurn.set(info.parentID, id);
+    }
+    for (const id of ids) {
       const m = this.#messages.get(id);
       if (m === undefined) continue;
-      for (const partID of m.parts) {
-        const entry = this.#parts.get(partID);
-        if (entry === undefined) continue;
-        const kind = entry.value.type === 'error' ? 'error' : kindOf(m.info.role, entry.value);
-        if (kind === null) continue;
-        // le type visible peut avoir changé : nouveau bloc
-        if (kind !== entry.block.kind) {
-          const [accessor, set] = createState<Part>(entry.value);
-          this.#parts.set(partID, { block: { id: partID, kind, part: accessor }, set, value: entry.value, dirty: false });
-        }
-        blocks.push(this.#parts.get(partID)?.block ?? entry.block);
+      this.#pushParts(m, blocks);
+      const parent = m.info.parentID;
+      if (parent !== undefined && lastOfTurn.get(parent) === id) {
+        const turn = this.#turns.get(parent);
+        if (turn !== undefined) blocks.push(turn.block);
       }
     }
-    const signature = blocks.map((b) => `${b.id}:${b.kind}`).join(',');
+    const signature = blocks.map((b) => `${b.id}:${b.kind}:${b.first === true ? 1 : 0}`).join(',');
     if (signature === this.#signature) return;
     this.#signature = signature;
     this.#setBlocks(blocks);
+  }
+
+  /** Bornes de chaque tour (message utilisateur -> fin du dernier message de l'agent). */
+  #updateTurns(): void {
+    const ends = new Map<string, number | undefined>();
+    for (const { info } of this.#messages.values()) {
+      if (info.role !== 'assistant' || info.parentID === undefined) continue;
+      // un message de l'agent non terminé rend le tour « en cours »
+      const prev = ends.has(info.parentID) ? ends.get(info.parentID) : 0;
+      ends.set(info.parentID, prev === undefined || info.time.completed === undefined ? undefined : Math.max(prev, info.time.completed));
+    }
+    for (const [userID, end] of ends) {
+      const user = this.#messages.get(userID)?.info;
+      if (user === undefined) continue;
+      const value: TurnInfo = end === undefined ? { created: user.time.created } : { created: user.time.created, completed: end };
+      const entry = this.#turns.get(userID);
+      if (entry === undefined) {
+        const [accessor, set] = createState<TurnInfo>(value);
+        const [part] = createState<Part>({ id: `${userID}-turn`, type: 'turn', messageID: userID, sessionID: this.sessionID });
+        this.#turns.set(userID, { block: { id: `${userID}-turn`, kind: 'turn', part, created: user.time.created, turn: accessor }, set, value });
+        this.#structureChanged = true;
+      } else if (entry.value.completed !== value.completed) {
+        entry.value = value;
+        entry.set(value);
+      }
+    }
+  }
+
+  #pushParts(m: MessageEntry, blocks: Block[]): void {
+    let first = true;
+    for (const partID of m.parts) {
+      const entry = this.#parts.get(partID);
+      if (entry === undefined) continue;
+      const kind = entry.value.type === 'error' ? 'error' : kindOf(m.info.role, entry.value);
+      if (kind === null) continue;
+      // le type visible peut avoir changé : nouveau bloc
+      if (kind !== entry.block.kind) {
+        const [accessor, set] = createState<Part>(entry.value);
+        this.#parts.set(partID, { block: { id: partID, kind, part: accessor, created: m.info.time.created }, set, value: entry.value, dirty: false });
+      }
+      const block = this.#parts.get(partID)?.block ?? entry.block;
+      block.first = first;
+      first = false;
+      blocks.push(block);
+    }
   }
 }

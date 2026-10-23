@@ -37,6 +37,7 @@ export type Health = z.output<typeof Health>;
 export const ToolState = z.looseObject({
   status: z.string(), // pending | running | completed | error
   title: z.optional(z.string()),
+  time: z.optional(z.looseObject({ start: z.optional(z.number()), end: z.optional(z.number()) })),
   input: z.optional(z.unknown()),
   output: z.optional(z.unknown()),
   error: z.optional(z.unknown()),
@@ -59,6 +60,8 @@ export const Part = z.looseObject({
   state: z.optional(ToolState),
   filename: z.optional(z.string()),
   mime: z.optional(z.string()),
+  /** début / fin de génération (texte, réflexion) */
+  time: z.optional(z.looseObject({ start: z.optional(z.number()), end: z.optional(z.number()) })),
   /** fichier : URL `data:` (contenu en base64) ou `file://` */
   url: z.optional(z.string()),
 });
@@ -68,6 +71,8 @@ export const MessageInfo = z.looseObject({
   id: z.string(),
   role: z.string(), // user | assistant
   sessionID: z.string(),
+  /** assistant : message utilisateur auquel il répond (tour) */
+  parentID: z.optional(z.string()),
   time: z.looseObject({ created: z.number(), completed: z.optional(z.number()) }),
   agent: z.optional(z.string()),
   modelID: z.optional(z.string()),
