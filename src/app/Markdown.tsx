@@ -293,16 +293,7 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
         const anchor = buffer.create_child_anchor(buffer.get_end_iter());
         const table = Table({ header: b.header, rows: b.rows });
         if (table instanceof Gtk.Widget) {
-          // enveloppe sans largeur minimale (défilement horizontal externe) : la largeur imposée
-          // au tableau n'empêche pas la conversation de rétrécir
-          const wrapper = new Gtk.ScrolledWindow({
-            child: table,
-            hscrollbarPolicy: Gtk.PolicyType.EXTERNAL,
-            vscrollbarPolicy: Gtk.PolicyType.NEVER,
-            propagateNaturalWidth: true,
-            propagateNaturalHeight: true,
-          });
-          view.add_child_at_anchor(wrapper, anchor);
+          view.add_child_at_anchor(table, anchor);
           tables.push(table);
         }
         break;
@@ -321,11 +312,27 @@ export function MarkdownView({ text }: { text: string }): Gtk.TextView {
   // GtkTextView calcule sa hauteur pour une largeur donnée de manière asynchrone : quand il est
   // construit hors écran (largeur 0), sa première hauteur peut rester figée sur une seule ligne.
   // À chaque changement de largeur, on relance le calcul et on cale les tableaux ancrés.
+  // Tableaux : GtkTextView alloue les widgets ancrés à leur largeur minimale, on la cale donc sur
+  // la largeur de la vue. Pour ne pas bloquer le rétrécissement, quand la zone de défilement
+  // (largeur de la fenêtre) change, les tableaux sont d'abord réduits, puis recalés.
   let width = -1;
+  let outer = -1;
+  let shrinking = false;
   view.add_tick_callback(() => {
+    if (tables.length > 0) {
+      const sw = view.get_ancestor(Gtk.ScrolledWindow.$gtype)?.get_width() ?? 0;
+      if (sw !== outer) {
+        outer = sw;
+        shrinking = true;
+        for (const table of tables) table.widthRequest = 100;
+        view.queue_resize();
+        return true;
+      }
+    }
     const w = view.get_width();
-    if (w !== width && w > 0) {
+    if ((w !== width || shrinking) && w > 0) {
       width = w;
+      shrinking = false;
       for (const table of tables) table.widthRequest = Math.max(100, w - 4);
       view.queue_resize();
     }

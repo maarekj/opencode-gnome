@@ -524,7 +524,9 @@ export function ConversationView({
 
   const scrolled = (
     <Gtk.ScrolledWindow
-      hscrollbarPolicy={Gtk.PolicyType.NEVER}
+      // EXTERNAL : pas de barre horizontale, mais pas de largeur minimale héritée du contenu
+      // (les tableaux se recalent sur la nouvelle largeur, cf. MarkdownView)
+      hscrollbarPolicy={Gtk.PolicyType.EXTERNAL}
       $={(self: Gtk.ScrolledWindow) => {
         stickToBottom(self);
       }}
