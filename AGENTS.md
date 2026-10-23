@@ -50,7 +50,10 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - Ne jamais toucher au dossier d'un autre agent, ni arrêter son serveur de test.
 - Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise, puis
   commenter « En cours dans <dossier> » sur l'issue.
-- Dans un worktree : commits sur sa branche ; une fois l'issue terminée et `pnpm check` OK,
+- **Aucun commit, rebase, fusion ni push sans l'ordre explicite de l'utilisateur.** Une fois
+  l'implémentation prête (`pnpm check` OK, captures faites), installer l'application
+  (`node scripts/install.ts`), présenter ce qu'il faut tester et attendre sa validation.
+- Dans un worktree : commits sur sa branche ; une fois l'issue validée par l'utilisateur,
   `git rebase main` puis fusion dans `main` : `git -C ../opencode-gnome merge --ff-only agent-N`
   (si `main` a avancé entre-temps, refaire le rebase), puis `git -C ../opencode-gnome push`.
 - Chaque agent construit **et installe** son application après une modification d'interface :

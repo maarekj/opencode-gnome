@@ -14,6 +14,8 @@ import { createConversationPage, sessionTag, type ConversationPageHandle } from 
 import type { Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { keyedListBox } from './KeyedBox.ts';
+import { TerminalManager } from '../shared/terminals.ts';
+import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
 import { askDelete, askRename, attachSessionMenu, type SessionActions } from './SessionMenu.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
@@ -414,7 +416,7 @@ function asWidget(o: JSX.Element): Gtk.Widget {
   return o;
 }
 
-function SessionsPage({ store, current, actions }: { store: Store; current: Accessor<ProjectView | null>; actions: Actions }): JSX.Element {
+function SessionsPage({ store, current, actions, terminals }: { store: Store; current: Accessor<ProjectView | null>; actions: Actions; terminals: TerminalContext }): JSX.Element {
   const key = createMemo(() => current()?.key ?? null);
   const sessions = createComputed(() => current()?.sessions ?? []);
   const empty = createMemo(() => sessions().length === 0);
@@ -429,6 +431,9 @@ function SessionsPage({ store, current, actions }: { store: Store; current: Acce
           <Adw.WindowTitle $type="title" title={current((p) => p?.name ?? 'opencode')} subtitle={current((p) => (p === null ? '' : prettyPath(p.path)))} />
           <Gtk.Button $type="end" iconName="tab-new-symbolic" tooltipText="Nouvelle session" sensitive={key((k) => k !== null)} onClicked={newSession} />
         </Adw.HeaderBar>
+        <Gtk.Box $type="top">
+          <TerminalBar project={current((p) => p?.path ?? null)} ctx={terminals} />
+        </Gtk.Box>
         <With value={createMemo(() => `${key() ?? ''}|${String(empty())}|${store.connection().state}`)}>
           {() => {
             if (store.connection.peek().state !== 'connected' && store.projects.peek().length === 0) {
@@ -589,6 +594,15 @@ export function MainWindow({
     });
   };
 
+  const terminals: TerminalContext = {
+    settings,
+    manager: new TerminalManager(() => {
+      const { terminal, terminalCommand } = settings.data.peek();
+      return { terminal, command: terminalCommand };
+    }),
+    toast,
+  };
+
   const actions: Actions = {
     toast,
     attach: (directory, sessionID) => {
@@ -660,7 +674,7 @@ export function MainWindow({
       if (split !== null) split.showContent = true;
       let handle = pages.get(sessionID);
       if (handle === undefined) {
-        handle = createConversationPage({ store, settings, sessionID, attach: actions.attach, toast: actions.toast, newSession: actions.newSession, sessionActions: actions.sessionActions });
+        handle = createConversationPage({ store, settings, sessionID, attach: actions.attach, toast: actions.toast, newSession: actions.newSession, sessionActions: actions.sessionActions, terminals });
         pages.set(sessionID, handle);
       }
       if (nav.visiblePage === handle.page) return;
@@ -701,7 +715,7 @@ export function MainWindow({
     if (exists) actions.openSession(sessionID);
   };
 
-  nav.add(asPage(SessionsPage({ store, current, actions })));
+  nav.add(asPage(SessionsPage({ store, current, actions, terminals })));
   ready({ openSession: actions.openSession, closeCurrent: () => {
     const tag = nav.visiblePage?.tag ?? '';
     if (tag.startsWith('session:')) actions.closeSession(tag.slice('session:'.length));

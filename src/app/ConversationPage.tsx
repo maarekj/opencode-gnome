@@ -2,7 +2,7 @@
 import Adw from 'gi://Adw?version=1';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
-import { createComputed, createRoot, createState } from 'gnim';
+import { createComputed, createMemo, createRoot, createState } from 'gnim';
 import { Conversation } from '../shared/conversation.ts';
 import type { Settings } from '../shared/settings.ts';
 import { prettyPath, type Activity, type Store } from '../shared/store.ts';
@@ -14,6 +14,7 @@ import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
 import { openDiffWindow } from './DiffWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
+import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
 import { TodoPanel } from './TodoPanel.tsx';
 
 const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
@@ -55,8 +56,9 @@ export function createConversationPage(opts: {
   toast: (message: string) => void;
   newSession: (directory: string) => void;
   sessionActions: (session: Session) => SessionActions;
+  terminals: TerminalContext;
 }): ConversationPageHandle {
-  const { store, settings, sessionID, attach, toast } = opts;
+  const { store, settings, sessionID, attach, toast, terminals } = opts;
   return createRoot((dispose) => {
     const conversation = new Conversation(store, sessionID);
     // chargement réseau immédiat (non bloquant) ; widgets construits après l'animation d'entrée
@@ -70,6 +72,8 @@ export function createConversationPage(opts: {
       }
       return null;
     });
+    /** racine du projet de la session (terminaux persistants) */
+    const projectPath = createMemo(() => store.projects().find((p) => p.sessions.some((s) => s.session.id === sessionID))?.path ?? null);
     const title = view((v) => (v === null || v.session.title === '' ? 'Session' : v.session.title));
     const subtitle = createComputed(() => {
       if (conversation.questions().length > 0) return ACTIVITY_LABEL.question;
@@ -181,6 +185,9 @@ export function createConversationPage(opts: {
               }}
             />
           </Adw.HeaderBar>
+          <Gtk.Box $type="top">
+            <TerminalBar project={projectPath} ctx={terminals} />
+          </Gtk.Box>
           <ConversationView conversation={conversation} revealed={revealed} actions={requestActions} showTools={showTools} maxWidth={settings.data((d) => d.maxWidth)} />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
             <TodoPanel todos={conversation.todos} />

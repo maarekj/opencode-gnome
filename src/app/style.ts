@@ -146,6 +146,31 @@ export const STYLESHEET = `
   color: var(--accent-color);
 }
 
+.terminal-bar {
+  padding: 4px 12px 6px 12px;
+}
+.terminal-pill {
+  border-radius: 999px;
+  padding: 2px 12px;
+  min-height: 26px;
+  font-size: 0.9em;
+}
+.terminal-pill.running {
+  background: alpha(var(--accent-bg-color), 0.18);
+  color: var(--accent-color);
+}
+.terminal-dot {
+  background: var(--success-color);
+  border-radius: 999px;
+  min-width: 7px;
+  min-height: 7px;
+}
+.terminal-add {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+
 .stamp {
   font-size: 0.8em;
   margin: 0 4px;

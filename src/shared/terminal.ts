@@ -54,6 +54,14 @@ function terminalArgv(choice: TerminalChoice): string[] {
   return [...(TERMINALS[name] ?? [name, '-e'])];
 }
 
+/** Lance directement `program` dans un terminal (la fenêtre se ferme quand il se termine). */
+export function openTerminalArgv(program: readonly string[], cwd: string, choice: TerminalChoice = {}): void {
+  const argv = terminalArgv(choice);
+  const bin = argv[0] ?? '';
+  if (GLib.find_program_in_path(bin) === null) throw new Error(`Terminal introuvable : ${bin} (Préférences)`);
+  GLib.spawn_async(cwd, [...argv, ...program], null, GLib.SpawnFlags.SEARCH_PATH, null);
+}
+
 /**
  * Ouvre `command` dans un terminal, dans `cwd`, via un shell interactif qui reste ouvert après.
  * Priorité : préférence de l'utilisateur > $OPENCODE_GNOME_TERMINAL > premier terminal installé.
