@@ -37,6 +37,17 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - Ne jamais bloquer la boucle principale pendant une animation (voir `ConversationPage.tsx`).
 - Messages de commit en français, courts, au style des commits existants.
 
+## Travail en parallèle (worktrees)
+- Un second agent travaille dans `../opencode-gnome-2` (worktree git, branche `agent-2`).
+  Ne pas toucher à l'autre worktree.
+- Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise
+  (commentaire « En cours dans <worktree> » sur l'issue).
+- Serveur de test pour les captures : port **4799** dans `opencode-gnome`, **4798** dans
+  `opencode-gnome-2` (ne jamais arrêter le serveur de l'autre agent).
+- Dans le worktree : commits sur `agent-2`, puis `git rebase main` et fusion dans `main`
+  (`git -C ../opencode-gnome merge --ff-only agent-2`) une fois l'issue terminée et `pnpm check` OK.
+- L'application installée (`opencode-gnome`) lance le `dist/` du dépôt principal.
+
 ## Suivi des fonctionnalités : issues GitHub
 Dépôt : https://github.com/maarekj/opencode-gnome
 - **Chaque fonctionnalité ou correctif a son issue**, créée avant de commencer
