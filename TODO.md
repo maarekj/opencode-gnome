@@ -8,9 +8,6 @@ Issues ouvertes (retirer une issue de la liste quand elle est fermée) :
 - #7 Extension GNOME Shell : indicateur et notifications
 - #9 Terminaux persistants par projet (zellij) : devenv up, pnpm dev…
 - #18 Barre latérale en arborescence : projets en dossiers, sessions dessous avec activité et menu
-- #19 Commandes « / » dans le compositeur : complétion des commandes, skills et commandes intégrées
-- #20 Mentions « @ » dans le compositeur : complétion des fichiers du projet
-- #21 Historique des prompts de la session avec Haut / Bas dans le compositeur
 - #25 Liste de tâches (todolist) de la session dans la conversation
 
 ## Idées à trier
