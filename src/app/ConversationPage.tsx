@@ -21,8 +21,11 @@ const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
   permission: 'Permission demandée',
 };
 
-/** Délai après la fin de l'animation d'entrée avant de construire la conversation. */
-const REVEAL_DELAY_MS = 300;
+/**
+ * Délai entre l'affichage de la page et la construction de la conversation : laisse le temps de
+ * dessiner le spinner (pas d'animation de navigation, cf. MainWindow).
+ */
+const REVEAL_DELAY_MS = 30;
 
 /** Exécute une action serveur, affiche l'erreur éventuelle. */
 async function attempt(toast: (m: string) => void, what: string, fn: () => Promise<void>): Promise<boolean> {
@@ -38,18 +41,17 @@ async function attempt(toast: (m: string) => void, what: string, fn: () => Promi
 export const sessionTag = (sessionID: string): string => `session:${sessionID}`;
 
 /**
- * Crée la page d'une session. Ses ressources (abonnement aux événements, état réactif) sont
- * libérées quand la page quitte la pile de navigation.
+ * Crée la page d'une session. Elle n'est pas détruite en quittant l'écran : son état (prompt en
+ * cours, défilement, choix de modèle) est retrouvé au retour. Libérée par `dispose()`.
  */
 export function createConversationPage(opts: {
   store: Store;
   settings: Settings;
   sessionID: string;
-  nav: Adw.NavigationView;
   attach: (directory: string, sessionID?: string) => void;
   toast: (message: string) => void;
-}): Adw.NavigationPage {
-  const { store, settings, sessionID, nav, attach, toast } = opts;
+}): ConversationPageHandle {
+  const { store, settings, sessionID, attach, toast } = opts;
   return createRoot((dispose) => {
     const conversation = new Conversation(store, sessionID);
     // chargement réseau immédiat (non bloquant) ; widgets construits après l'animation d'entrée
@@ -154,18 +156,27 @@ export function createConversationPage(opts: {
     );
     if (!(page instanceof Adw.NavigationPage)) throw new TypeError('NavigationPage attendue');
 
-    // `shown` arrive juste avant la fin visuelle de la transition : petite marge avant de construire les widgets
+    // construction de la conversation au premier affichage seulement (la page est ensuite conservée)
     page.connect('shown', () => {
+      if (revealed.peek()) return;
       GLib.timeout_add(GLib.PRIORITY_DEFAULT, REVEAL_DELAY_MS, () => {
         setRevealed(true);
         return GLib.SOURCE_REMOVE;
       });
     });
-    page.connect('hidden', () => {
-      if (nav.find_page(sessionTag(sessionID)) === page) return; // recouverte, pas retirée
-      conversation.dispose();
-      dispose();
-    });
-    return page;
+    return {
+      page,
+      dispose: () => {
+        conversation.dispose();
+        dispose();
+      },
+    };
   });
+}
+
+/** Page d'une session ouverte, conservée en mémoire tant que la session est ouverte. */
+export interface ConversationPageHandle {
+  readonly page: Adw.NavigationPage;
+  /** libère la page (session fermée ou supprimée) */
+  readonly dispose: () => void;
 }

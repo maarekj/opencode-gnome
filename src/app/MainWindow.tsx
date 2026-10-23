@@ -10,7 +10,7 @@ import { esc, fmtCost, fmtRelative } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import { attachCommand, openTerminal } from '../shared/terminal.ts';
-import { createConversationPage, sessionTag } from './ConversationPage.tsx';
+import { createConversationPage, sessionTag, type ConversationPageHandle } from './ConversationPage.tsx';
 import type { Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { keyedListBox } from './KeyedBox.ts';
@@ -500,7 +500,17 @@ export function MainWindow({
 
   let overlay: Adw.ToastOverlay | null = null;
   let split: Adw.NavigationSplitView | null = null;
-  const nav = new Adw.NavigationView();
+  // pas d'animation : une session s'affiche immédiatement
+  const nav = new Adw.NavigationView({ animateTransitions: false });
+  /** pages des sessions ouvertes, conservées (état du prompt, défilement…) */
+  const pages = new Map<string, ConversationPageHandle>();
+  const disposePage = (sessionID: string): void => {
+    const handle = pages.get(sessionID);
+    if (handle === undefined) return;
+    pages.delete(sessionID);
+    if (nav.find_page(sessionTag(sessionID)) !== null) nav.pop_to_tag('sessions');
+    handle.dispose();
+  };
 
   const toast = (title: string): void => {
     overlay?.add_toast(new Adw.Toast({ title: esc(title), timeout: 4 }));
@@ -544,6 +554,7 @@ export function MainWindow({
           await store.client.deleteSession(session.id, session.directory);
           if (nav.find_page(sessionTag(session.id)) !== null) nav.pop_to_tag('sessions');
           settings.closeSessions([session.id]);
+          disposePage(session.id);
           store.removeSession(session.id);
           actions.toast('Session supprimée');
         }),
@@ -551,6 +562,7 @@ export function MainWindow({
     closeSession: (sessionID) => {
       const shownTag = nav.visiblePage?.tag ?? '';
       settings.closeSessions([sessionID]);
+      disposePage(sessionID);
       if (shownTag !== sessionTag(sessionID)) return;
       // session affichée : une autre session ouverte du même projet, sinon la liste du projet
       const project = store.projects.peek().find((p) => p.sessions.some((v) => v.session.id === sessionID));
@@ -579,13 +591,15 @@ export function MainWindow({
       }
       settings.openSession(sessionID);
       if (split !== null) split.showContent = true;
-      const existing = nav.find_page(sessionTag(sessionID));
-      if (existing !== null) {
-        nav.pop_to_page(existing);
-        return;
+      let handle = pages.get(sessionID);
+      if (handle === undefined) {
+        handle = createConversationPage({ store, settings, sessionID, attach: actions.attach, toast: actions.toast });
+        pages.set(sessionID, handle);
       }
-      nav.pop_to_tag('sessions');
-      nav.push(createConversationPage({ store, settings, sessionID, nav, attach: actions.attach, toast: actions.toast }));
+      if (nav.visiblePage === handle.page) return;
+      // pile : liste du projet, puis la session (la page précédente est retirée mais conservée)
+      const root = nav.find_page('sessions');
+      nav.replace(root === null ? [handle.page] : [root, handle.page]);
     },
   };
 
@@ -641,7 +655,10 @@ export function MainWindow({
       if (store.connection.peek().state !== 'connected') return;
       const known = new Set(store.projects.peek().flatMap((p) => p.sessions.map((v) => v.session.id)));
       const gone = settings.data.peek().openSessions.filter((id) => !known.has(id));
-      if (gone.length > 0) settings.closeSessions(gone);
+      if (gone.length > 0) {
+        settings.closeSessions(gone);
+        for (const id of gone) disposePage(id);
+      }
     }),
   );
 
