@@ -58,6 +58,12 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - **Aucun commit, rebase, fusion ni push sans l'ordre explicite de l'utilisateur.** Une fois
   l'implémentation prête (`pnpm check` OK, captures faites), installer l'application
   (`node scripts/install.ts`), présenter ce qu'il faut tester et attendre sa validation.
+- **Une branche par issue**, y compris dans le dépôt principal : `git switch -c issue-<numéro>`
+  depuis `main` à jour (dans un worktree : depuis sa branche `agent-N` rebasée sur `main`).
+  Jamais de commit direct sur `main`. Une fois l'issue validée par l'utilisateur et sur son ordre :
+  `git rebase main`, fusion dans `main` (`git switch main && git merge --ff-only issue-<numéro>`,
+  ou depuis un worktree `git -C ../opencode-gnome merge --ff-only issue-<numéro>`), push, puis
+  suppression de la branche.
 - Dans un worktree : commits sur sa branche ; une fois l'issue validée par l'utilisateur,
   `git rebase main` puis fusion dans `main` : `git -C ../opencode-gnome merge --ff-only agent-N`
   (si `main` a avancé entre-temps, refaire le rebase), puis `git -C ../opencode-gnome push`.
