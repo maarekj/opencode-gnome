@@ -2,6 +2,7 @@
 import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
@@ -194,6 +195,9 @@ function treeActivity(view: SessionView): JSX.Element {
   }
 }
 
+/** Texte comparable : minuscules, sans accents. */
+const normalize = (s: string): string => s.normalize('NFD').replaceAll(/\p{Diacritic}/gu, '').toLowerCase();
+
 /** Élément de l'arbre aplati : un projet, ou une de ses sessions ouvertes. */
 type TreeItem =
   | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly expanded: boolean }
@@ -215,10 +219,11 @@ function startServer(): void {
 function Sidebar({
   store,
   settings,
-  projects,
+  projects: modeProjects,
   select,
   actions,
   shown,
+  allProjects,
 }: {
   store: Store;
   settings: Settings;
@@ -227,11 +232,22 @@ function Sidebar({
   actions: ProjectActions;
   /** ligne à mettre en évidence : `s:<session affichée>` ou `p:<projet>` */
   shown: Accessor<string>;
+  /** tous les projets (la recherche ignore le mode Favoris / Tous) */
+  allProjects: Accessor<readonly ProjectView[]>;
 }): JSX.Element {
   const conn = store.connection;
   const mode = settings.data((d) => d.sidebarMode);
   const favorites = settings.data((d) => d.favorites);
-  const emptyFavorites = createComputed(() => mode() === 'favorites' && projects().length === 0);
+  // recherche : filtre tous les projets sur le nom et le chemin (sans casse ni accents)
+  const [query, setQuery] = createState('');
+  const projects = createComputed((): readonly ProjectView[] => {
+    const q = normalize(query().trim());
+    if (q === '') return modeProjects();
+    return allProjects().filter((p) => normalize(`${p.name} ${p.path}`).includes(q));
+  });
+  const emptyFavorites = createComputed(() => query().trim() === '' && mode() === 'favorites' && projects().length === 0);
+  const noMatch = createComputed(() => query().trim() !== '' && projects().length === 0);
+  let searchBar: Gtk.SearchBar | null = null;
   return (
     <Adw.NavigationPage title="Projets" tag="projects">
       <Adw.ToolbarView>
@@ -266,7 +282,54 @@ function Sidebar({
             }}
           />
           <Gtk.Button $type="end" iconName="view-refresh-symbolic" tooltipText="Recharger" onClicked={() => void store.reload()} />
+          <Gtk.ToggleButton
+            $type="end"
+            iconName="system-search-symbolic"
+            tooltipText="Rechercher un projet (Ctrl+K)"
+            $={(self: Gtk.ToggleButton) => {
+              // lié à la barre de recherche une fois celle-ci créée
+              GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                if (searchBar !== null) searchBar.bind_property('search-mode-enabled', self, 'active', GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE);
+                return GLib.SOURCE_REMOVE;
+              });
+            }}
+          />
         </Adw.HeaderBar>
+        <Gtk.SearchBar
+          $type="top"
+          $={(self: Gtk.SearchBar) => {
+            searchBar = self;
+            const entry = new Gtk.SearchEntry({ placeholderText: 'Rechercher un projet…', hexpand: true });
+            self.child = entry;
+            self.connect_entry(entry);
+            entry.connect('search-changed', () => setQuery(entry.text));
+            // Entrée : ouvre le premier résultat
+            entry.connect('activate', () => {
+              const first = projects.peek()[0];
+              if (first === undefined) return;
+              select(first.key);
+              self.searchModeEnabled = false;
+            });
+            // fermeture (Échap, bouton) : liste complète rétablie
+            self.connect('notify::search-mode-enabled', () => {
+              if (self.searchModeEnabled) entry.grab_focus();
+              else entry.text = '';
+            });
+            // Ctrl+K : ouvre la recherche depuis n'importe où dans la fenêtre
+            const keys = new Gtk.ShortcutController({ scope: Gtk.ShortcutScope.GLOBAL });
+            keys.add_shortcut(
+              new Gtk.Shortcut({
+                trigger: Gtk.ShortcutTrigger.parse_string('<Control>k'),
+                action: Gtk.CallbackAction.new(() => {
+                  self.searchModeEnabled = true;
+                  entry.grab_focus();
+                  return true;
+                }),
+              }),
+            );
+            self.add_controller(keys);
+          }}
+        />
         <Adw.Banner
           $type="top"
           revealed={conn((c) => c.state === 'error')}
@@ -274,7 +337,8 @@ function Sidebar({
           buttonLabel="Démarrer"
           onButtonClicked={startServer}
         />
-        <Gtk.Stack visibleChildName={emptyFavorites((e) => (e ? 'empty' : 'list'))}>
+        <Gtk.Stack visibleChildName={createComputed(() => (noMatch() ? 'nomatch' : emptyFavorites() ? 'empty' : 'list'))}>
+          <Adw.StatusPage name="nomatch" $type="named" iconName="system-search-symbolic" title="Aucun projet" cssClasses={['compact']} />
           <Gtk.ScrolledWindow name="list" $type="named" vexpand hscrollbarPolicy={Gtk.PolicyType.NEVER}>
             <Gtk.ListBox
               cssClasses={['navigation-sidebar']}
@@ -785,6 +849,7 @@ export function MainWindow({
               projects: visibleProjects,
               select,
               shown,
+              allProjects,
               actions: {
                 showList: (key) => {
                   select(key);
