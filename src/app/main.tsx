@@ -9,6 +9,7 @@ import { serverUrl } from '../shared/config.ts';
 import { Settings } from '../shared/settings.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
+import { openPreferences } from './PreferencesDialog.tsx';
 import { STYLESHEET } from './style.ts';
 
 export const APP_ID = 'io.github.maarekj.OpencodeGnome';
@@ -56,6 +57,15 @@ openSession.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | nul
   });
 });
 app.add_action(openSession);
+
+/** app.preferences : menu principal, Ctrl+, */
+const preferences = new Gio.SimpleAction({ name: 'preferences' });
+preferences.connect('activate', () => {
+  const win = app.get_active_window();
+  if (win !== null) openPreferences(win, settings, store.client.providers(GLib.get_home_dir()));
+});
+app.add_action(preferences);
+app.set_accels_for_action('app.preferences', ['<Control>comma']);
 
 // ------------------------------------------------------------------ fenêtre
 

@@ -17,6 +17,7 @@ https://github.com/maarekj/opencode-gnome/issues
 - #16 Horodatage des messages et durée de réponse / réflexion de l'agent
 - #17 Bouton pour afficher / masquer tous les appels d'outils dans la conversation
 - #18 Barre latérale en arborescence : projets en dossiers, sessions dessous avec activité et menu
+- #19 Commandes « / » dans le compositeur : complétion des commandes, skills et commandes intégrées
 
 ## Idées à trier
 (idées pas encore transformées en issue)

@@ -20,7 +20,11 @@ export interface ComposerProps {
   busy: Accessor<boolean>;
   /** Agent, modèle et niveau de raisonnement de la session (présélection). */
   initial: () => { agent?: string; model?: ModelRef; variant?: string };
-  loadChoices: () => Promise<{ agents: Agent[]; providers: Providers }>;
+  /**
+   * Agents, modèles et défauts. `defaults` : modèles à présélectionner pour une session sans
+   * modèle, par priorité (le premier qui existe) ; `defaultVariant` : variante associée au premier.
+   */
+  loadChoices: () => Promise<{ agents: Agent[]; providers: Providers; defaults: readonly string[]; defaultVariant?: string }>;
   send: (text: string, choice: { agent?: string; model?: ModelRef; variant?: string }, files: readonly Attachment[]) => Promise<boolean>;
   /** Contexte utilisé par la session. */
   context: Accessor<ContextUsage | null>;
@@ -165,7 +169,7 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   const choose = async (): Promise<void> => {
     try {
-      const { agents, providers } = await props.loadChoices();
+      const { agents, providers, defaults, defaultVariant } = await props.loadChoices();
       const init = props.initial();
       const names = agents.filter((a) => a.mode !== 'subagent' && a.hidden !== true).map((a) => a.name);
       agentVariants = new Map(agents.flatMap((a) => (typeof a.variant === 'string' ? [[a.name, a.variant] as const] : [])));
@@ -179,9 +183,14 @@ export function Composer(props: ComposerProps): JSX.Element {
         ),
       );
       const models = providers.providers.flatMap((p) => Object.keys(p.models).map((id) => `${p.id}/${id}`)).toSorted();
-      const fallback = Object.entries(providers.default).map(([p, m]) => `${p}/${m}`)[0];
+      // session sans modèle : préférences / config opencode, sinon défaut des fournisseurs
+      const preferred = defaults.find((m) => models.includes(m));
+      const fallback = preferred ?? Object.entries(providers.default).map(([p, m]) => `${p}/${m}`)[0];
       fill(modelDD, models, init.model === undefined ? fallback : modelKey(init.model));
-      fillVariants(init.variant ?? agentVariants.get(init.agent ?? 'build'));
+      const sessionVariant = init.variant === 'default' ? undefined : init.variant;
+      // la variante par défaut des préférences ne vaut que pour le modèle par défaut des préférences
+      const prefVariant = init.model === undefined && preferred !== undefined && preferred === defaults[0] ? defaultVariant : undefined;
+      fillVariants(sessionVariant ?? prefVariant ?? agentVariants.get(init.agent ?? 'build'));
     } catch (e) {
       console.error(e);
     }

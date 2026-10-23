@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
-import { Agent, AppEvent, type Attachment, FileDiff, GlobalEnvelope, Health, MessageWithParts, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, type AppEventEnvelope } from './schemas.ts';
+import { Agent, AppEvent, type Attachment, FileDiff, GlobalEnvelope, Health, MessageWithParts, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, type AppEventEnvelope } from './schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
 Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
@@ -151,6 +151,10 @@ export class OpencodeClient {
 
   agents(directory: string): Promise<Agent[]> {
     return this.get('/agent', z.array(Agent), { directory });
+  }
+
+  config(directory: string): Promise<OpencodeConfig> {
+    return this.get('/config', OpencodeConfig, { directory });
   }
 
   providers(directory: string): Promise<Providers> {

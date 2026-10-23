@@ -14,6 +14,14 @@ export const SettingsData = z.object({
   favorites: z.prefault(z.array(z.string()), []),
   /** mode de la barre latérale */
   sidebarMode: z.prefault(SidebarMode, 'all'),
+  /** terminal : nom connu (`ptyxis`…), `custom` (commande libre) ; absent = automatique */
+  terminal: z.optional(z.string()),
+  /** commande du terminal personnalisé (préfixe argv, ex. `foot -e`) */
+  terminalCommand: z.optional(z.string()),
+  /** modèle par défaut des sessions sans modèle (`fournisseur/modèle`) ; absent = automatique */
+  defaultModel: z.optional(z.string()),
+  /** niveau de raisonnement par défaut associé au modèle par défaut */
+  defaultVariant: z.optional(z.string()),
 });
 export type SettingsData = z.output<typeof SettingsData>;
 
@@ -80,6 +88,15 @@ export class Settings {
 
   toggleFavorite(path: string): void {
     this.update((d) => ({ ...d, favorites: d.favorites.includes(path) ? d.favorites.filter((p) => p !== path) : [...d.favorites, path] }));
+  }
+
+  /** Modifie un réglage optionnel (`undefined` = valeur automatique, retirée du fichier). */
+  setOptional(key: 'terminal' | 'terminalCommand' | 'defaultModel' | 'defaultVariant', value: string | undefined): void {
+    if (this.data.peek()[key] === value) return;
+    this.update((d) => {
+      const { [key]: _old, ...rest } = d;
+      return value === undefined ? rest : { ...rest, [key]: value };
+    });
   }
 
   setSidebarMode(mode: SidebarMode): void {

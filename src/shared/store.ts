@@ -260,8 +260,10 @@ export class Store {
   }
 
   #projectOf(s: Session): { key: string; path: string; vcs: boolean; name?: string } {
-    const project = this.#projects.get(s.projectID);
-    if (s.projectID === GLOBAL || project === undefined) return { key: `dir:${s.directory}`, path: s.directory, vcs: false };
+    // session hors git (`global`) dont le répertoire est depuis devenu un projet git
+    // (ex. sessions créées avant le premier commit) : rangée avec ce projet, pas en doublon
+    const project = s.projectID === GLOBAL ? [...this.#projects.values()].find((p) => p.id !== GLOBAL && p.worktree === s.directory) : this.#projects.get(s.projectID);
+    if (project === undefined || project.id === GLOBAL) return { key: `dir:${s.directory}`, path: s.directory, vcs: false };
     return { key: project.id, path: project.worktree, vcs: project.vcs !== undefined, ...(project.name === undefined ? {} : { name: project.name }) };
   }
 

@@ -4,6 +4,7 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createComputed, createRoot, createState } from 'gnim';
 import { Conversation } from '../shared/conversation.ts';
+import type { Settings } from '../shared/settings.ts';
 import { prettyPath, type Activity, type Store } from '../shared/store.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { Composer } from './Composer.tsx';
@@ -41,12 +42,13 @@ export const sessionTag = (sessionID: string): string => `session:${sessionID}`;
  */
 export function createConversationPage(opts: {
   store: Store;
+  settings: Settings;
   sessionID: string;
   nav: Adw.NavigationView;
   attach: (directory: string, sessionID?: string) => void;
   toast: (message: string) => void;
 }): Adw.NavigationPage {
-  const { store, sessionID, nav, attach, toast } = opts;
+  const { store, settings, sessionID, nav, attach, toast } = opts;
   return createRoot((dispose) => {
     const conversation = new Conversation(store, sessionID);
     // chargement réseau immédiat (non bloquant) ; widgets construits après l'animation d'entrée
@@ -85,8 +87,11 @@ export function createConversationPage(opts: {
         };
       },
       loadChoices: async () => {
-        const [agents, providers] = await Promise.all([client.agents(dir()), client.providers(dir())]);
-        return { agents, providers };
+        const [agents, providers, config] = await Promise.all([client.agents(dir()), client.providers(dir()), client.config(dir()).catch(() => null)]);
+        const { defaultModel, defaultVariant } = settings.data.peek();
+        // modèle d'une session sans modèle : préférence de l'app > config opencode > défaut des fournisseurs
+        const defaults = [defaultModel, config?.model ?? undefined].filter((m): m is string => m !== undefined && m !== '');
+        return { agents, providers, defaults, ...(defaultModel === undefined || defaultVariant === undefined ? {} : { defaultVariant }) };
       },
       send: (text, choice, files) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { files, ...choice })),
       toast,

@@ -145,6 +145,10 @@ export const FileDiff = z.looseObject({ file: z.string(), status: z.optional(z.s
 
 export const VcsInfo = z.looseObject({ branch: z.optional(z.nullable(z.string())) });
 export type VcsInfo = z.output<typeof VcsInfo>;
+
+/** Config opencode (`GET /config`), champs utilisés. */
+export const OpencodeConfig = z.looseObject({ model: z.optional(z.nullable(z.string())) });
+export type OpencodeConfig = z.output<typeof OpencodeConfig>;
 export type FileDiff = z.output<typeof FileDiff>;
 
 /** Pièce jointe envoyée avec un prompt (`FilePartInput`). */

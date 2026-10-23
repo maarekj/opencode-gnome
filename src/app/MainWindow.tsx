@@ -138,6 +138,17 @@ function Sidebar({
               );
             }}
           />
+          <Gtk.MenuButton
+            $type="start"
+            iconName="open-menu-symbolic"
+            tooltipText="Menu principal"
+            primary
+            $={(self: Gtk.MenuButton) => {
+              const menu = new Gio.Menu();
+              menu.append('Préférences', 'app.preferences');
+              self.menuModel = menu;
+            }}
+          />
           <Gtk.Button $type="end" iconName="view-refresh-symbolic" tooltipText="Recharger" onClicked={() => void store.reload()} />
         </Adw.HeaderBar>
         <Adw.Banner
@@ -206,7 +217,7 @@ function activityIcon(view: SessionView): JSX.Element | null {
 function SessionRow({ view, actions }: { view: SessionView; actions: Actions }): JSX.Element {
   const s = view.session;
   const title = s.title === '' ? 'Sans titre' : s.title;
-  const meta = [fmtRelative(updatedAt(view)), s.agent, s.model === undefined ? undefined : s.model.variant === undefined ? s.model.id : `${s.model.id} (${s.model.variant})`, fmtCost(s.cost)].filter((x) => x !== undefined && x !== '').join('  ·  ');
+  const meta = [fmtRelative(updatedAt(view)), s.agent, s.model === undefined ? undefined : s.model.variant === undefined || s.model.variant === 'default' ? s.model.id : `${s.model.id} (${s.model.variant})`, fmtCost(s.cost)].filter((x) => x !== undefined && x !== '').join('  ·  ');
   const act = actions.sessionActions(s);
   return (
     <Adw.ActionRow
@@ -363,7 +374,11 @@ export function MainWindow({
     toast,
     attach: (directory, sessionID) => {
       try {
-        openTerminal(attachCommand(store.client.url, directory, sessionID), GLib.file_test(directory, GLib.FileTest.IS_DIR) ? directory : GLib.get_home_dir());
+        const { terminal, terminalCommand } = settings.data.peek();
+        openTerminal(attachCommand(store.client.url, directory, sessionID), GLib.file_test(directory, GLib.FileTest.IS_DIR) ? directory : GLib.get_home_dir(), {
+          terminal,
+          command: terminalCommand,
+        });
       } catch (e) {
         actions.toast(errorMessage(e));
       }
@@ -412,7 +427,7 @@ export function MainWindow({
         return;
       }
       nav.pop_to_tag('sessions');
-      nav.push(createConversationPage({ store, sessionID, nav, attach: actions.attach, toast: actions.toast }));
+      nav.push(createConversationPage({ store, settings, sessionID, nav, attach: actions.attach, toast: actions.toast }));
     },
   };
 
