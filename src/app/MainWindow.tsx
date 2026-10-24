@@ -679,6 +679,46 @@ export interface WindowApi {
   shownSession: () => string | null;
 }
 
+/** Fermeture confirmée par l'utilisateur : la prochaine `close-request` passe. */
+let closeConfirmed = false;
+
+/**
+ * Fermeture de la fenêtre : si des terminaux persistants tournent, propose de les arrêter
+ * (Annuler / Laisser tourner / Tout arrêter). Renvoie true pour suspendre la fermeture.
+ */
+function confirmClose(win: Adw.ApplicationWindow, settings: Settings, manager: TerminalManager): boolean {
+  if (closeConfirmed) return false;
+  const running = Object.entries(settings.data.peek().terminals).flatMap(([project, list]) =>
+    list.filter((t) => manager.isRunning(t.id)).map((t) => ({ t, label: `${t.name} — ${GLib.path_get_basename(project)}` })),
+  );
+  if (running.length === 0) return false;
+  const n = running.length;
+  const dialog = new Adw.AlertDialog({
+    heading: n === 1 ? 'Un terminal tourne encore' : `${n} terminaux tournent encore`,
+    body: `${running.map((r) => `• ${r.label}`).join('\n')}\n\nLes laisser tourner en arrière-plan ou les arrêter ?`,
+    defaultResponse: 'keep',
+    closeResponse: 'cancel',
+  });
+  dialog.add_response('cancel', 'Annuler');
+  dialog.add_response('keep', 'Laisser tourner');
+  dialog.add_response('stop', n === 1 ? 'Arrêter' : 'Tout arrêter');
+  dialog.set_response_appearance('stop', Adw.ResponseAppearance.DESTRUCTIVE);
+  const close = (): void => {
+    closeConfirmed = true;
+    win.close();
+  };
+  dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
+    if (response === 'cancel') return;
+    if (response === 'keep') {
+      close();
+      return;
+    }
+    void Promise.allSettled(running.map((r) => manager.stop(r.t))).then(close);
+  });
+  dialog.present(win);
+  return true;
+}
+
 export function MainWindow({
   app,
   store,
@@ -931,7 +971,16 @@ export function MainWindow({
   );
 
   return (
-    <Adw.ApplicationWindow application={app} title="opencode" defaultWidth={size?.[0] ?? 1100} defaultHeight={size?.[1] ?? 720}>
+    <Adw.ApplicationWindow
+      application={app}
+      title="opencode"
+      defaultWidth={size?.[0] ?? 1100}
+      defaultHeight={size?.[1] ?? 720}
+      $={(self: Adw.ApplicationWindow) => {
+        // connecté avant le gestionnaire de main.tsx : renvoyer true suspend la fermeture
+        self.connect('close-request', () => confirmClose(self, settings, terminals.manager));
+      }}
+    >
       <Adw.ToastOverlay
         $={(self: Adw.ToastOverlay) => {
           overlay = self;
