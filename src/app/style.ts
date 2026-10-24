@@ -216,6 +216,14 @@ export const STYLESHEET = `
   padding: 0;
 }
 
+.failure-dot {
+  background: var(--error-bg-color);
+  border-radius: 999px;
+  min-width: 8px;
+  min-height: 8px;
+  margin: -2px -3px 0 0;
+}
+
 .stamp {
   font-size: 0.8em;
   margin: 0 4px;

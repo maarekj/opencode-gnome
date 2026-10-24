@@ -13,7 +13,7 @@ export interface MenuItem {
  * Ajoute un menu contextuel à `widget`. `sections()` est appelée à chaque ouverture
  * (libellés à jour, ex. « Ajouter / Retirer des favoris ») ; chaque section est séparée par un trait.
  */
-export function attachContextMenu(widget: Gtk.Widget, sections: () => readonly (readonly MenuItem[])[]): void {
+export function attachContextMenu(widget: Gtk.Widget, sections: () => readonly (readonly MenuItem[])[], opts: { primary?: boolean } = {}): void {
   const group = new Gio.SimpleActionGroup();
   widget.insert_action_group('ctx', group);
 
@@ -48,6 +48,11 @@ export function attachContextMenu(widget: Gtk.Widget, sections: () => readonly (
     });
     popover.popup();
   };
+
+  // bouton « ⋮ » : le menu s'ouvre aussi au clic normal, sous le bouton
+  if (opts.primary === true && widget instanceof Gtk.Button) {
+    widget.connect('clicked', () => popup(widget.get_width() / 2, widget.get_height()));
+  }
 
   const click = new Gtk.GestureClick({ button: 3 });
   click.connect('pressed', (gesture: Gtk.GestureClick, _n: number, x: number, y: number) => {

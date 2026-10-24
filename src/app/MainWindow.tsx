@@ -7,7 +7,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
-import { esc, fmtCost, fmtRelative } from '../shared/format.ts';
+import { esc, fmtCost, fmtRelative, fmtStamp } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import { attachCommand, openTerminal } from '../shared/terminal.ts';
@@ -16,6 +16,8 @@ import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { openFolder } from './OpenFolder.ts';
 import { keyedListBox } from './KeyedBox.ts';
+import { confirmDelete, openEditor, STATUS, type EditorContext, type TasksMonitor, type TaskView } from './TasksWindow.tsx';
+import { describeSchedule, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
 import { TerminalManager } from '../shared/terminals.ts';
 import { TerminalBar, TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
 import { askDelete, askRename, attachSessionMenu, deleteButton, type SessionActions } from './SessionMenu.ts';
@@ -60,6 +62,9 @@ interface ProjectActions {
   /** opencode dans un terminal, nouvelle session */
   attach: (directory: string) => void;
   toast: (message: string) => void;
+  /** tâches planifiées : édition, suppression (contexte de l'éditeur), fenêtre des tâches */
+  tasks: EditorContext;
+  openTasksWindow: (page: 'tasks' | 'history') => void;
 }
 
 function ProjectRow({
@@ -102,6 +107,7 @@ function ProjectRow({
             { label: 'Ouvrir opencode dans le terminal', activate: () => actions.attach(project.path) },
             { label: 'Ouvrir le dossier', activate: () => openFolder(self, project.path, actions.toast) },
           ],
+          [{ label: 'Nouvelle tâche planifiée…', activate: () => openEditor(self, actions.tasks, undefined, project.path) }],
         ]);
       }}
     >
@@ -180,6 +186,64 @@ function SessionTreeRow({ view, last, actions }: { view: SessionView; last: bool
   );
 }
 
+/** Lance / interrompt une action sur une tâche, erreur affichée. */
+function taskAct(actions: ProjectActions, what: string, fn: () => Promise<void>): void {
+  fn()
+    .then(() => actions.tasks.monitor.changed())
+    .catch((e: unknown) => actions.toast(`${what} : ${errorMessage(e)}`));
+}
+
+/**
+ * Tâche planifiée, sous son projet : état du dernier run (spinner pendant un run), prochaine
+ * exécution en infobulle, ▶ / ■ au survol, menu contextuel. Clic : session du dernier run.
+ */
+function TaskTreeRow({ view, last, actions }: { view: TaskView; last: boolean; actions: ProjectActions }): JSX.Element {
+  const { task, running } = view;
+  const status = view.last === null ? null : STATUS[view.last.status];
+  const when = running ? 'Run en cours' : task.enabled ? (view.next === null ? 'Pas de prochaine exécution' : `Prochaine exécution : ${fmtStamp(view.next)}`) : 'Désactivée';
+  const lastText = view.last === null ? 'Jamais lancée' : `Dernier run : ${STATUS[view.last.status].label.toLowerCase()} ${fmtRelative(view.last.start)}${view.last.error === undefined ? '' : `\n${view.last.error}`}`;
+  const run = (): void => taskAct(actions, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task)));
+  return (
+    <Gtk.ListBoxRow
+      name={`k:${task.id}`}
+      cssClasses={[...(last ? ['session-tree-row', 'last'] : ['session-tree-row']), ...(task.enabled ? [] : ['dim-label'])]}
+      tooltipText={`${task.name} · ${describeSchedule(task.schedule)}\n${when}\n${lastText}`}
+      $={(self: Gtk.ListBoxRow) => {
+        attachContextMenu(self, () => [
+          [
+            { label: running ? 'Interrompre le run' : 'Lancer maintenant', activate: run },
+            ...(view.last?.session === undefined ? [] : [{ label: 'Ouvrir la dernière session', activate: () => actions.openSession(view.last?.session ?? '') }]),
+            { label: 'Historique…', activate: () => actions.openTasksWindow('history') },
+          ],
+          [
+            { label: 'Modifier…', activate: () => openEditor(self, actions.tasks, task) },
+            { label: task.enabled ? 'Désactiver' : 'Activer', activate: () => taskAct(actions, 'Modification impossible', () => saveTask({ ...task, enabled: !task.enabled })) },
+          ],
+          [{ label: 'Supprimer…', activate: () => confirmDelete(self, task, () => taskAct(actions, 'Suppression impossible', () => removeTask(task.id))) }],
+        ]);
+      }}
+    >
+      <Gtk.Box spacing={8} marginStart={34} marginEnd={4} cssClasses={['session-tree-inner']}>
+        <Gtk.Box widthRequest={16} valign={Gtk.Align.CENTER}>
+          {running ? (
+            <Adw.Spinner tooltipText="Run en cours" />
+          ) : (
+            <Gtk.Image iconName="alarm-symbolic" cssClasses={status === null || view.last?.status === 'success' ? ['dim-label'] : [status.css]} tooltipText={status?.label ?? 'Jamais lancée'} />
+          )}
+        </Gtk.Box>
+        <Gtk.Label label={task.name} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['session-title']} />
+        <Gtk.Button
+          iconName={running ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic'}
+          tooltipText={running ? 'Interrompre le run' : 'Lancer maintenant'}
+          valign={Gtk.Align.CENTER}
+          cssClasses={['flat', 'circular', 'close-button']}
+          onClicked={run}
+        />
+      </Gtk.Box>
+    </Gtk.ListBoxRow>
+  );
+}
+
 /** Indicateur d'activité compact d'une session de l'arbre. */
 function treeActivity(view: SessionView): JSX.Element {
   switch (view.activity) {
@@ -205,14 +269,17 @@ const normalize = (s: string): string => s.normalize('NFD').replaceAll(/\p{Diacr
 type TreeItem =
   | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly sessions: number; readonly expanded: boolean }
   | { readonly kind: 'session'; readonly view: SessionView; readonly last: boolean }
-  | { readonly kind: 'terminal'; readonly t: ProjectTerminal; readonly project: string; readonly last: boolean };
+  | { readonly kind: 'terminal'; readonly t: ProjectTerminal; readonly project: string; readonly last: boolean }
+  | { readonly kind: 'task'; readonly view: TaskView; readonly last: boolean };
 
 const treeKey = (i: TreeItem): string =>
   i.kind === 'project'
     ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}`
     : i.kind === 'session'
       ? `s|${i.view.session.id}|${i.view.activity}|${i.view.session.title}|${i.last}`
-      : `t|${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.last}`;
+      : i.kind === 'terminal'
+        ? `t|${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.last}`
+        : `k|${i.view.task.id}|${i.view.task.name}|${i.view.task.enabled}|${i.view.running}|${i.view.last?.run ?? ''}|${i.view.last?.status ?? ''}|${i.view.next ?? ''}|${i.last}`;
 
 function startServer(): void {
   try {
@@ -231,9 +298,15 @@ function Sidebar({
   shown,
   allProjects,
   terminals,
+  unseenFailures,
+  tasks,
 }: {
   store: Store;
   settings: Settings;
+  /** runs de tâches planifiées en échec, pas encore vus */
+  unseenFailures: Accessor<number>;
+  /** tâches planifiées (affichées sous leur projet) */
+  tasks: Accessor<readonly TaskView[]>;
   projects: Accessor<readonly ProjectView[]>;
   select: (key: string) => void;
   actions: ProjectActions;
@@ -286,7 +359,19 @@ function Sidebar({
             primary
             $={(self: Gtk.MenuButton) => {
               const menu = new Gio.Menu();
-              menu.append('Préférences', 'app.preferences');
+              const update = (): void => {
+                menu.remove_all();
+                const n = unseenFailures.peek();
+                menu.append(n === 0 ? 'Tâches planifiées' : `Tâches planifiées (${n} échec${n > 1 ? 's' : ''})`, n === 0 ? 'app.tasks::tasks' : 'app.tasks::history');
+                menu.append('Préférences', 'app.preferences');
+                // pastille : un run planifié a échoué
+                const icon = new Gtk.Overlay({ child: new Gtk.Image({ iconName: 'open-menu-symbolic' }) });
+                if (n > 0) icon.add_overlay(new Gtk.Box({ halign: Gtk.Align.END, valign: Gtk.Align.START, cssClasses: ['failure-dot'] }));
+                self.child = icon;
+                self.tooltipText = n === 0 ? 'Menu principal' : `Menu principal — ${n} tâche${n > 1 ? 's' : ''} planifiée${n > 1 ? 's' : ''} en échec`;
+              };
+              update();
+              onCleanup(unseenFailures.subscribe(update));
               self.menuModel = menu;
             }}
           />
@@ -360,6 +445,12 @@ function Sidebar({
                   if (t !== undefined) terminalActions(t, project, terminals).open();
                 }
                 else if (name.startsWith('p:')) select(name.slice(2));
+                else if (name.startsWith('k:')) {
+                  // tâche : session de son dernier run, sinon l'éditeur
+                  const view = tasks.peek().find((v) => v.task.id === name.slice(2));
+                  if (view?.last?.session !== undefined) actions.openSession(view.last.session);
+                  else if (view !== undefined) openEditor(row, actions.tasks, view.task);
+                }
               }}
               $={(self: Gtk.ListBox) => {
                 // arbre aplati : chaque projet, puis s'il est déplié ses sessions ouvertes (ordre
@@ -369,6 +460,7 @@ function Sidebar({
                   const { openSessions, collapsed, terminals: configured } = settings.data();
                   const running = terminals.manager.running();
                   const favs = favorites();
+                  const allTasks = tasks();
                   const out: TreeItem[] = [];
                   for (const p of projects()) {
                     const byID = new Map(p.sessions.map((v) => [v.session.id, v]));
@@ -377,12 +469,15 @@ function Sidebar({
                       return v === undefined ? [] : [v];
                     });
                     const terms = (configured[p.path] ?? []).filter((t) => running.has(t.id));
-                    const children = open.length + terms.length;
+                    const own = allTasks.filter((t) => t.task.directory === p.path);
+                    const children = open.length + terms.length + own.length;
                     const expanded = !collapsed.includes(p.key);
                     out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children, sessions: open.length, expanded });
                     if (!expanded) continue;
+                    // sessions ouvertes, terminaux en cours, puis tâches planifiées du projet
                     for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1 });
                     for (const [n, t] of terms.entries()) out.push({ kind: 'terminal', t, project: p.path, last: open.length + n === children - 1 });
+                    for (const [n, view] of own.entries()) out.push({ kind: 'task', view, last: open.length + terms.length + n === children - 1 });
                   }
                   return out;
                 });
@@ -390,7 +485,13 @@ function Sidebar({
                   keyedListBox(self, items, treeKey, (i) =>
                     i.kind === 'terminal'
                       ? TerminalTreeRow({ t: i.t, project: i.project, last: i.last, ctx: terminals })
-                      : asWidget(i.kind === 'project' ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, actions }) : SessionTreeRow({ view: i.view, last: i.last, actions })),
+                      : asWidget(
+                          i.kind === 'project'
+                            ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, actions })
+                            : i.kind === 'session'
+                              ? SessionTreeRow({ view: i.view, last: i.last, actions })
+                              : TaskTreeRow({ view: i.view, last: i.last, actions }),
+                        ),
                   ),
                 );
                 // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)
@@ -470,12 +571,112 @@ function SessionRow({ view, actions }: { view: SessionView; actions: Actions }):
   );
 }
 
-function SessionList({ sessions, actions }: { sessions: Accessor<readonly SessionView[]>; actions: Actions }): JSX.Element {
+/** Contexte des tâches planifiées pour la page d'un projet. */
+interface ProjectTasksContext {
+  readonly tasks: Accessor<readonly TaskView[]>;
+  readonly editor: EditorContext;
+  readonly openSession: (sessionID: string) => void;
+  readonly openTasksWindow: (page: 'tasks' | 'history') => void;
+  readonly toast: (message: string) => void;
+}
+
+function runTaskAction(ctx: ProjectTasksContext, what: string, fn: () => Promise<void>): void {
+  fn()
+    .then(() => ctx.editor.monitor.changed())
+    .catch((e: unknown) => ctx.toast(`${what} : ${errorMessage(e)}`));
+}
+
+/** Ligne d'une tâche sur la page du projet : état, horaire, prochaine exécution, actions. */
+function ProjectTaskRow({ view, ctx }: { view: TaskView; ctx: ProjectTasksContext }): Gtk.Widget {
+  const { task, running } = view;
+  const status = view.last === null ? null : STATUS[view.last.status];
+  const when = running ? 'run en cours…' : task.enabled ? (view.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(view.next)}`) : 'désactivée';
+  const lastText = view.last === null ? 'jamais lancée' : `dernier run : ${STATUS[view.last.status].label.toLowerCase()} ${fmtRelative(view.last.start)}`;
+  const row = new Adw.ActionRow({
+    title: esc(task.name),
+    subtitle: esc(`${describeSchedule(task.schedule)} · ${when} · ${lastText}${view.last?.error === undefined ? '' : `\n${view.last.error}`}`),
+    subtitleLines: 2,
+    activatable: true,
+    tooltipText: task.prompt.slice(0, 400),
+  });
+  if (!task.enabled) row.add_css_class('dim-label');
+  row.add_prefix(
+    running
+      ? new Adw.Spinner({ tooltipText: 'Run en cours' })
+      : new Gtk.Image({ iconName: 'alarm-symbolic', cssClasses: status === null || view.last?.status === 'success' ? ['dim-label'] : [status.css], tooltipText: status?.label ?? 'Jamais lancée' }),
+  );
+  const runBtn = new Gtk.Button({ iconName: running ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic', tooltipText: running ? 'Interrompre le run' : 'Lancer maintenant', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
+  runBtn.connect('clicked', () => runTaskAction(ctx, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task))));
+  const sw = new Gtk.Switch({ active: task.enabled, valign: Gtk.Align.CENTER, tooltipText: task.enabled ? 'Désactiver' : 'Activer' });
+  sw.connect('notify::active', () => {
+    if (sw.active !== task.enabled) runTaskAction(ctx, 'Modification impossible', () => saveTask({ ...task, enabled: sw.active }));
+  });
+  const more = new Gtk.Button({ iconName: 'view-more-symbolic', tooltipText: 'Plus d’actions', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
+  const menu = (): readonly (readonly { label: string; activate: () => void }[])[] => [
+    [
+      ...(view.last?.session === undefined ? [] : [{ label: 'Ouvrir la dernière session', activate: () => ctx.openSession(view.last?.session ?? '') }]),
+      { label: 'Historique…', activate: () => ctx.openTasksWindow('history') },
+      { label: 'Modifier…', activate: () => openEditor(row, ctx.editor, task) },
+    ],
+    [{ label: 'Supprimer…', activate: () => confirmDelete(row, task, () => runTaskAction(ctx, 'Suppression impossible', () => removeTask(task.id))) }],
+  ];
+  attachContextMenu(row, menu);
+  attachContextMenu(more, menu, { primary: true });
+  row.add_suffix(runBtn);
+  row.add_suffix(sw);
+  row.add_suffix(more);
+  // clic : session du dernier run, sinon l'éditeur
+  row.connect('activated', () => {
+    if (view.last?.session === undefined) openEditor(row, ctx.editor, task);
+    else ctx.openSession(view.last.session);
+  });
+  return row;
+}
+
+/** Section « Tâches planifiées » de la page d'un projet, avec création directe. */
+function ProjectTasks({ project, ctx }: { project: Accessor<string | null>; ctx: ProjectTasksContext }): JSX.Element {
+  const own = createComputed(() => {
+    const path = project();
+    return ctx.tasks().filter((v) => v.task.directory === path);
+  });
+  const create = (self: Gtk.Widget): void => {
+    const path = project.peek();
+    if (path !== null) openEditor(self, ctx.editor, undefined, path);
+  };
+  return (
+    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={6} marginBottom={18}>
+      <Gtk.Box spacing={6}>
+        <Gtk.Label label="Tâches planifiées" xalign={0} hexpand cssClasses={['heading']} />
+        <Gtk.Button iconName="list-add-symbolic" tooltipText="Nouvelle tâche planifiée" cssClasses={['flat']} onClicked={(self: Gtk.Button) => create(self)} />
+      </Gtk.Box>
+      <Gtk.ListBox
+        cssClasses={['boxed-list']}
+        selectionMode={Gtk.SelectionMode.NONE}
+        visible={own((l) => l.length > 0)}
+        $={(self: Gtk.ListBox) => {
+          onCleanup(keyedListBox(self, own, (v) => JSON.stringify([v.task, v.running, v.next, v.last?.run, v.last?.status]), (v) => ProjectTaskRow({ view: v, ctx })));
+        }}
+      />
+      <Gtk.Label
+        label="Aucune tâche : planifie un prompt (revue quotidienne, veille, rapport…) avec le bouton +."
+        xalign={0}
+        wrap
+        visible={own((l) => l.length === 0)}
+        cssClasses={['dim-label', 'caption']}
+      />
+      <Gtk.Label label="Sessions" xalign={0} marginTop={12} cssClasses={['heading']} />
+    </Gtk.Box>
+  );
+}
+
+function SessionList({ sessions, actions, header }: { sessions: Accessor<readonly SessionView[]>; actions: Actions; header?: JSX.Element }): JSX.Element {
   // Ordre exact du store (date de mise à jour décroissante). La clé inclut ce qui est affiché :
   // une session modifiée est reconstruite et replacée à sa nouvelle position.
   return (
     <Gtk.ScrolledWindow vexpand hscrollbarPolicy={Gtk.PolicyType.NEVER}>
       <Adw.Clamp maximumSize={900} marginTop={12} marginBottom={12} marginStart={12} marginEnd={12}>
+        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.START}>
+        {header ?? null}
         <Gtk.ListBox
           cssClasses={['boxed-list']}
           selectionMode={Gtk.SelectionMode.NONE}
@@ -491,6 +692,7 @@ function SessionList({ sessions, actions }: { sessions: Accessor<readonly Sessio
             );
           }}
         />
+        </Gtk.Box>
       </Adw.Clamp>
     </Gtk.ScrolledWindow>
   );
@@ -501,7 +703,20 @@ function asWidget(o: JSX.Element): Gtk.Widget {
   return o;
 }
 
-function SessionsPage({ store, current, actions, terminals }: { store: Store; current: Accessor<ProjectView | null>; actions: Actions; terminals: TerminalContext }): JSX.Element {
+function SessionsPage({
+  store,
+  current,
+  actions,
+  terminals,
+  tasks,
+}: {
+  store: Store;
+  current: Accessor<ProjectView | null>;
+  actions: Actions;
+  terminals: TerminalContext;
+  tasks: ProjectTasksContext;
+}): JSX.Element {
+  const projectPath = current((p) => p?.path ?? null);
   const key = createMemo(() => current()?.key ?? null);
   // recherche dans les sessions du projet (titre, agent, modèle), sans casse ni accents
   const [query, setQuery] = createState('');
@@ -601,13 +816,29 @@ function SessionsPage({ store, current, actions, terminals }: { store: Store; cu
             if (key.peek() === null) return <Adw.StatusPage iconName="folder-symbolic" title="Aucun projet" description="Lance opencode dans un répertoire pour commencer." vexpand />;
             if (empty.peek()) {
               return (
-                <Adw.StatusPage iconName="chat-bubbles-empty-symbolic" title="Aucune session" vexpand>
-                  <Gtk.Button label="Nouvelle session" halign={Gtk.Align.CENTER} cssClasses={['pill', 'suggested-action']} onClicked={newSession} />
-                </Adw.StatusPage>
+                <Gtk.Box orientation={Gtk.Orientation.VERTICAL} vexpand>
+                  <Adw.Clamp maximumSize={900} marginTop={12} marginStart={12} marginEnd={12}>
+                    <ProjectTasks project={projectPath} ctx={tasks} />
+                  </Adw.Clamp>
+                  <Adw.StatusPage iconName="chat-bubbles-empty-symbolic" title="Aucune session" vexpand cssClasses={['compact']}>
+                    <Gtk.Button label="Nouvelle session" halign={Gtk.Align.CENTER} cssClasses={['pill', 'suggested-action']} onClicked={newSession} />
+                  </Adw.StatusPage>
+                </Gtk.Box>
               );
             }
             if (noMatch.peek()) return <Adw.StatusPage iconName="system-search-symbolic" title="Aucune session" description="Aucune session ne correspond à la recherche." vexpand />;
-            return <SessionList sessions={sessions} actions={actions} />;
+            // pas de tâches pendant une recherche de sessions
+            return (
+              <SessionList
+                sessions={sessions}
+                actions={actions}
+                header={
+                  <Gtk.Box orientation={Gtk.Orientation.VERTICAL} visible={query((q) => q.trim() === '')}>
+                    <ProjectTasks project={projectPath} ctx={tasks} />
+                  </Gtk.Box>
+                }
+              />
+            );
           }}
         </With>
       </Adw.ToolbarView>
@@ -695,6 +926,8 @@ export interface WindowApi {
   closeCurrent: () => void;
   /** session affichée, ou null */
   shownSession: () => string | null;
+  /** dossier du projet affiché, ou null */
+  currentDirectory: () => string | null;
 }
 
 /** Fermeture confirmée par l'utilisateur : la prochaine `close-request` passe. */
@@ -743,12 +976,15 @@ export function MainWindow({
   settings,
   size,
   ready,
+  tasks,
 }: {
   app: Adw.Application;
   store: Store;
   settings: Settings;
   size?: [number, number];
   ready: (api: WindowApi) => void;
+  /** tâches planifiées : échecs non vus (pastille du menu principal) */
+  tasks: TasksMonitor;
 }): JSX.Element {
   const [selected, setSelected] = createState<string | null>(null);
   /** Projets connus + favoris absents de la liste d'opencode (répertoire sans session). */
@@ -948,13 +1184,21 @@ export function MainWindow({
     if (exists) actions.openSession(sessionID);
   };
 
-  nav.add(asPage(SessionsPage({ store, current, actions, terminals })));
+  const projectTasks: ProjectTasksContext = {
+    tasks: tasks.tasks,
+    editor: { store, monitor: tasks, toast },
+    openSession: (id) => actions.openSession(id),
+    openTasksWindow: (page) => app.activate_action('tasks', new GLib.Variant('s', page)),
+    toast,
+  };
+  nav.add(asPage(SessionsPage({ store, current, actions, terminals, tasks: projectTasks })));
   const shownSession = (): string | null => {
     const tag = nav.visiblePage?.tag ?? '';
     return tag.startsWith('session:') ? tag.slice('session:'.length) : null;
   };
   ready({
     openSession: actions.openSession,
+    currentDirectory: () => current.peek()?.path ?? null,
     closeCurrent: () => {
       const id = shownSession();
       if (id !== null) actions.closeSession(id);
@@ -1018,6 +1262,8 @@ export function MainWindow({
               shown,
               allProjects,
               terminals,
+              unseenFailures: tasks.unseen,
+              tasks: tasks.tasks,
               actions: {
                 showList: (key) => {
                   select(key);
@@ -1032,6 +1278,8 @@ export function MainWindow({
                 newSession: (dir) => actions.newSession(dir),
                 attach: (dir) => actions.attach(dir),
                 toast: (m) => actions.toast(m),
+                tasks: { store, monitor: tasks, toast: (m) => actions.toast(m) },
+                openTasksWindow: (page) => app.activate_action('tasks', new GLib.Variant('s', page)),
               },
             }),
           )}

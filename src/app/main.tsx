@@ -13,6 +13,7 @@ import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { Notifier } from './Notifier.ts';
 import { openPreferences } from './PreferencesDialog.tsx';
 import { STYLESHEET } from './style.ts';
+import { openTasksWindow, TasksMonitor } from './TasksWindow.tsx';
 
 /** Identifiant D-Bus : distinct pour l'app d'un worktree (lancée en même temps que la principale). */
 export const APP_ID = GLib.getenv('OPENCODE_GNOME_APP_ID') ?? 'io.github.maarekj.OpencodeGnome';
@@ -23,6 +24,9 @@ Gtk.Window.set_default_icon_name(APP_ID);
 const store = new Store(new OpencodeClient(serverUrl()));
 const settings = new Settings();
 let api: WindowApi | null = null;
+/** tâches planifiées : suivi des fichiers (créé au démarrage) */
+let tasks: TasksMonitor | null = null;
+const tasksMonitor = (): TasksMonitor => (tasks ??= new TasksMonitor());
 let notifier: Notifier | null = null;
 let size: [number, number] | undefined;
 
@@ -106,6 +110,15 @@ preferences.connect('activate', () => {
 app.add_action(preferences);
 app.set_accels_for_action('app.preferences', ['<Control>comma']);
 
+/** app.tasks(page) : fenêtre des tâches planifiées (`tasks` ou `history`) */
+const tasksAction = new Gio.SimpleAction({ name: 'tasks', parameterType: new GLib.VariantType('s') });
+tasksAction.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
+  const page = param?.get_string()[0] === 'history' ? 'history' : 'tasks';
+  const directory = api?.currentDirectory() ?? null;
+  openTasksWindow({ app, store, monitor: tasksMonitor(), page, ...(directory === null ? {} : { directory }) });
+});
+app.add_action(tasksAction);
+
 /** app.toggle-tools : afficher / masquer les appels d'outils (Ctrl+Maj+O) */
 const toggleTools = new Gio.SimpleAction({ name: 'toggle-tools' });
 toggleTools.connect('activate', () => {
@@ -168,6 +181,7 @@ app.connect('activate', () => {
       app,
       store,
       settings,
+      tasks: tasksMonitor(),
       ...(size === undefined ? {} : { size }),
       ready: (a) => {
         api = a;
