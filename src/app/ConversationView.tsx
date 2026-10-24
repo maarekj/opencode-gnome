@@ -783,6 +783,34 @@ export function ConversationView({
 
   /** colonne des messages (le reste de la zone défilante est de l'espace vide) */
   let column: Gtk.Box | null = null;
+
+  /**
+   * Charge les messages précédents en gardant la position de lecture : ils s'ajoutent au-dessus,
+   * la distance au bas du contenu est conservée pendant que la mise en page change.
+   */
+  const loadOlder = (): void => {
+    if (!conversation.hasOlder.peek() || conversation.loadingOlder.peek()) return;
+    const sw = scrolledRef;
+    if (sw === null) return;
+    const adj = sw.get_vadjustment();
+    const fromBottom = adj.upper - adj.value;
+    void (async () => {
+      await conversation.loadOlder();
+      // les blocs sont construits au prochain tour de boucle : on suit la croissance du contenu
+      // un court moment, puis on rend la main
+      const handler = adj.connect('notify::upper', () => {
+        adj.value = adj.upper - fromBottom;
+      });
+      GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+        adj.disconnect(handler);
+        return GLib.SOURCE_REMOVE;
+      });
+    })();
+  };
+  let scrolledRef: Gtk.ScrolledWindow | null = null;
+  /** distance au haut (px) en deçà de laquelle les messages précédents sont chargés */
+  const NEAR_TOP = 600;
+
   const scrolled = (
     <Gtk.ScrolledWindow
       // EXTERNAL : pas de barre horizontale, mais pas de largeur minimale héritée du contenu
@@ -799,6 +827,18 @@ export function ConversationView({
           emptyClick();
         });
         self.add_controller(click);
+
+        // l'utilisateur approche du haut : messages précédents chargés automatiquement (les
+        // changements de taille du contenu, chargement compris, ne sont pas des défilements)
+        const adj = self.get_vadjustment();
+        let upper = adj.upper;
+        let page = adj.pageSize;
+        adj.connect('value-changed', () => {
+          const user = adj.upper === upper && adj.pageSize === page;
+          upper = adj.upper;
+          page = adj.pageSize;
+          if (user && adj.value < NEAR_TOP && revealed.peek() && !conversation.loading.peek()) loadOlder();
+        });
       }}
     >
       <Adw.Clamp
@@ -823,6 +863,21 @@ export function ConversationView({
             buttonLabel="Réessayer"
             onButtonClicked={() => void conversation.reload()}
           />
+          <Gtk.Stack
+            visible={conversation.hasOlder}
+            halign={Gtk.Align.CENTER}
+            visibleChildName={conversation.loadingOlder((l) => (l ? 'loading' : 'button'))}
+          >
+            <Gtk.Button
+              $type="named"
+              name="button"
+              label="Charger les messages précédents"
+              tooltipText="Les messages plus anciens de la session (aussi chargés en remontant tout en haut)"
+              cssClasses={['pill']}
+              onClicked={() => loadOlder()}
+            />
+            <Adw.Spinner $type="named" name="loading" widthRequest={24} heightRequest={24} />
+          </Gtk.Stack>
           <Gtk.Box
             orientation={Gtk.Orientation.VERTICAL}
             spacing={14}
@@ -848,6 +903,7 @@ export function ConversationView({
     </Gtk.ScrolledWindow>
   );
   if (!(scrolled instanceof Gtk.ScrolledWindow)) throw new TypeError('ScrolledWindow attendue');
+  scrolledRef = scrolled;
 
   return (
     <Gtk.Stack

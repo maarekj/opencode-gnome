@@ -58,7 +58,7 @@ export class OpencodeClient {
     method: string,
     path: string,
     schema: S,
-    opts: { query?: Query; body?: unknown; long?: boolean; cancellable?: Gio.Cancellable } = {},
+    opts: { query?: Query; body?: unknown; long?: boolean; cancellable?: Gio.Cancellable; headers?: (h: Soup.MessageHeaders) => void } = {},
   ): Promise<z.output<S>> {
     const msg = Soup.Message.new(method, this.#uri(path, opts.query));
     if (msg === null) throw new Error(`URL invalide : ${this.url}${path}`);
@@ -71,6 +71,7 @@ export class OpencodeClient {
     const text = data === null ? '' : decoder.decode(data);
     const status: number = msg.get_status();
     if (status < 200 || status >= 300) throw new HttpError(status, `${method} ${path} : HTTP ${status} ${text.slice(0, 200)}`);
+    opts.headers?.(msg.get_response_headers());
     return z.parse(schema, text === '' ? null : JSON.parse(text));
   }
 
@@ -101,6 +102,21 @@ export class OpencodeClient {
   /** Derniers messages d'une session (ordre chronologique). */
   messages(sessionID: string, limit = 200): Promise<MessageWithParts[]> {
     return this.get(`/session/${encodeURIComponent(sessionID)}/message`, z.array(MessageWithParts), { limit });
+  }
+
+  /**
+   * Page de messages, la plus récente d'abord en partant de `before` (curseur de la page
+   * précédente). `older` : curseur de la page suivante (plus ancienne), null au début de la session.
+   */
+  async messagePage(sessionID: string, limit: number, before?: string): Promise<{ messages: MessageWithParts[]; older: string | null }> {
+    let older: string | null = null;
+    const messages = await this.request('GET', `/session/${encodeURIComponent(sessionID)}/message`, z.array(MessageWithParts), {
+      query: { limit, before },
+      headers: (h) => {
+        older = h.get_one('X-Next-Cursor');
+      },
+    });
+    return { messages, older };
   }
 
   /** Liste de tâches de la session (outil `todowrite`). */

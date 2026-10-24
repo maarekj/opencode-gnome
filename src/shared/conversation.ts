@@ -6,7 +6,7 @@
 import GLib from 'gi://GLib';
 import { createState, type Accessor, type Setter } from 'gnim';
 import { errorMessage } from './errors.ts';
-import type { MessageInfo, Part, PermissionRequest, QuestionRequest, SessionEvent, Todo } from './schemas.ts';
+import type { MessageInfo, MessageWithParts, Part, PermissionRequest, QuestionRequest, SessionEvent, Todo } from './schemas.ts';
 import type { Store } from './store.ts';
 
 export interface ContextUsage {
@@ -69,6 +69,8 @@ interface MessageEntry {
 
 /** Délai de regroupement des mises à jour (ms) : le streaming émet des dizaines de deltas par seconde. */
 const FLUSH_MS = 80;
+/** messages chargés à l'ouverture, puis à chaque « messages précédents » */
+const PAGE = 200;
 
 /** Retire les repères « [Image N] » insérés par le TUI à la place des images collées. */
 export const stripImageMarkers = (text: string): string => text.replaceAll(/\[Image \d+\] ?/gu, '');
@@ -110,6 +112,9 @@ export class Conversation {
   readonly diffVersion: Accessor<number>;
   /** Liste de tâches de la session (remplacée en entier à chaque `todo.updated`). */
   readonly todos: Accessor<readonly Todo[]>;
+  /** des messages plus anciens restent à charger (`loadOlder`) */
+  readonly hasOlder: Accessor<boolean>;
+  readonly loadingOlder: Accessor<boolean>;
 
   readonly #store: Store;
   readonly #setTodos: Setter<readonly Todo[]>;
@@ -120,6 +125,12 @@ export class Conversation {
   readonly #setQuestions: Setter<readonly QuestionRequest[]>;
   readonly #setDiffVersion: Setter<number>;
   readonly #setContext: Setter<ContextUsage | null>;
+  readonly #setHasOlder: Setter<boolean>;
+  readonly #setLoadingOlder: Setter<boolean>;
+  /** curseur des messages plus anciens que ceux chargés ; null : début de la session atteint */
+  #older: string | null = null;
+  /** au moins une page ancienne chargée : un rechargement ne touche plus au curseur */
+  #olderLoaded = false;
   #directory: string | null = null;
   readonly #messages = new Map<string, MessageEntry>();
   readonly #parts = new Map<string, PartEntry>();
@@ -143,6 +154,8 @@ export class Conversation {
     [this.permissions, this.#setPermissions] = createState<readonly PermissionRequest[]>([]);
     [this.questions, this.#setQuestions] = createState<readonly QuestionRequest[]>([]);
     [this.diffVersion, this.#setDiffVersion] = createState(0);
+    [this.hasOlder, this.#setHasOlder] = createState(false);
+    [this.loadingOlder, this.#setLoadingOlder] = createState(false);
     [this.todos, this.#setTodos] = createState<readonly Todo[]>([], { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
     [this.context, this.#setContext] = createState<ContextUsage | null>(null, {
       equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.variant === b?.variant && a?.cost === b?.cost,
@@ -191,13 +204,12 @@ export class Conversation {
   async reload(): Promise<void> {
     this.#setLoading(true);
     try {
-      const messages = await this.#store.client.messages(this.sessionID);
+      const { messages, older } = await this.#store.client.messagePage(this.sessionID, PAGE);
       if (this.#disposed) return;
-      for (const { info, parts } of messages) {
-        const path: unknown = info['path'];
-        if (this.#directory === null && typeof path === 'object' && path !== null && 'cwd' in path && typeof path.cwd === 'string') this.#directory = path.cwd;
-        this.#upsertMessage(info);
-        for (const part of parts) this.#upsertPart(part);
+      this.#ingest(messages);
+      if (!this.#olderLoaded) {
+        this.#older = older;
+        this.#setHasOlder(older !== null);
       }
       this.#setError(null);
     } catch (e) {
@@ -205,6 +217,35 @@ export class Conversation {
     }
     this.#setLoading(false);
     this.#flush();
+  }
+
+  /** Charge la page de messages précédant les plus anciens déjà chargés. */
+  async loadOlder(): Promise<void> {
+    const cursor = this.#older;
+    if (cursor === null || this.loadingOlder.peek()) return;
+    this.#setLoadingOlder(true);
+    try {
+      const { messages, older } = await this.#store.client.messagePage(this.sessionID, PAGE, cursor);
+      if (this.#disposed) return;
+      this.#olderLoaded = true;
+      this.#older = older;
+      this.#ingest(messages);
+      this.#setHasOlder(older !== null);
+      this.#flush();
+    } catch (e) {
+      this.#setError(errorMessage(e));
+    } finally {
+      this.#setLoadingOlder(false);
+    }
+  }
+
+  #ingest(messages: readonly MessageWithParts[]): void {
+    for (const { info, parts } of messages) {
+      const path: unknown = info['path'];
+      if (this.#directory === null && typeof path === 'object' && path !== null && 'cwd' in path && typeof path.cwd === 'string') this.#directory = path.cwd;
+      this.#upsertMessage(info);
+      for (const part of parts) this.#upsertPart(part);
+    }
   }
 
   /** Masque les messages annulés (`/undo`) à partir de `messageID` ; null : tout afficher. */
