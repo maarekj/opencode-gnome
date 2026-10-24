@@ -1,8 +1,78 @@
 // Markdown -> Gtk widgets (blocks from src/shared/markdown.ts).
+import Adw from 'gi://Adw?version=1';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import Pango from 'gi://Pango';
+import { createState, onCleanup } from 'gnim';
 import { parseMarkdown, type Block } from '../shared/markdown.ts';
+import { DEFAULT_MARKDOWN_STYLE, type MarkdownStyle } from '../shared/settings.ts';
+
+// ---------------------------------------------------------------- style (préférences)
+
+/** Style courant du rendu ; les vues markdown se reconstruisent quand il change. */
+const [markdownStyle, setStyle] = createState<MarkdownStyle>(DEFAULT_MARKDOWN_STYLE, {
+  equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+});
+export { markdownStyle };
+/** Incrémenté quand le thème ou l'accent change (couleurs recalculées). */
+const [themeRev, setThemeRev] = createState(0);
+export function refreshMarkdownColors(): void {
+  setThemeRev(themeRev.peek() + 1);
+}
+
+let pendingStyle: MarkdownStyle | null = null;
+/** Change le style (regroupé : un curseur qu'on fait glisser n'entraîne qu'une reconstruction). */
+export function setMarkdownStyle(style: MarkdownStyle): void {
+  if (pendingStyle === null) {
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 120, () => {
+      if (pendingStyle !== null) setStyle(pendingStyle);
+      pendingStyle = null;
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+  pendingStyle = style;
+}
+
+interface Palette {
+  readonly heading: string | null;
+  readonly bullet: string;
+  readonly code: string | null;
+  readonly codeBackground: string;
+  readonly quote: string;
+  readonly quoteBar: string | null;
+}
+
+/** Couleurs selon le réglage et le thème (clair / sombre), accent de GNOME pour les titres. */
+function palette(colors: MarkdownStyle['colors']): Palette {
+  const sm = Adw.StyleManager.get_default();
+  const dark = sm.dark;
+  let accent: string;
+  try {
+    // Pango n'accepte pas « rgb(…) » : couleur en hexadécimal
+    const c = sm.get_accent_color_rgba();
+    accent = `#${[c.red, c.green, c.blue].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}`;
+  } catch {
+    accent = dark ? '#78aeed' : '#1c71d8';
+  }
+  const neutral: Palette = { heading: null, bullet: '#9a9996', code: null, codeBackground: '#8080801a', quote: '#77767b', quoteBar: null };
+  if (colors === 'sober') return neutral;
+  if (colors === 'headings') return { ...neutral, heading: accent };
+  return {
+    heading: accent,
+    bullet: accent,
+    code: dark ? '#dc8add' : '#9141ac',
+    codeBackground: dark ? '#dc8add1f' : '#9141ac14',
+    quote: dark ? '#9a9996' : '#5e5c64',
+    quoteBar: accent,
+  };
+}
+
+/** Police à chasse fixe de GNOME (« monospace » seul peut retomber sur une autre police). */
+let mono = 'monospace';
+export function setMonospaceFamily(family: string): void {
+  mono = family;
+}
+const familyOf = (font: MarkdownStyle['font']): string | null => (font === 'mono' ? mono : font === 'serif' ? 'serif' : null);
 
 /** Sets Pango markup, falling back to plain text if the markup is invalid. */
 function setMarkup(label: Gtk.Label, markup: string): void {
@@ -197,10 +267,10 @@ export function Markdown({ text }: { text: string }): JSX.Element {
 // ---------------------------------------------------------------- vue texte unique (sélection libre)
 
 /** Les liens Pango (`<a>`) ne sont pas gérés par GtkTextBuffer : rendus comme du texte souligné. */
-const ttAsSpan = (markup: string): string =>
+const ttAsSpan = (markup: string, p: Palette): string =>
   markup
     // <tt> n'est pas appliqué par GtkTextBuffer : police monospace explicite
-    .replaceAll('<tt>', '<span font_family="monospace" background="#8080801a">')
+.replaceAll('<tt>', `<span font_family="${mono}" background="${p.codeBackground}"${p.code === null ? '' : ` foreground="${p.code}"`}>`)
     .replaceAll('</tt>', '</span>');
 
 const LINK = /<a href="([^"]*)">(.*?)<\/a>/gu;
@@ -252,7 +322,9 @@ function enableLinks(view: Gtk.TextView): void {
   view.add_controller(click);
 }
 
-function tags(buffer: Gtk.TextBuffer): Record<'para' | 'h1' | 'h2' | 'h3' | 'item' | 'quote' | 'code' | 'codeEnd' | 'rule', Gtk.TextTag> {
+function tags(buffer: Gtk.TextBuffer, st: MarkdownStyle, p: Palette): Record<'para' | 'h1' | 'h2' | 'h3' | 'item' | 'quote' | 'code' | 'codeEnd' | 'rule', Gtk.TextTag> {
+  const gap = Math.max(0, st.paragraphSpacing);
+  const color = p.heading === null ? {} : { foreground: p.heading };
   const table = buffer.get_tag_table();
   const tag = (name: string, props: Partial<Gtk.TextTag.ConstructorProps>): Gtk.TextTag => {
     const t = new Gtk.TextTag({ name, ...props });
@@ -260,27 +332,33 @@ function tags(buffer: Gtk.TextBuffer): Record<'para' | 'h1' | 'h2' | 'h3' | 'ite
     return t;
   };
   return {
-    para: tag('para', { pixelsBelowLines: 8 }),
-    h1: tag('h1', { scale: 1.45, weight: Pango.Weight.BOLD, pixelsAboveLines: 6, pixelsBelowLines: 8 }),
-    h2: tag('h2', { scale: 1.25, weight: Pango.Weight.BOLD, pixelsAboveLines: 6, pixelsBelowLines: 8 }),
-    h3: tag('h3', { weight: Pango.Weight.BOLD, pixelsAboveLines: 4, pixelsBelowLines: 6 }),
-    item: tag('item', { pixelsBelowLines: 4 }),
-    quote: tag('quote', { style: Pango.Style.ITALIC, leftMargin: 14, foreground: '#77767b', pixelsBelowLines: 8 }),
-    code: tag('code', { family: 'monospace', paragraphBackground: 'rgba(127,127,127,0.10)', leftMargin: 10, rightMargin: 10, pixelsBelowLines: 0 }),
+    para: tag('para', { pixelsBelowLines: gap }),
+    h1: tag('h1', { scale: 1.45, weight: Pango.Weight.BOLD, pixelsAboveLines: Math.round(gap * 0.75), pixelsBelowLines: gap, ...color }),
+    h2: tag('h2', { scale: 1.25, weight: Pango.Weight.BOLD, pixelsAboveLines: Math.round(gap * 0.75), pixelsBelowLines: gap, ...color }),
+    h3: tag('h3', { weight: Pango.Weight.BOLD, pixelsAboveLines: Math.round(gap / 2), pixelsBelowLines: Math.round(gap * 0.75), ...color }),
+    item: tag('item', { pixelsBelowLines: Math.round(gap / 2) }),
+    quote: tag('quote', {
+      style: Pango.Style.ITALIC,
+      leftMargin: 14,
+      foreground: p.quote,
+      pixelsBelowLines: gap,
+      ...(p.quoteBar === null ? {} : { paragraphBackground: `${p.quoteBar}14` }),
+    }),
+    code: tag('code', { family: mono, paragraphBackground: 'rgba(127,127,127,0.10)', leftMargin: 10, rightMargin: 10, pixelsBelowLines: 0 }),
     // créé après `code` : prioritaire, espace sous la dernière ligne d'un bloc de code
-    codeEnd: tag('codeEnd', { pixelsBelowLines: 10 }),
-    rule: tag('rule', { foreground: '#9a9996', pixelsBelowLines: 8, justification: Gtk.Justification.CENTER }),
+    codeEnd: tag('codeEnd', { pixelsBelowLines: Math.round(gap * 1.25) }),
+    rule: tag('rule', { foreground: '#9a9996', pixelsBelowLines: gap, justification: Gtk.Justification.CENTER }),
   };
 }
 
 /** Insère du markup Pango ; texte brut si le markup est invalide. */
-function insertMarkup(buffer: Gtk.TextBuffer, markup: string): void {
+function insertMarkup(buffer: Gtk.TextBuffer, markup: string, p: Palette): void {
   // les <a> ne sont pas gérés par GtkTextBuffer : chaque lien devient un TextTag associé à son URL
   let last = 0;
   for (const m of markup.matchAll(LINK)) {
-    insertSpan(buffer, markup.slice(last, m.index));
+    insertSpan(buffer, markup.slice(last, m.index), p);
     const start = buffer.get_char_count();
-    insertSpan(buffer, m[2] ?? '');
+    insertSpan(buffer, m[2] ?? '', p);
     const url = unescapeUrl(m[1] ?? '');
     const tag = new Gtk.TextTag({ underline: Pango.Underline.SINGLE, foreground: '#3584e4' });
     buffer.get_tag_table().add(tag);
@@ -288,14 +366,14 @@ function insertMarkup(buffer: Gtk.TextBuffer, markup: string): void {
     buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_end_iter());
     last = m.index + m[0].length;
   }
-  insertSpan(buffer, markup.slice(last));
+  insertSpan(buffer, markup.slice(last), p);
 }
 
 /** Markup Pango sans lien ; texte sans balises si le markup est invalide. */
-function insertSpan(buffer: Gtk.TextBuffer, markup: string): void {
+function insertSpan(buffer: Gtk.TextBuffer, markup: string, p: Palette): void {
   if (markup === '') return;
   try {
-    buffer.insert_markup(buffer.get_end_iter(), ttAsSpan(markup), -1);
+    buffer.insert_markup(buffer.get_end_iter(), ttAsSpan(markup, p), -1);
   } catch {
     buffer.insert(buffer.get_end_iter(), unescapeUrl(markup.replaceAll(/<[^>]+>/gu, '')), -1);
   }
@@ -322,6 +400,23 @@ function relayout(view: Gtk.TextView): void {
  * les paragraphes, titres, listes et code. Les tableaux sont des widgets entre deux zones de texte.
  */
 export function MarkdownView({ text }: { text: string }): Gtk.Widget {
+  const holder = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
+  let child: Gtk.Widget | null = null;
+  const build = (): void => {
+    if (child !== null) holder.remove(child);
+    child = renderMarkdown(text, markdownStyle.peek());
+    holder.append(child);
+  };
+  build();
+  // préférences d'apparence changées : reconstruit
+  onCleanup(markdownStyle.subscribe(build));
+  onCleanup(themeRev.subscribe(build));
+  return holder;
+}
+
+function renderMarkdown(text: string, st: MarkdownStyle): Gtk.Widget {
+  const p = palette(st.colors);
+  const family = familyOf(st.font);
   const blocks = parseMarkdown(text);
   // un message sans tableau : un seul TextView (sélection libre sur tout le message)
   const segments = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
@@ -329,11 +424,26 @@ export function MarkdownView({ text }: { text: string }): Gtk.Widget {
   const textView = (): NonNullable<typeof current> => {
     if (current !== null) return current;
     const buffer = new Gtk.TextBuffer();
-    const view = new Gtk.TextView({ buffer, editable: false, cursorVisible: false, wrapMode: Gtk.WrapMode.WORD_CHAR, cssClasses: ['markdown-view'], hexpand: true });
+    const view = new Gtk.TextView({
+      buffer,
+      editable: false,
+      cursorVisible: false,
+      wrapMode: Gtk.WrapMode.WORD_CHAR,
+      cssClasses: ['markdown-view'],
+      hexpand: true,
+      pixelsInsideWrap: Math.max(0, st.lineSpacing),
+    });
     enableLinks(view);
     fixHeight(view);
     segments.append(view);
-    current = { view, buffer, t: tags(buffer) };
+    const t = tags(buffer, st, p);
+    // police de tout le texte (le code reste à chasse fixe : son étiquette est prioritaire)
+    if (family !== null) {
+      const base = new Gtk.TextTag({ family });
+      buffer.get_tag_table().add(base);
+      baseTags.set(buffer, base);
+    }
+    current = { view, buffer, t };
     return current;
   };
 
@@ -341,6 +451,7 @@ export function MarkdownView({ text }: { text: string }): Gtk.Widget {
     // les tableaux sont des widgets à part, entre deux zones de texte
     if (b.kind === 'table') {
       const table = Table({ header: b.header, rows: b.rows });
+      if (family !== null) table.add_css_class(`md-font-${st.font}`);
       table.marginTop = 4;
       table.marginBottom = 14;
       segments.append(table);
@@ -354,25 +465,25 @@ export function MarkdownView({ text }: { text: string }): Gtk.Widget {
     const start = buffer.get_char_count();
     switch (b.kind) {
       case 'paragraph':
-        insertMarkup(buffer, b.markup);
+        insertMarkup(buffer, b.markup, p);
         tagFrom(buffer, t.para, start);
         break;
       case 'heading':
-        insertMarkup(buffer, b.markup);
+        insertMarkup(buffer, b.markup, p);
         tagFrom(buffer, b.level === 1 ? t.h1 : b.level === 2 ? t.h2 : t.h3, start);
         break;
       case 'item': {
         const indent = 8 + b.depth * 18;
         const itemTag = new Gtk.TextTag({ leftMargin: indent + 16, indent: -16 });
         buffer.get_tag_table().add(itemTag);
-        insertMarkup(buffer, `<span foreground="#9a9996">${b.bullet}</span>  ${b.markup}`);
+        insertMarkup(buffer, `<span foreground="${p.bullet}">${b.bullet}</span>  ${b.markup}`, p);
         tagFrom(buffer, itemTag, start);
         // espacement réduit entre éléments d'une même liste
         tagFrom(buffer, blocks[i + 1]?.kind === 'item' ? t.item : t.para, start);
         break;
       }
       case 'quote':
-        insertMarkup(buffer, b.markup);
+        insertMarkup(buffer, (p.quoteBar === null ? '' : `<span foreground="${p.quoteBar}">▍</span> `) + b.markup, p);
         tagFrom(buffer, t.quote, start);
         break;
       case 'code': {
@@ -391,8 +502,20 @@ export function MarkdownView({ text }: { text: string }): Gtk.Widget {
         assertNever(b);
     }
   });
+  // police choisie : appliquée à tout le texte de chaque zone (sous les autres étiquettes)
+  for (let w = segments.get_first_child(); w !== null; w = w.get_next_sibling()) {
+    if (!(w instanceof Gtk.TextView)) continue;
+    const base = baseTags.get(w.buffer);
+    if (base !== undefined) {
+      base.set_priority(0);
+      w.buffer.apply_tag(base, w.buffer.get_start_iter(), w.buffer.get_end_iter());
+    }
+  }
   return segments;
 }
+
+/** Étiquette de police de chaque zone de texte. */
+const baseTags = new WeakMap<Gtk.TextBuffer, Gtk.TextTag>();
 
 /**
  * GtkTextView calcule sa hauteur pour une largeur donnée de manière asynchrone : construit hors

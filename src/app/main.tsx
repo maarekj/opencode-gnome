@@ -14,6 +14,7 @@ import { Notifier } from './Notifier.ts';
 import { openExtensions } from './ExtensionsDialog.ts';
 import { openPreferences } from './PreferencesDialog.tsx';
 import { STYLESHEET } from './style.ts';
+import { refreshMarkdownColors, setMarkdownStyle, setMonospaceFamily } from './Markdown.tsx';
 import { openTasksWindow, TasksMonitor } from './TasksWindow.tsx';
 
 /** Identifiant D-Bus : distinct pour l'app d'un worktree (lancée en même temps que la principale). */
@@ -157,10 +158,13 @@ app.connect('startup', () => {
   // taille du texte de la conversation (préférences), appliquée en direct
   const fontCss = new Gtk.CssProvider();
   const mono = monospaceFamily();
+  setMonospaceFamily(mono);
   const applyFont = (): void => {
     fontCss.load_from_string(
-      `.conversation { font-size: ${settings.data.peek().fontScale}%; }\n.monospace, .diff-view { font-family: "${mono}", "DejaVu Sans Mono", monospace; }`,
+      `.conversation { font-size: ${settings.data.peek().fontScale}%; }\n.monospace, .diff-view, .md-font-mono { font-family: "${mono}", "DejaVu Sans Mono", monospace; }\n.md-font-serif { font-family: serif; }`,
     );
+    // rendu markdown (préférences « Rendu des messages »)
+    setMarkdownStyle(settings.data.peek().markdown);
   };
   applyFont();
   settings.data.subscribe(applyFont);
@@ -171,6 +175,13 @@ app.connect('startup', () => {
   };
   applyTheme();
   settings.data.subscribe(applyTheme);
+  // thème clair / sombre, couleur d'accent : couleurs du rendu recalculées
+  const sm = Adw.StyleManager.get_default();
+  const restyle = (): void => {
+    if (settings.data.peek().markdown.colors !== 'sober') refreshMarkdownColors();
+  };
+  sm.connect('notify::dark', restyle);
+  sm.connect('notify::accent-color', restyle);
   // oxlint-disable-next-line typescript/no-deprecated -- seule API exposée par GJS pour un style global
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, fontCss, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
 });

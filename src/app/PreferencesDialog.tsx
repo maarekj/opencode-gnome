@@ -2,7 +2,9 @@
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
 import type { Providers } from '../shared/schemas.ts';
-import type { Settings, Theme } from '../shared/settings.ts';
+import { createRoot } from 'gnim';
+import { DEFAULT_MARKDOWN_STYLE, type Settings, type Theme } from '../shared/settings.ts';
+import { MarkdownView } from './Markdown.tsx';
 import { automaticTerminal, installedTerminals } from '../shared/terminal.ts';
 import { integratedAvailable } from './TerminalPanel.tsx';
 
@@ -116,9 +118,9 @@ function modelGroup(settings: Settings, providers: Promise<Providers>): Adw.Pref
   return group;
 }
 
-/** Groupe « Conversation » : taille du texte et largeur maximale, appliquées en direct. */
-function conversationGroup(settings: Settings): Adw.PreferencesGroup {
-  const group = new Adw.PreferencesGroup({ title: 'Conversation' });
+/** Groupe « Taille et largeur » : taille du texte et largeur de la conversation, appliquées en direct. */
+function sizeGroup(settings: Settings): Adw.PreferencesGroup {
+  const group = new Adw.PreferencesGroup({ title: 'Taille et largeur' });
   const d = settings.data.peek();
   const font = new Adw.SpinRow({
     title: 'Taille du texte',
@@ -140,6 +142,16 @@ function conversationGroup(settings: Settings): Adw.PreferencesGroup {
     width.sensitive = !full.active;
     settings.setNumber('maxWidth', full.active ? 0 : Math.round(width.value));
   });
+  group.add(font);
+  group.add(full);
+  group.add(width);
+  return group;
+}
+
+/** Groupe « Conversation » : notifications. */
+function conversationGroup(settings: Settings): Adw.PreferencesGroup {
+  const group = new Adw.PreferencesGroup({ title: 'Conversation' });
+  const d = settings.data.peek();
   const notify = new Adw.SwitchRow({
     title: 'Notifications',
     subtitle: 'Session terminée, question, permission demandée ou erreur (application ouverte)',
@@ -158,9 +170,6 @@ function conversationGroup(settings: Settings): Adw.PreferencesGroup {
   sound.connect('notify::active', () => settings.setNotificationSound(sound.active));
   group.add(notify);
   group.add(sound);
-  group.add(font);
-  group.add(full);
-  group.add(width);
   return group;
 }
 
@@ -183,6 +192,91 @@ function appearanceGroup(settings: Settings): Adw.PreferencesGroup {
   return group;
 }
 
+const PREVIEW = `## Exemple de réponse
+
+Voici un paragraphe avec du **gras**, de l'*italique*, du \`code en ligne\` et un [lien](https://opencode.ai). La seconde phrase s'étend sur plusieurs lignes pour montrer l'interligne quand le texte passe à la ligne.
+
+### Étapes
+- Lire le fichier \`src/app/Markdown.tsx\`
+- Ajuster l'espacement
+  - et les couleurs
+
+> Une citation, pour voir son style.
+
+\`\`\`ts
+const style = { font: 'mono', spacing: 8 };
+\`\`\``;
+
+const FONTS = [
+  ['system', 'Police de l’interface'],
+  ['mono', 'Chasse fixe'],
+  ['serif', 'Serif'],
+] as const;
+const COLORS = [
+  ['sober', 'Sobres'],
+  ['headings', 'Titres colorés'],
+  ['colorful', 'Colorées (titres, puces, code, citations)'],
+] as const;
+
+/** Page « Rendu des messages » : police, interligne, espacement, couleurs, avec aperçu en direct. */
+function markdownPage(settings: Settings): Adw.PreferencesPage {
+  const page = new Adw.PreferencesPage({ title: 'Rendu des messages', iconName: 'format-text-rich-symbolic' });
+  page.add(sizeGroup(settings));
+  const group = new Adw.PreferencesGroup({ title: 'Mise en forme', description: 'Appliquée en direct à toutes les conversations.' });
+  const d = settings.data.peek().markdown;
+
+  const font = comboRow('Police', '', false);
+  setItems(font, FONTS.map(([, l]) => l), FONTS.findIndex(([id]) => id === d.font));
+  font.connect('notify::selected', () => settings.setMarkdownStyle({ font: FONTS[font.selected]?.[0] ?? 'system' }));
+
+  const line = new Adw.SpinRow({
+    title: 'Interligne',
+    subtitle: 'Espace entre les lignes d’un paragraphe, en pixels',
+    adjustment: new Gtk.Adjustment({ lower: 0, upper: 16, stepIncrement: 1, pageIncrement: 2, value: d.lineSpacing }),
+  });
+  line.connect('notify::value', () => settings.setMarkdownStyle({ lineSpacing: Math.round(line.value) }));
+
+  const para = new Adw.SpinRow({
+    title: 'Espace entre paragraphes',
+    subtitle: 'En pixels ; titres, listes et code suivent proportionnellement',
+    adjustment: new Gtk.Adjustment({ lower: 0, upper: 32, stepIncrement: 1, pageIncrement: 4, value: d.paragraphSpacing }),
+  });
+  para.connect('notify::value', () => settings.setMarkdownStyle({ paragraphSpacing: Math.round(para.value) }));
+
+  const colors = comboRow('Couleurs', '', false);
+  setItems(colors, COLORS.map(([, l]) => l), COLORS.findIndex(([id]) => id === d.colors));
+  colors.connect('notify::selected', () => settings.setMarkdownStyle({ colors: COLORS[colors.selected]?.[0] ?? 'sober' }));
+
+  const reset = new Gtk.Button({ label: 'Valeurs par défaut', halign: Gtk.Align.START, cssClasses: ['flat'] });
+  reset.connect('clicked', () => {
+    font.selected = 0;
+    colors.selected = 0;
+    line.value = DEFAULT_MARKDOWN_STYLE.lineSpacing;
+    para.value = DEFAULT_MARKDOWN_STYLE.paragraphSpacing;
+  });
+  group.headerSuffix = reset;
+  for (const r of [font, line, para, colors]) group.add(r);
+  page.add(group);
+
+  // aperçu : vrai rendu, reconstruit à chaque changement comme les conversations
+  const previewGroup = new Adw.PreferencesGroup({ title: 'Aperçu' });
+  const preview = createRoot((dispose) => {
+    const w = MarkdownView({ text: PREVIEW });
+    page.connect('destroy', dispose);
+    return w;
+  });
+  const frame = new Gtk.Box({ cssClasses: ['card', 'conversation'], marginTop: 6 });
+  preview.marginTop = 12;
+  preview.marginBottom = 12;
+  preview.marginStart = 16;
+  preview.marginEnd = 16;
+  preview.hexpand = true;
+  frame.append(preview);
+  previewGroup.add(frame);
+  page.add(previewGroup);
+  return page;
+}
+
 export function openPreferences(parent: Gtk.Widget, settings: Settings, providers: Promise<Providers>): void {
   const page = new Adw.PreferencesPage({ title: 'Général', iconName: 'preferences-system-symbolic' });
   page.add(appearanceGroup(settings));
@@ -191,5 +285,6 @@ export function openPreferences(parent: Gtk.Widget, settings: Settings, provider
   page.add(modelGroup(settings, providers));
   const dialog = new Adw.PreferencesDialog({ title: 'Préférences', searchEnabled: false });
   dialog.add(page);
+  dialog.add(markdownPage(settings));
   dialog.present(parent);
 }

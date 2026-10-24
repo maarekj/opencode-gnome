@@ -20,7 +20,23 @@ export const ProjectTerminal = z.object({
 });
 export type ProjectTerminal = z.output<typeof ProjectTerminal>;
 
+/** Apparence du rendu markdown des messages. */
+export const MarkdownStyle = z.object({
+  /** police du texte : celle de l'interface, à chasse fixe (police mono de GNOME) ou serif */
+  font: z.prefault(z.enum(['system', 'mono', 'serif']), 'system'),
+  /** espace entre les lignes d'un même paragraphe, en px */
+  lineSpacing: z.prefault(z.number(), 2),
+  /** espace entre les paragraphes (titres, listes, code : proportionnel), en px */
+  paragraphSpacing: z.prefault(z.number(), 8),
+  /** sober : sans couleur ; headings : titres colorés ; colorful : titres, puces, code, citations */
+  colors: z.prefault(z.enum(['sober', 'headings', 'colorful']), 'sober'),
+});
+export type MarkdownStyle = z.output<typeof MarkdownStyle>;
+export const DEFAULT_MARKDOWN_STYLE: MarkdownStyle = { font: 'system', lineSpacing: 2, paragraphSpacing: 8, colors: 'sober' };
+
 export const SettingsData = z.object({
+  /** apparence du rendu markdown */
+  markdown: z.prefault(MarkdownStyle, DEFAULT_MARKDOWN_STYLE),
   /** terminaux persistants : chemin du projet -> terminaux */
   terminals: z.prefault(z.record(z.string(), z.array(ProjectTerminal)), {}),
   /** chemins des projets favoris */
@@ -63,7 +79,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -135,6 +151,10 @@ export class Settings {
       const { [key]: _old, ...rest } = d;
       return value === undefined ? rest : { ...rest, [key]: value };
     });
+  }
+
+  setMarkdownStyle(patch: Partial<MarkdownStyle>): void {
+    this.update((d) => ({ ...d, markdown: { ...d.markdown, ...patch } }));
   }
 
   setNumber(key: 'fontScale' | 'maxWidth' | 'sidebarWidth' | 'terminalPanelHeight', value: number): void {
