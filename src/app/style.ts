@@ -123,6 +123,44 @@ export const STYLESHEET = `
 .diff-view {
   font-size: 0.9em;
 }
+.git-pane-header {
+  padding: 6px 12px;
+  min-height: 36px;
+}
+/* journal : lignes jointives pour que le graphe des branches soit continu */
+.git-log > row {
+  margin: 0;
+  padding: 0 6px 0 0;
+  border-radius: 0;
+}
+.compare-bar {
+  padding: 8px 12px;
+}
+.commit-info {
+  padding: 12px 16px;
+}
+.commit-body {
+  font-size: 0.9em;
+}
+.ref-badge {
+  border-radius: 999px;
+  padding: 0 7px;
+  font-weight: bold;
+}
+.ref-head {
+  background: var(--accent-bg-color);
+  color: var(--accent-fg-color);
+}
+.ref-branch {
+  background: alpha(var(--accent-color), 0.15);
+  color: var(--accent-color);
+}
+.ref-remote {
+  background: alpha(currentColor, 0.1);
+}
+.ref-tag {
+  background: alpha(var(--warning-color), 0.2);
+}
 .diff-frame {
   border-radius: 6px;
   border: 1px solid alpha(currentColor, 0.1);

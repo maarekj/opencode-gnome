@@ -15,6 +15,7 @@ import { createConversationPage, sessionTag, subagentTag, type ConversationPageH
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { openFolder } from './OpenFolder.ts';
+import { openGitWindow } from './GitWindow.tsx';
 import { keyedListBox } from './KeyedBox.ts';
 import { confirmDelete, openEditor, STATUS, type EditorContext, type TasksMonitor, type TaskView } from './TasksWindow.tsx';
 import { describeSchedule, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
@@ -781,6 +782,17 @@ function SessionsPage({
             onClicked={(self: Gtk.Button) => {
               const p = current.peek();
               if (p !== null) openFolder(self, p.path, actions.toast);
+            }}
+          />
+          <Gtk.Button
+            $type="end"
+            iconName="og-git-symbolic"
+            tooltipText="Git : modifications, journal, branches, comparaison"
+            visible={current((p) => p?.vcs === true)}
+            onClicked={(self: Gtk.Button) => {
+              const p = current.peek();
+              if (p === null) return;
+              openGitWindow(self, { directory: p.path, title: p.name, load: () => store.client.gitDiff(p.path) });
             }}
           />
         </Adw.HeaderBar>

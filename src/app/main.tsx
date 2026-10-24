@@ -143,6 +143,8 @@ app.connect('startup', () => {
   const display = Gdk.Display.get_default();
   // oxlint-disable-next-line typescript/no-deprecated -- seule API exposée par GJS pour un style global
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+  // icônes propres à l'application (data/icons/actions, à côté de dist/)
+  if (display !== null) Gtk.IconTheme.get_for_display(display).add_search_path(GLib.build_filenamev([GLib.path_get_dirname(GLib.filename_from_uri(import.meta.url)[0]), '..', '..', 'data', 'icons', 'actions']));
   // taille du texte de la conversation (préférences), appliquée en direct
   const fontCss = new Gtk.CssProvider();
   const mono = monospaceFamily();

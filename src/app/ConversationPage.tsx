@@ -14,7 +14,7 @@ import { Composer } from './Composer.tsx';
 import { openFolder } from './OpenFolder.ts';
 import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
-import { openDiffWindow } from './DiffWindow.tsx';
+import { openGitWindow } from './GitWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
 import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
 import { TodoPanel } from './TodoPanel.tsx';
@@ -64,7 +64,7 @@ export function gitTooltip(g: GitStatus): string {
     g.upstream === null ? 'Pas de branche amont' : `Amont ${g.upstream} : ${g.ahead} en avance, ${g.behind} en retard`,
     g.mainWorktree === null ? `Dépôt ${prettyPath(g.toplevel)}` : `Worktree ${prettyPath(g.toplevel)}\nDépôt principal ${prettyPath(g.mainWorktree)}`,
     g.changes === 0 ? 'Aucune modification' : `${g.changes} fichier${g.changes > 1 ? 's' : ''} modifié${g.changes > 1 ? 's' : ''} ou non suivi${g.changes > 1 ? 's' : ''}`,
-    'Cliquer pour voir les modifications',
+    'Cliquer pour ouvrir la fenêtre git',
   ];
   return lines.join('\n');
 }
@@ -217,11 +217,10 @@ export function createConversationPage(opts: {
 
     const showTools = settings.data((d) => d.showTools);
     const openDiff = (self: Gtk.Button): void =>
-      openDiffWindow(self, {
+      openGitWindow(self, {
         directory: dir(),
         title: GLib.path_get_basename(dir()),
         load: () => client.gitDiff(dir()),
-        vcs: () => client.vcs(dir()),
         changed: conversation.diffVersion,
       });
 
@@ -248,8 +247,8 @@ export function createConversationPage(opts: {
             />
             <Gtk.Button
               $type="end"
-              iconName="document-edit-symbolic"
-              tooltipText="Fichiers modifiés (git)"
+              iconName="og-git-symbolic"
+              tooltipText="Git : modifications, journal, branches"
               onClicked={openDiff}
             />
             <Gtk.Button

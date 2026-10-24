@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- branche git : tronc, embranchement et trois commits -->
+  <g fill="#2e3436">
+    <circle cx="4" cy="3" r="2.25"/>
+    <circle cx="4" cy="13" r="2.25"/>
+    <circle cx="12" cy="4.5" r="2.25"/>
+    <rect x="3" y="4" width="2" height="8"/>
+    <path d="M11 6.25h2V7c0 2.1-1.4 3.5-3.6 3.9l-3.4.6V9.5l3.05-.55C10.35 8.7 11 8.1 11 7z"/>
+  </g>
+</svg>
