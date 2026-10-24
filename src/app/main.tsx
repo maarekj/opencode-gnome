@@ -164,6 +164,13 @@ app.connect('startup', () => {
   };
   applyFont();
   settings.data.subscribe(applyFont);
+  // thème de l'application (préférences) : système, jour ou nuit
+  const SCHEMES = { system: Adw.ColorScheme.DEFAULT, light: Adw.ColorScheme.FORCE_LIGHT, dark: Adw.ColorScheme.FORCE_DARK } as const;
+  const applyTheme = (): void => {
+    Adw.StyleManager.get_default().colorScheme = SCHEMES[settings.data.peek().appTheme];
+  };
+  applyTheme();
+  settings.data.subscribe(applyTheme);
   // oxlint-disable-next-line typescript/no-deprecated -- seule API exposée par GJS pour un style global
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, fontCss, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
 });

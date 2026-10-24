@@ -2,7 +2,7 @@
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
 import type { Providers } from '../shared/schemas.ts';
-import type { Settings } from '../shared/settings.ts';
+import type { Settings, Theme } from '../shared/settings.ts';
 import { automaticTerminal, installedTerminals } from '../shared/terminal.ts';
 import { integratedAvailable } from './TerminalPanel.tsx';
 
@@ -164,8 +164,28 @@ function conversationGroup(settings: Settings): Adw.PreferencesGroup {
   return group;
 }
 
+const THEMES: readonly Theme[] = ['system', 'light', 'dark'];
+
+/** Groupe « Apparence » : thème de l'application et du terminal intégré, appliqués en direct. */
+function appearanceGroup(settings: Settings): Adw.PreferencesGroup {
+  const group = new Adw.PreferencesGroup({ title: 'Apparence' });
+  const d = settings.data.peek();
+  const row = (key: 'appTheme' | 'terminalTheme', title: string, subtitle: string, system: string): Adw.ComboRow => {
+    const r = comboRow(title, subtitle, false);
+    setItems(r, [system, 'Jour', 'Nuit'], THEMES.indexOf(d[key]));
+    r.connect('notify::selected', () => settings.setTheme(key, THEMES[r.selected] ?? 'system'));
+    group.add(r);
+    return r;
+  };
+  row('appTheme', 'Application', '', 'Système');
+  const term = row('terminalTheme', 'Terminal intégré', '', 'Comme l’application');
+  term.visible = integratedAvailable();
+  return group;
+}
+
 export function openPreferences(parent: Gtk.Widget, settings: Settings, providers: Promise<Providers>): void {
   const page = new Adw.PreferencesPage({ title: 'Général', iconName: 'preferences-system-symbolic' });
+  page.add(appearanceGroup(settings));
   page.add(conversationGroup(settings));
   page.add(terminalGroup(settings));
   page.add(modelGroup(settings, providers));

@@ -59,8 +59,14 @@ function monospaceFont(): Pango.FontDescription {
   return Pango.FontDescription.from_string('Monospace 11');
 }
 
-function applyColors(term: VteNs.Terminal): void {
-  const dark = Adw.StyleManager.get_default().dark;
+/** Terminal sombre : réglage du terminal, sinon thème effectif de l'application. */
+const terminalDark = (settings: Settings): boolean => {
+  const t = settings.data.peek().terminalTheme;
+  return t === 'system' ? Adw.StyleManager.get_default().dark : t === 'dark';
+};
+
+function applyColors(term: VteNs.Terminal, settings: Settings): void {
+  const dark = terminalDark(settings);
   term.set_colors(rgba(dark ? '#ffffff' : '#000000'), rgba(dark ? '#1e1e1e' : '#ffffff'), PALETTE.map((c) => rgba(c)));
 }
 
@@ -85,14 +91,25 @@ function hangup(term: VteNs.Terminal): void {
 }
 
 /** Crée le terminal et lance la commande ; `exited` : commande terminée sans erreur. */
-function createTerminal(V: typeof VteNs, spec: TerminalTab, exited: () => void): VteNs.Terminal {
+function createTerminal(V: typeof VteNs, settings: Settings, spec: TerminalTab, exited: () => void): VteNs.Terminal {
   const term = new V.Terminal({ hexpand: true, vexpand: true, scrollOnOutput: false, scrollOnKeystroke: true, pointerAutohide: true, allowHyperlink: true });
   term.set_scrollback_lines(10_000);
   term.set_font(monospaceFont());
-  applyColors(term);
+  // couleurs relues au changement de thème de l'application ou du réglage du terminal
+  let dark = terminalDark(settings);
+  applyColors(term, settings);
+  const refresh = (): void => {
+    if (terminalDark(settings) === dark) return;
+    dark = !dark;
+    applyColors(term, settings);
+  };
   const style = Adw.StyleManager.get_default();
-  const handler = style.connect('notify::dark', () => applyColors(term));
-  term.connect('destroy', () => style.disconnect(handler));
+  const handler = style.connect('notify::dark', refresh);
+  const unsubscribe = settings.data.subscribe(refresh);
+  term.connect('destroy', () => {
+    style.disconnect(handler);
+    unsubscribe();
+  });
 
   // Ctrl+Maj+C / V : copier / coller ; Ctrl+plus / moins / 0 : zoom
   const keys = new Gtk.EventControllerKey({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
@@ -162,7 +179,7 @@ interface ProjectPanel {
   readonly count: (prefix: string) => number;
 }
 
-function projectPanel(V: typeof VteNs, actions: Gtk.Widget, emptied: () => void): ProjectPanel {
+function projectPanel(V: typeof VteNs, settings: Settings, actions: Gtk.Widget, emptied: () => void): ProjectPanel {
   const view = new Adw.TabView({ vexpand: true });
   const tabs = new Map<string, Tab>();
   const byPage = new Map<Adw.TabPage, Tab>();
@@ -191,7 +208,7 @@ function projectPanel(V: typeof VteNs, actions: Gtk.Widget, emptied: () => void)
     open: (spec) => {
       let tab = tabs.get(spec.key);
       if (tab === undefined) {
-        const term = createTerminal(V, spec, () => {
+        const term = createTerminal(V, settings, spec, () => {
           const t = tabs.get(spec.key);
           if (t !== undefined && t.term === term) view.close_page(t.page);
         });
@@ -323,7 +340,7 @@ export class TerminalDock {
     if (Vte === null) return null;
     let panel = this.#panels.get(project);
     if (panel === undefined) {
-      panel = projectPanel(Vte, this.#actions(), () => {
+      panel = projectPanel(Vte, this.#settings, this.#actions(), () => {
         this.#open.delete(project);
         this.#update();
       });

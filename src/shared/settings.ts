@@ -49,6 +49,10 @@ export const SettingsData = z.object({
   terminalCommand: z.optional(z.string()),
   /** terminaux ouverts dans le panneau intégré (VTE) plutôt que dans le terminal externe */
   terminalIntegrated: z.prefault(z.boolean(), true),
+  /** thème de l'application : système, jour ou nuit */
+  appTheme: z.prefault(z.enum(['system', 'light', 'dark']), 'system'),
+  /** thème du terminal intégré : comme l'application, jour ou nuit */
+  terminalTheme: z.prefault(z.enum(['system', 'light', 'dark']), 'system'),
   /** hauteur du panneau des terminaux intégrés, en px */
   terminalPanelHeight: z.prefault(z.number(), 300),
   /** modèle par défaut des sessions sans modèle (`fournisseur/modèle`) ; absent = automatique */
@@ -57,8 +61,9 @@ export const SettingsData = z.object({
   defaultVariant: z.optional(z.string()),
 });
 export type SettingsData = z.output<typeof SettingsData>;
+export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300 };
+const DEFAULTS: SettingsData = { terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -157,6 +162,10 @@ export class Settings {
 
   setNotificationSound(on: boolean): void {
     if (this.data.peek().notificationSound !== on) this.update((d) => ({ ...d, notificationSound: on }));
+  }
+
+  setTheme(key: 'appTheme' | 'terminalTheme', value: Theme): void {
+    if (this.data.peek()[key] !== value) this.update((d) => ({ ...d, [key]: value }));
   }
 
   setTerminalIntegrated(on: boolean): void {
