@@ -42,39 +42,45 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - Messages de commit en français, courts, au style des commits existants.
 
 ## Travail en parallèle (worktrees)
-- Plusieurs agents travaillent en même temps, chacun dans son dossier :
+- **`opencode-gnome` (dépôt principal) est l'orchestre** : toujours sur `main`, propre (aucune
+  modification non commitée), **jamais de développement**. On y crée et répartit les issues, on y
+  suit l'avancement, et on y installe la version de référence (serveur partagé, `oc`, `ogt`,
+  plugin opencode, application « opencode »).
+- **Tout le développement se fait dans les worktrees**, un agent par dossier :
 
-  | Dossier | Branche | Port du serveur de test | Application installée |
+  | Dossier | Rôle / branche | Port du serveur de test | Application installée |
   |---|---|---|---|
-  | `opencode-gnome` | `main` | 4799 | « opencode » (`opencode-gnome`) |
-  | `opencode-gnome-2` | `agent-2` | 4798 | « opencode (2) » (`opencode-gnome-2`) |
-  | `opencode-gnome-3` | `agent-3` | 4797 | « opencode (3) » (`opencode-gnome-3`) |
-  | `opencode-gnome-4` | `agent-4` | 4796 | « opencode (4) » (`opencode-gnome-4`) |
+  | `opencode-gnome` | orchestre, `main` | 4799 | « opencode » (`opencode-gnome`) |
+  | `opencode-gnome-2` | agent 2, `agent-2` | 4798 | « opencode (2) » (`opencode-gnome-2`) |
+  | `opencode-gnome-3` | agent 3, `agent-3` | 4797 | « opencode (3) » (`opencode-gnome-3`) |
+  | `opencode-gnome-4` | agent 4, `agent-4` | 4796 | « opencode (4) » (`opencode-gnome-4`) |
 
 - Ne jamais toucher au dossier d'un autre agent, ni arrêter son serveur de test.
 - Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise, puis
   commenter « En cours dans <dossier> » sur l'issue.
 - En prenant une issue, **renommer sa session opencode** : `[Agent N] - #<numéro> <titre de l'issue>`
-  (N = 1 pour `opencode-gnome`, 2 à 4 pour les worktrees). Sa propre session est la plus
-  récemment mise à jour dans son dossier :
+  (N = numéro du worktree ; la session de l'orchestre : `[Orchestre] …`). Sa propre session est la
+  plus récemment mise à jour dans son dossier :
   `curl -s "http://127.0.0.1:4096/experimental/session?roots=true&limit=50" | jq -r --arg d "$PWD" '[.[]|select(.directory==$d)]|max_by(.time.updated).id'`, puis
   `curl -s -X PATCH "http://127.0.0.1:4096/session/<id>?directory=$PWD" -H 'content-type: application/json' -d '{"title":"…"}'`.
 - **Aucun commit, rebase, fusion ni push sans l'ordre explicite de l'utilisateur.** Une fois
   l'implémentation prête (`pnpm check` OK, captures faites), installer l'application
   (`node scripts/install.ts`), présenter ce qu'il faut tester et attendre sa validation.
-- **Une branche par issue**, y compris dans le dépôt principal : `git switch -c issue-<numéro>`
-  depuis `main` à jour (dans un worktree : depuis sa branche `agent-N` rebasée sur `main`).
-  Jamais de commit direct sur `main`. Une fois l'issue validée par l'utilisateur et sur son ordre :
-  `git rebase main`, puis fusion dans `main` **sans passer par un autre dossier** (le dépôt
-  principal peut être sur la branche d'une issue en cours, avec des modifications non commitées) :
-  `git fetch . issue-<numéro>:main && git push origin main` (n'avance `main` qu'en avance rapide ;
-  refusé si `main` a avancé : refaire le rebase), puis suppression de la branche et, dans un
-  worktree, retour sur `agent-N` (`git switch agent-N && git merge --ff-only main`).
-- Ne jamais lancer `git merge` / `git switch` dans `../opencode-gnome` depuis un worktree.
+- **Une branche par issue** : `git switch -c issue-<numéro>` depuis sa branche `agent-N` à jour
+  (`git fetch && git merge --ff-only origin/main`). Jamais de commit direct sur `main`.
+- **Fusion**, une fois l'issue validée et sur ordre de l'utilisateur, depuis le worktree :
+  1. `git fetch && git rebase origin/main`, puis `pnpm check` ;
+  2. `git push origin issue-<numéro>:main` (refusé si `main` a avancé : refaire l'étape 1) ;
+  3. mise à jour de l'orchestre : `git -C ../opencode-gnome pull --ff-only` (seule commande
+     autorisée dans ce dossier depuis un worktree ; s'il n'est pas propre ou pas sur `main`, ne
+     rien faire et le signaler) ;
+  4. `git switch agent-N && git merge --ff-only origin/main && git branch -D issue-<numéro>`.
 - Chaque agent construit **et installe** son application après une modification d'interface :
   `node scripts/install.ts` (dans le shell devenv). Chaque dossier a son lanceur, son .desktop et
   son identifiant d'application : toutes les versions apparaissent dans GNOME et tournent ensemble.
-  Le serveur partagé et `oc` ne sont installés que depuis le dépôt principal.
+  Le serveur partagé, `oc`, `ogt` et le plugin opencode ne sont installés que depuis l'orchestre
+  (après une fusion qui les modifie : `node scripts/install.ts` dans `opencode-gnome`, à
+  demander à l'utilisateur).
 
 ## Suivi des fonctionnalités : issues GitHub
 Dépôt : https://github.com/maarekj/opencode-gnome
