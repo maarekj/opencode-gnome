@@ -8,6 +8,10 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   schémas zod/mini (`schemas.ts`), état réactif des projets/sessions (`store.ts`),
   conversation en direct (`conversation.ts`), ouverture de terminal (`terminal.ts`).
 - `src/app/` : application `Adw.Application` en TSX avec gnim (`gnim/gtk4`).
+- `src/cli/` : CLI `ogt` des tâches planifiées (GJS). Tâches dans `src/shared/tasks.ts` (config
+  `tasks.json`, timers systemd utilisateur générés, journal `runs.jsonl`). Tests : lanceur avec
+  `OGT_NAMESPACE=test`, `OGT_UNIT_DIR=$XDG_RUNTIME_DIR/systemd/user`, `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
+  dans /tmp, `OPENCODE_GNOME_URL` du serveur de test, `OPENCODE_GNOME_TEST_NOTIFY=1`.
 - `scripts/` : outillage Node 24 (build esbuild, types gnim, installation locale, captures).
 - Serveur partagé : unité systemd utilisateur `opencode-gnome-server` (port 4096),
   installée par `node scripts/install.ts`.

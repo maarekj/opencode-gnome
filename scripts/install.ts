@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildApp } from './build.ts';
+import { buildApp, buildCli } from './build.ts';
 
 const BASE_ID = 'io.github.maarekj.OpencodeGnome';
 const UNIT = 'opencode-gnome-server.service';
@@ -52,6 +52,7 @@ const userPath = (process.env['PATH'] ?? '')
 
 console.log('build…');
 await buildApp();
+await buildCli();
 
 console.log('fichiers :');
 // serveur partagé et `oc` : installés par l'installation principale uniquement
@@ -95,11 +96,31 @@ write(
   `#!/usr/bin/env bash
 # Lance opencode-gnome (version de développement : ${root}).
 export OPENCODE_GNOME_APP_ID=${APP_ID}
+# tâches planifiées : unités générées vers la CLI ogt de la même version
+export OGT_BIN=${shq(path.join(binDir, `ogt${suffix}`))}
+export OGT_NAMESPACE=${shq(variant)}
 export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
 exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "$@"
 `,
   0o755,
 );
+
+// CLI des tâches planifiées : `ogt` (worktree : `ogt-2`, tâches et unités séparées de la version principale)
+const OGT = `ogt${suffix}`;
+write(
+  path.join(binDir, OGT),
+  `#!/usr/bin/env bash
+# Tâches planifiées d'opencode-gnome (version : ${root}).
+export OGT_BIN=${shq(path.join(binDir, OGT))}
+export OGT_NAMESPACE=${shq(variant)}
+export OPENCODE_GNOME_APP_ID=${APP_ID}
+export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
+exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'cli', 'ogt.js'))} "$@"
+`,
+  0o755,
+);
+// unités des tâches existantes : pointent vers le lanceur à jour
+execFileSync(path.join(binDir, OGT), ['sync'], { stdio: 'inherit' });
 
 // Icône (data/icons) installée sous l'identifiant de l'application ; worktree : pastille numérotée.
 const iconsDir = path.join(home, '.local', 'share', 'icons', 'hicolor');

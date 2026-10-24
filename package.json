@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "gnim-types": "node scripts/gnim-types.ts",
-    "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/shared && tsc -p src/app",
+    "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/shared && tsc -p src/app && tsc -p src/cli",
     "lint": "oxlint --type-aware",
     "check": "pnpm typecheck && pnpm lint",
     "build": "node scripts/build.ts",

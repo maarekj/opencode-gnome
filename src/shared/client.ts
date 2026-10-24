@@ -112,8 +112,13 @@ export class OpencodeClient {
     return this.get(`/session/${encodeURIComponent(sessionID)}`, Session);
   }
 
-  createSession(directory: string): Promise<Session> {
-    return this.request('POST', '/session', Session, { query: { directory }, body: {} });
+  /** Nouvelle session ; `allowAll` : aucune demande de permission (tâches planifiées). */
+  createSession(directory: string, opts: { title?: string; allowAll?: boolean } = {}): Promise<Session> {
+    const body = {
+      ...(opts.title === undefined ? {} : { title: opts.title }),
+      ...(opts.allowAll === true ? { permission: [{ permission: '*', pattern: '*', action: 'allow' }] } : {}),
+    };
+    return this.request('POST', '/session', Session, { query: { directory }, body });
   }
 
   renameSession(sessionID: string, directory: string, title: string): Promise<Session> {

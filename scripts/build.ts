@@ -27,4 +27,21 @@ export async function buildApp(): Promise<string> {
   return out;
 }
 
-if (import.meta.main) console.log(`app: ${await buildApp()}`);
+/** CLI `ogt` (tâches planifiées) dans dist/cli. */
+export async function buildCli(): Promise<string> {
+  const out = path.join(dist, 'cli');
+  fs.rmSync(out, { recursive: true, force: true });
+  await build({
+    entryPoints: [path.join(root, 'src', 'cli', 'ogt.ts')],
+    outfile: path.join(out, 'ogt.js'),
+    bundle: true,
+    format: 'esm',
+    target: 'es2022',
+    sourcemap: 'inline',
+    external: GJS_EXTERNALS,
+    logLevel: 'warning',
+  });
+  return out;
+}
+
+if (import.meta.main) console.log(`app: ${await buildApp()}\ncli: ${await buildCli()}`);
