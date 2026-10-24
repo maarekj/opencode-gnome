@@ -25,7 +25,20 @@ export function parsePatch(patch: string): DiffLine[] {
   let oldNo = 0;
   let newNo = 0;
   let inHunk = false;
+  // bloc sans position (`@@ @@`, diff reconstitué) : ni séparateur ni numéros de ligne
+  let numbered = true;
   for (const line of text.split('\n')) {
+    if (line === '@@ @@') {
+      inHunk = true;
+      numbered = false;
+      continue;
+    }
+    if (!numbered) {
+      if (line.startsWith('+')) out.push({ kind: 'add', text: line.slice(1) });
+      else if (line.startsWith('-')) out.push({ kind: 'del', text: line.slice(1) });
+      else if (line.startsWith(' ')) out.push({ kind: 'ctx', text: line.slice(1) });
+      continue;
+    }
     const h = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/u.exec(line);
     if (h !== null) {
       oldNo = Number(h[1]);
@@ -81,7 +94,11 @@ export interface DiffView {
   show: (filename: string, patch: string) => void;
 }
 
-export function createDiffView(): DiffView {
+/**
+ * `inline` : vue intégrée au flux d'une conversation (hauteur naturelle, lignes repliées, pas de
+ * défilement propre) ; sinon vue défilante qui occupe la place disponible.
+ */
+export function createDiffView({ inline = false }: { inline?: boolean } = {}): DiffView {
   const buffer = new GtkSource.Buffer({ highlightMatchingBrackets: false });
   const view = new GtkSource.View({
     buffer,
@@ -89,12 +106,12 @@ export function createDiffView(): DiffView {
     cursorVisible: false,
     monospace: true,
     showLineNumbers: false,
-    wrapMode: Gtk.WrapMode.NONE,
-    topMargin: 8,
-    bottomMargin: 12,
+    wrapMode: inline ? Gtk.WrapMode.WORD_CHAR : Gtk.WrapMode.NONE,
+    topMargin: inline ? 4 : 8,
+    bottomMargin: inline ? 6 : 12,
     leftMargin: 8,
     rightMargin: 12,
-    cssClasses: ['diff-view'],
+    cssClasses: inline ? ['diff-view', 'diff-inline'] : ['diff-view'],
   });
   const numbers: NumbersRenderer = new NumbersRenderer({ xalign: 1, xpad: 8, cssClasses: ['diff-numbers'] });
   view.get_gutter(Gtk.TextWindowType.LEFT).insert(numbers, 0);
@@ -158,8 +175,8 @@ export function createDiffView(): DiffView {
     raise();
     numbers.setLines(lines);
     buffer.place_cursor(buffer.get_start_iter());
-    view.get_vadjustment()?.set_value(0);
+    if (!inline) view.get_vadjustment()?.set_value(0);
   };
 
-  return { widget: new Gtk.ScrolledWindow({ child: view, vexpand: true }), show };
+  return { widget: inline ? view : new Gtk.ScrolledWindow({ child: view, vexpand: true }), show };
 }

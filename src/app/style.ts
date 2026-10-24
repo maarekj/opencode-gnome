@@ -123,6 +123,19 @@ export const STYLESHEET = `
 .diff-view {
   font-size: 0.9em;
 }
+.diff-frame {
+  border-radius: 6px;
+  border: 1px solid alpha(currentColor, 0.1);
+}
+.diff-stat {
+  font-family: monospace;
+  opacity: 0.8;
+}
+.open-file {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+}
 
 .project-row .star:not(.favorite) {
   opacity: 0;

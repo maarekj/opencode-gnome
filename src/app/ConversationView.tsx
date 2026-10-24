@@ -10,7 +10,9 @@ import type { Activity } from '../shared/store.ts';
 import { AttachmentView } from './Attachments.tsx';
 import { esc, fmtDuration, fmtFullDate, fmtStamp } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../shared/schemas.ts';
+import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { openFile } from './OpenFolder.ts';
 import { MarkdownView } from './Markdown.tsx';
 import { AnsweredQuestions, PermissionCard, QuestionCard, type RequestActions } from './Requests.tsx';
 import { todosOfCall, TodoRows, todoSummary } from './TodoPanel.tsx';
@@ -173,8 +175,80 @@ function TodoToolLine({ part: p }: { part: Part }): JSX.Element {
   );
 }
 
+const prefix = (sign: string, s: string): string[] => (s === '' ? [] : s.replace(/\n$/u, '').split('\n').map((l) => sign + l));
+
+/** Diff d'un appel `edit` / `write` : celui calculé par opencode, sinon reconstitué depuis l'entrée. */
+function editPatch(p: Part): string | null {
+  const input = p.state?.input;
+  const diff = field(p.state?.metadata, 'diff');
+  if (diff !== undefined && diff.includes('@@')) return diff;
+  if (p.tool === 'write') {
+    const lines = prefix('+', field(input, 'content') ?? '');
+    return lines.length === 0 ? null : [`@@ -0,0 +1,${lines.length} @@`, ...lines].join('\n');
+  }
+  const before = field(input, 'oldString');
+  const after = field(input, 'newString');
+  if (before === undefined || after === undefined) return null;
+  return ['@@ @@', ...prefix('-', before), ...prefix('+', after)].join('\n');
+}
+
+/** « +3 », « −1 » d'un diff (vides si aucune ligne). */
+function diffStat(patch: string): { add: string; del: string } {
+  let add = 0;
+  let del = 0;
+  for (const l of patch.split('\n')) {
+    if (l.startsWith('+') && !l.startsWith('+++')) add++;
+    else if (l.startsWith('-') && !l.startsWith('---')) del++;
+  }
+  return { add: add > 0 ? `+${add}` : '', del: del > 0 ? `−${del}` : '' };
+}
+
+/**
+ * Appel `edit` / `write` : chemin, décompte des lignes ajoutées / retirées et bouton pour ouvrir le
+ * fichier ; déplié, le diff coloré (comme la fenêtre des fichiers modifiés), construit à la demande.
+ */
+function EditToolLine({ part: p, patch }: { part: Part; patch: string }): JSX.Element {
+  const filePath = field(p.state?.input, 'filePath') ?? '';
+  const stat = diffStat(patch);
+  const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, marginTop: 6, marginStart: 28, cssClasses: ['diff-frame'], overflow: Gtk.Overflow.HIDDEN });
+  let built = false;
+  return (
+    <Gtk.Expander
+      onNotifyExpanded={(self: Gtk.Expander) => {
+        if (!self.expanded || built) return;
+        built = true;
+        const diff = createDiffView({ inline: true });
+        body.append(diff.widget);
+        diff.show(filePath, patch);
+      }}
+    >
+      <Gtk.Box $type="label" spacing={8}>
+        <StatusIcon status={p.state?.status ?? 'pending'} />
+        <Gtk.Label label={p.tool ?? 'edit'} cssClasses={['heading']} />
+        <Gtk.Label label={toolSummary(p.tool ?? '', p.state)} ellipsize={Pango.EllipsizeMode.MIDDLE} xalign={0} cssClasses={['dim-label', 'monospace']} />
+        <Gtk.Label label={stat.add} visible={stat.add !== ''} cssClasses={['caption', 'diff-stat', 'success']} />
+        <Gtk.Label label={stat.del} visible={stat.del !== ''} cssClasses={['caption', 'diff-stat', 'error']} />
+        <Gtk.Box hexpand />
+        <Gtk.Button
+          iconName="document-open-symbolic"
+          tooltipText="Ouvrir le fichier"
+          visible={filePath !== ''}
+          valign={Gtk.Align.CENTER}
+          cssClasses={['flat', 'circular', 'open-file']}
+          onClicked={(self: Gtk.Button) => openFile(self, filePath)}
+        />
+      </Gtk.Box>
+      {body}
+    </Gtk.Expander>
+  );
+}
+
 function ToolLine({ part: p, generic = false }: { part: Part; generic?: boolean }): JSX.Element {
   if (!generic && (p.tool === 'todowrite' || p.tool === 'todoread')) return <TodoToolLine part={p} />;
+  if (!generic && (p.tool === 'edit' || p.tool === 'write') && p.state?.status !== 'error') {
+    const patch = editPatch(p);
+    if (patch !== null) return <EditToolLine part={p} patch={patch} />;
+  }
   let expanded = false;
   const waiting = p.tool === 'question' && (p.state?.status === 'running' || p.state?.status === 'pending');
   return (
