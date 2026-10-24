@@ -1076,7 +1076,23 @@ export function MainWindow({
     sessionActions: actions.sessionActions,
     terminals,
     openSubagent,
+    forkFrom,
   });
+  /** texte à pré-remplir dans la page de la prochaine session ouverte (fork depuis un message) */
+  const drafts = new Map<string, { text: string; from: Session | undefined }>();
+  const forkFrom = (sessionID: string, directory: string, messageID: string, text: string): void => {
+    store.client
+      .forkSession(sessionID, directory, messageID)
+      .then((copy) => {
+        store.upsertSession(copy);
+        // la copie n'a ni agent ni modèle : ceux de la session d'origine sont présélectionnés
+        drafts.set(copy.id, { text, from: store.session(sessionID) });
+        actions.openSession(copy.id);
+        actions.toast('Session forkée : modifie le message puis envoie-le');
+        return copy;
+      })
+      .catch((e: unknown) => actions.toast(`Fork impossible : ${errorMessage(e)}`));
+  };
   const openSubagent = (sessionID: string): void => {
     let handle = subPages.get(sessionID);
     if (handle === undefined) {
@@ -1185,7 +1201,9 @@ export function MainWindow({
       if (split !== null) split.showContent = true;
       let handle = pages.get(sessionID);
       if (handle === undefined) {
-        handle = createConversationPage({ ...pageOptions(), sessionID });
+        const draft = drafts.get(sessionID);
+        drafts.delete(sessionID);
+        handle = createConversationPage({ ...pageOptions(), sessionID, ...(draft === undefined ? {} : { draft: draft.text, ...(draft.from === undefined ? {} : { draftFrom: draft.from }) }) });
         pages.set(sessionID, handle);
       }
       if (nav.visiblePage === handle.page) return;

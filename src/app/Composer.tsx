@@ -44,6 +44,8 @@ export interface BuiltinCommand {
 
 export interface ComposerProps {
   busy: Accessor<boolean>;
+  /** texte pré-rempli (fork depuis un message : le message à renvoyer ou modifier) */
+  initialText?: string;
   /** Agent, modèle et niveau de raisonnement de la session (présélection). */
   initial: () => Choice;
   /**
@@ -356,6 +358,7 @@ export function Composer(props: ComposerProps): JSX.Element {
     buffer.place_cursor(buffer.get_end_iter());
     programmatic = false;
   };
+  if (props.initialText !== undefined && props.initialText !== '') setText(props.initialText);
   const historyEntries = (): string[] => {
     const out: string[] = [];
     for (const t of props.history().toReversed()) if (t !== '' && out.at(-1) !== t) out.push(t);

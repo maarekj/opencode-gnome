@@ -89,6 +89,12 @@ export function createConversationPage(opts: {
   openSubagent: (sessionID: string) => void;
   /** session d'un sous-agent : lecture seule (pas de compositeur ni de terminaux) */
   child?: boolean;
+  /** texte pré-rempli dans le compositeur */
+  draft?: string;
+  /** session d'origine d'un fork : son agent et son modèle sont présélectionnés */
+  draftFrom?: Session;
+  /** nouvelle session copiée jusqu'à ce message (exclu), le message pré-rempli dans son compositeur */
+  forkFrom: (sessionID: string, directory: string, messageID: string, text: string) => void;
 }): ConversationPageHandle {
   const { store, settings, sessionID, attach, toast, terminals } = opts;
   const child = opts.child === true;
@@ -160,8 +166,10 @@ export function createConversationPage(opts: {
 
     const composer = Composer({
       busy,
+      ...(opts.draft === undefined ? {} : { initialText: opts.draft }),
       initial: () => {
-        const s = view.peek()?.session;
+        const own = view.peek()?.session;
+        const s = own?.model === undefined && opts.draftFrom !== undefined ? { ...opts.draftFrom, ...(own?.agent === undefined ? {} : { agent: own.agent }) } : own;
         // variante : celle de la session, sinon celle du dernier tour de l'assistant
         const variant = s?.model?.variant ?? conversation.context.peek()?.variant;
         return {
@@ -276,6 +284,7 @@ export function createConversationPage(opts: {
             actions={requestActions}
             showTools={showTools}
             maxWidth={settings.data((d) => d.maxWidth)}
+            fork={child ? undefined : (messageID: string, text: string) => opts.forkFrom(sessionID, dir(), messageID, text)}
             subagents={{
               activity: (id) => store.activity(id),
               // republié à chaque changement de statut / demande (toutes sessions)

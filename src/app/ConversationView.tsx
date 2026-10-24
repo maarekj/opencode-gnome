@@ -69,6 +69,8 @@ interface FlowContext {
   /** afficher les appels d'outils (bascule globale) */
   readonly showTools: Accessor<boolean>;
   readonly subagents: SubagentContext | undefined;
+  /** fork de la session à partir d'un message de l'utilisateur */
+  readonly fork: ((messageID: string, text: string) => void) | undefined;
 }
 
 /**
@@ -473,9 +475,21 @@ function copyText(widget: Gtk.Widget, value: string): void {
  * Message en markdown, sélectionnable d'un bloc (un seul TextView), avec un bouton « Copier »
  * (markdown source) qui apparaît au survol.
  */
-function Copyable({ text: source, css }: { text: Accessor<string>; css: string }): JSX.Element {
+function Copyable({ text: source, css, onFork }: { text: Accessor<string>; css: string; onFork?: (() => void) | undefined }): JSX.Element {
   return (
     <Gtk.Overlay cssClasses={['copyable', css]}>
+      {onFork === undefined ? null : (
+        <Gtk.Button
+          $type="overlay"
+          iconName="og-fork-symbolic"
+          tooltipText="Forker à partir de ce message : nouvelle session avec la conversation jusqu'ici, ce message prêt à être renvoyé ou modifié"
+          halign={Gtk.Align.END}
+          valign={Gtk.Align.START}
+          marginEnd={36}
+          cssClasses={['flat', 'circular', 'copy-button']}
+          onClicked={onFork}
+        />
+      )}
       <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
         <With value={source}>{(t: string) => MarkdownView({ text: t })}</With>
       </Gtk.Box>
@@ -506,7 +520,18 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
       widget = (
         <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={4}>
           {block.first === true ? <Stamp ms={block.created} /> : null}
-          <Copyable text={block.part((p) => stripImageMarkers(p.text ?? ''))} css="user-message" />
+          <Copyable
+            text={block.part((p) => stripImageMarkers(p.text ?? ''))}
+            css="user-message"
+            onFork={
+              ctx.fork === undefined
+                ? undefined
+                : () => {
+                    const p = block.part.peek();
+                    ctx.fork?.(p.messageID, stripImageMarkers(p.text ?? ''));
+                  }
+            }
+          />
         </Gtk.Box>
       );
       break;
@@ -713,6 +738,7 @@ export function ConversationView({
   showTools,
   maxWidth,
   subagents,
+  fork,
 }: {
   conversation: Conversation;
   revealed: Accessor<boolean>;
@@ -721,10 +747,11 @@ export function ConversationView({
   /** largeur maximale (px, 0 = toute la largeur) */
   maxWidth: Accessor<number>;
   subagents?: SubagentContext;
+  fork?: ((messageID: string, text: string) => void) | undefined;
 }): JSX.Element {
   // spinner tant que l'animation d'entrée n'est pas finie ou que rien n'est chargé
   const showLoading = createComputed(() => !revealed() || (conversation.loading() && conversation.blocks().length === 0));
-  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry(), showTools, subagents };
+  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry(), showTools, subagents, fork };
 
   // demandes non rattachées à un appel d'outil affiché : en fin de conversation
   const orphans = createComputed((): Pending[] => {
