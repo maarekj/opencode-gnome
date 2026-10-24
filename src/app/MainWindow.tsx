@@ -18,7 +18,7 @@ import { openFolder } from './OpenFolder.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { TerminalManager } from '../shared/terminals.ts';
 import { TerminalBar, TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
-import { askDelete, askRename, attachSessionMenu, type SessionActions } from './SessionMenu.ts';
+import { askDelete, askRename, attachSessionMenu, deleteButton, type SessionActions } from './SessionMenu.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
 
@@ -464,12 +464,7 @@ function SessionRow({ view, actions }: { view: SessionView; actions: Actions }):
       {activityIcon(view)}
       <Gtk.Box $type="suffix" spacing={2} valign={Gtk.Align.CENTER}>
         <Gtk.Button iconName="utilities-terminal-symbolic" tooltipText="Ouvrir dans le terminal" cssClasses={['flat']} onClicked={act.openInTerminal} />
-        <Gtk.Button
-          iconName="user-trash-symbolic"
-          tooltipText="Supprimer"
-          cssClasses={['flat']}
-          onClicked={(self: Gtk.Button) => askDelete(self, title, act.delete)}
-        />
+        {deleteButton(act.delete)}
       </Gtk.Box>
     </Adw.ActionRow>
   );
