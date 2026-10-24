@@ -7,14 +7,17 @@ import { createComputed, onCleanup, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { prettyPath } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
-import { terminalId, zellijInstalled, type TerminalManager } from '../shared/terminals.ts';
+import { attachArgv, cwdOf, terminalId, zellijInstalled, type TerminalManager } from '../shared/terminals.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { keyedBox } from './KeyedBox.ts';
+import type { TerminalDock } from './TerminalPanel.tsx';
 
 export interface TerminalContext {
   readonly settings: Settings;
   readonly manager: TerminalManager;
   readonly toast: (message: string) => void;
+  /** terminal intégré (panneau sous la zone principale) */
+  readonly dock: TerminalDock;
 }
 
 const attempt = (ctx: TerminalContext, what: string, fn: () => Promise<void>): void => {
@@ -30,7 +33,7 @@ function askTerminal(parent: Gtk.Widget, project: string, ctx: TerminalContext, 
   for (const row of [name, command, cwd]) group.add(row);
   const dialog = new Adw.AlertDialog({
     heading: current === undefined ? 'Nouveau terminal' : 'Modifier le terminal',
-    body: `La commande tourne dans une session zellij : fermer la fenêtre du terminal ne l’arrête pas. Elle est lancée depuis ${prettyPath(project)}, ou depuis le sous-dossier indiqué (chemin absolu ou ~/… aussi acceptés).`,
+    body: `La commande tourne dans une session zellij : fermer son onglet ou la fenêtre du terminal ne l’arrête pas. Elle est lancée depuis ${prettyPath(project)}, ou depuis le sous-dossier indiqué (chemin absolu ou ~/… aussi acceptés).`,
     extraChild: group,
     defaultResponse: 'save',
     closeResponse: 'cancel',
@@ -79,9 +82,26 @@ function askRemove(parent: Gtk.Widget, project: string, t: ProjectTerminal, ctx:
 }
 
 /** Actions d'un terminal, partagées par la pastille et la ligne de la barre latérale. */
-export function terminalActions(t: ProjectTerminal, project: string, ctx: TerminalContext): { open: () => void; restart: () => void; stop: () => void } {
+export function terminalActions(t: ProjectTerminal, project: string, ctx: TerminalContext): { open: () => void; external: () => void; restart: () => void; stop: () => void } {
+  const external = (): void => attempt(ctx, 'Ouverture impossible', () => ctx.manager.open(t, project));
   return {
-    open: () => attempt(ctx, 'Ouverture impossible', () => ctx.manager.open(t, project)),
+    // terminal intégré : onglet attaché à la session zellij (fermer l'onglet détache)
+    open: () =>
+      ctx.dock.enabled()
+        ? attempt(ctx, 'Ouverture impossible', async () => {
+            await ctx.manager.ensure(t, project);
+            ctx.dock.open(project, {
+              key: `zellij:${t.id}`,
+              title: t.name,
+              tooltip: `${t.name} : ${t.command === '' ? 'shell' : t.command}\nSession zellij ${t.id} : fermer l’onglet la laisse tourner`,
+              icon: 'utilities-terminal-symbolic',
+              argv: attachArgv(t),
+              cwd: cwdOf(t, project),
+              external,
+            });
+          })
+        : external(),
+    external,
     restart: () => attempt(ctx, 'Redémarrage impossible', () => ctx.manager.restart(t, project)),
     stop: () => attempt(ctx, 'Arrêt impossible', () => ctx.manager.stop(t)),
   };
@@ -93,6 +113,7 @@ export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, proje
   attachContextMenu(widget, () => [
     [
       { label: 'Ouvrir', activate: act.open },
+      ...(ctx.dock.enabled() ? [{ label: 'Ouvrir dans le terminal externe', activate: act.external }] : []),
       ...(ctx.manager.isRunning(t.id)
         ? [
             { label: 'Redémarrer', activate: act.restart },

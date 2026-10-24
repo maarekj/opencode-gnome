@@ -10,7 +10,7 @@ import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtCost, fmtRelative, fmtStamp } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
-import { attachCommand, openTerminal } from '../shared/terminal.ts';
+import { attachCommand, openTerminal, openTerminalArgv } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag, subagentTag, type ConversationPageHandle } from './ConversationPage.tsx';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
@@ -23,6 +23,7 @@ import { confirmDelete, openEditor, STATUS, type EditorContext, type TasksMonito
 import { describeSchedule, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
 import { TerminalManager } from '../shared/terminals.ts';
 import { TerminalBar, TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
+import { TerminalDock } from './TerminalPanel.tsx';
 import { askDelete, askRename, attachSessionMenu, deleteButton, type SessionActions } from './SessionMenu.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
@@ -774,6 +775,7 @@ function SessionsPage({
         <Adw.HeaderBar $type="top">
           <Adw.WindowTitle $type="title" title={current((p) => p?.name ?? 'opencode')} subtitle={current((p) => (p === null ? '' : prettyPath(p.path)))} />
           <Gtk.Button $type="end" iconName="tab-new-symbolic" tooltipText="Nouvelle session" sensitive={key((k) => k !== null)} onClicked={newSession} />
+          <Gtk.Box $type="end">{terminals.dock.toggleButton()}</Gtk.Box>
           <Gtk.ToggleButton
             $type="end"
             iconName="system-search-symbolic"
@@ -1121,7 +1123,43 @@ export function MainWindow({
     });
   };
 
+  const externalAttach = (directory: string, sessionID?: string): void => {
+    try {
+      const { terminal, terminalCommand } = settings.data.peek();
+      openTerminal(attachCommand(store.client.url, directory, sessionID), GLib.file_test(directory, GLib.FileTest.IS_DIR) ? directory : GLib.get_home_dir(), {
+        terminal,
+        command: terminalCommand,
+      });
+    } catch (e) {
+      toast(errorMessage(e));
+    }
+  };
+  const shell = GLib.getenv('SHELL') ?? '/bin/sh';
+  const dock = new TerminalDock({
+    content: nav,
+    settings,
+    newShell: (project, n) => ({
+      key: `shell:${GLib.get_monotonic_time()}`,
+      title: n === 1 ? 'Shell' : `Shell ${n}`,
+      tooltip: `${GLib.path_get_basename(shell)} dans ${prettyPath(project)}`,
+      icon: 'utilities-terminal-symbolic',
+      argv: [shell],
+      cwd: project,
+      external: () => {
+        try {
+          const { terminal, terminalCommand } = settings.data.peek();
+          openTerminalArgv([shell], project, { terminal, command: terminalCommand });
+        } catch (e) {
+          toast(errorMessage(e));
+        }
+      },
+    }),
+  });
+  dock.setProject(current.peek()?.path ?? null);
+  onCleanup(current.subscribe(() => dock.setProject(current.peek()?.path ?? null)));
+
   const terminals: TerminalContext = {
+    dock,
     settings,
     manager: new TerminalManager(() => {
       const { terminal, terminalCommand } = settings.data.peek();
@@ -1133,15 +1171,27 @@ export function MainWindow({
   const actions: Actions = {
     toast,
     attach: (directory, sessionID) => {
-      try {
-        const { terminal, terminalCommand } = settings.data.peek();
-        openTerminal(attachCommand(store.client.url, directory, sessionID), GLib.file_test(directory, GLib.FileTest.IS_DIR) ? directory : GLib.get_home_dir(), {
-          terminal,
-          command: terminalCommand,
-        });
-      } catch (e) {
-        actions.toast(errorMessage(e));
+      if (!dock.enabled()) {
+        externalAttach(directory, sessionID);
+        return;
       }
+      // onglet dans le panneau du projet de la session (sinon du dossier, sinon du projet affiché)
+      const projects = store.projects.peek();
+      const project =
+        (sessionID === undefined ? undefined : projects.find((p) => p.sessions.some((v) => v.session.id === sessionID))?.path) ??
+        projects.find((p) => p.path === directory)?.path ??
+        current.peek()?.path ??
+        directory;
+      const title = sessionID === undefined ? '' : (store.session(sessionID)?.title ?? '');
+      dock.open(project, {
+        key: sessionID === undefined ? `opencode:${GLib.get_monotonic_time()}` : `attach:${sessionID}`,
+        title: title === '' ? 'opencode' : title,
+        tooltip: `opencode attach${sessionID === undefined ? '' : ` --session ${sessionID}`}\n${prettyPath(directory)}`,
+        icon: 'utilities-terminal-symbolic',
+        argv: ['opencode', 'attach', store.client.url, '--dir', directory, ...(sessionID === undefined ? [] : ['--session', sessionID])],
+        cwd: directory,
+        external: () => externalAttach(directory, sessionID),
+      });
     },
     sessionActions: (session) => ({
       open: () => actions.openSession(session.id),
@@ -1302,6 +1352,18 @@ export function MainWindow({
       $={(self: Adw.ApplicationWindow) => {
         // connecté avant le gestionnaire de main.tsx : renvoyer true suspend la fermeture
         self.connect('close-request', () => confirmClose(self, settings, terminals.manager));
+        // Ctrl+Maj+J : terminaux intégrés (capturé avant le terminal ; Ctrl+J reste un saut de ligne pour lui)
+        const keys = new Gtk.ShortcutController({ scope: Gtk.ShortcutScope.GLOBAL, propagationPhase: Gtk.PropagationPhase.CAPTURE });
+        keys.add_shortcut(
+          new Gtk.Shortcut({
+            trigger: Gtk.ShortcutTrigger.parse_string('<Control><Shift>j'),
+            action: Gtk.CallbackAction.new(() => {
+              dock.toggle();
+              return true;
+            }),
+          }),
+        );
+        self.add_controller(keys);
       }}
     >
       <Adw.ToastOverlay
@@ -1346,7 +1408,7 @@ export function MainWindow({
               },
             }),
           )}
-          content={new Adw.NavigationPage({ title: 'opencode', child: nav })}
+          content={new Adw.NavigationPage({ title: 'opencode', child: dock.widget })}
           $={(self: Adw.NavigationSplitView) => {
             split = self;
             makeSidebarResizable(self, settings);

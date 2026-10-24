@@ -100,10 +100,15 @@ export class TerminalManager {
     await this.refresh();
   }
 
-  /** Ouvre le terminal sur la session (la démarre si elle est arrêtée). */
-  async open(t: ProjectTerminal, project: string): Promise<void> {
+  /** Démarre la session si elle est arrêtée. */
+  async ensure(t: ProjectTerminal, project: string): Promise<void> {
     if (!this.isRunning(t.id)) await this.start(t, project);
-    openTerminalArgv(['zellij', 'attach', t.id], cwdOf(t, project), this.#choice());
+  }
+
+  /** Ouvre le terminal externe sur la session (la démarre si elle est arrêtée). */
+  async open(t: ProjectTerminal, project: string): Promise<void> {
+    await this.ensure(t, project);
+    openTerminalArgv(attachArgv(t), cwdOf(t, project), this.#choice());
   }
 
   async stop(t: ProjectTerminal): Promise<void> {
@@ -138,7 +143,10 @@ export function resolveCwd(cwd: string | undefined, project: string): string {
   return GLib.canonicalize_filename(c, project);
 }
 
-const cwdOf = (t: ProjectTerminal, project: string): string => {
+/** Client zellij attaché à la session du terminal (le quitter détache). */
+export const attachArgv = (t: ProjectTerminal): string[] => ['zellij', 'attach', t.id];
+
+export const cwdOf = (t: ProjectTerminal, project: string): string => {
   const dir = resolveCwd(t.cwd, project);
   return GLib.file_test(dir, GLib.FileTest.IS_DIR) ? dir : GLib.get_home_dir();
 };

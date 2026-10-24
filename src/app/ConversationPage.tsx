@@ -17,6 +17,7 @@ import { ConversationView } from './ConversationView.tsx';
 import { openGitWindow } from './GitWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
 import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
+import { integratedAvailable } from './TerminalPanel.tsx';
 import { TodoPanel } from './TodoPanel.tsx';
 
 const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
@@ -259,10 +260,13 @@ export function createConversationPage(opts: {
               tooltipText="Git : modifications, journal, branches"
               onClicked={openDiff}
             />
+            <Gtk.Box $type="end" visible={!child}>
+              {terminals.dock.toggleButton()}
+            </Gtk.Box>
             <Gtk.Button
               $type="end"
               iconName="utilities-terminal-symbolic"
-              tooltipText="Ouvrir dans le terminal"
+              tooltipText={settings.data((d) => (integratedAvailable() && d.terminalIntegrated ? 'Ouvrir la session dans un terminal (opencode attach)' : 'Ouvrir la session dans le terminal externe (opencode attach)'))}
               onClicked={() => {
                 const v = view.peek();
                 if (v !== null) attach(v.session.directory, sessionID);

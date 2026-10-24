@@ -323,4 +323,11 @@ export const STYLESHEET = `
 .sidebar-handle:hover {
   background: alpha(var(--accent-bg-color), 0.35);
 }
+/* terminal intégré : panneau à onglets sous la zone principale */
+.terminal-panel tabbar .box {
+  min-height: 34px;
+}
+.terminal-scroll vte-terminal {
+  padding: 2px 4px;
+}
 `;

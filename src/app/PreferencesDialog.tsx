@@ -4,6 +4,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import type { Providers } from '../shared/schemas.ts';
 import type { Settings } from '../shared/settings.ts';
 import { automaticTerminal, installedTerminals } from '../shared/terminal.ts';
+import { integratedAvailable } from './TerminalPanel.tsx';
 
 const AUTO = 'auto';
 const CUSTOM = 'custom';
@@ -24,8 +25,16 @@ function setItems(row: Adw.ComboRow, labels: readonly string[], index: number): 
 function terminalGroup(settings: Settings): Adw.PreferencesGroup {
   const group = new Adw.PreferencesGroup({
     title: 'Terminal',
-    description: "Utilisé par « Ouvrir dans le terminal » (opencode attach) et « Ouvrir opencode dans le terminal ».",
+    description: 'Terminaux des sessions (opencode attach), du projet et terminaux persistants.',
   });
+  const integrated = new Adw.SwitchRow({
+    title: 'Terminal intégré',
+    subtitle: integratedAvailable() ? 'Ouvrir les terminaux dans un panneau de la fenêtre (le terminal externe reste accessible depuis le panneau)' : 'Indisponible : bibliothèque VTE (GTK 4) introuvable',
+    active: settings.data.peek().terminalIntegrated && integratedAvailable(),
+    sensitive: integratedAvailable(),
+  });
+  integrated.connect('notify::active', () => settings.setTerminalIntegrated(integrated.active));
+  group.add(integrated);
   const auto = automaticTerminal();
   const installed = installedTerminals();
   const current = settings.data.peek();
@@ -34,7 +43,7 @@ function terminalGroup(settings: Settings): Adw.PreferencesGroup {
   const ids = [AUTO, ...names, CUSTOM];
   const labels = [`Automatique (${auto ?? 'aucun trouvé'})`, ...names.map((n) => (installed.includes(n) ? n : `${n} (non installé)`)), 'Personnalisé…'];
 
-  const row = comboRow('Terminal', '', false);
+  const row = comboRow('Terminal externe', '', false);
   setItems(row, labels, ids.indexOf(current.terminal ?? AUTO));
   const custom = new Adw.EntryRow({ title: 'Commande du terminal (ex. foot -e)', text: current.terminalCommand ?? '' });
   custom.visible = current.terminal === CUSTOM;

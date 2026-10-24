@@ -215,6 +215,9 @@ importers:
       '@girs/soup-3.0':
         specifier: 5.5.0
         version: 5.5.0
+      '@girs/vte-3.91':
+        specifier: 5.5.0
+        version: 5.5.0
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
@@ -445,6 +448,9 @@ packages:
 
   '@girs/soup-3.0@5.5.0':
     resolution: {integrity: sha512-Vo2CPe4BgkJtXzZCDyJiHfX2+uZHkiykv+LyCaDYcAD/mDsiqRmV4CgcXZmAkaTo74M0g2iC8uJuXv2BhttCuQ==}
+
+  '@girs/vte-3.91@5.5.0':
+    resolution: {integrity: sha512-d9LmAC11Mhv7YixlvtqfkAezgWYnH77HFK5igIg7/vJrWbH4/L3Wca9Lp28MPsqEXDG20eVq8fs3cZnN5dPjjg==}
 
   '@oxlint-tsgolint/darwin-arm64@7.0.2004':
     resolution: {integrity: sha512-uJk3ttju7Lz+Nv8WG4CsLyewoL1qf/Ny8S8OksJ7Bm/F14Tc9gMfW6arM1PCc57IzH/X/I79YsCWTgxX1FKibQ==}
@@ -1021,6 +1027,24 @@ snapshots:
       '@girs/glib-2.0': 5.5.0
       '@girs/gmodule-2.0': 5.5.0
       '@girs/gobject-2.0': 5.5.0
+
+  '@girs/vte-3.91@5.5.0':
+    dependencies:
+      '@girs/cairo-1.0': 5.5.0
+      '@girs/freetype2-2.0': 5.5.0
+      '@girs/gdk-4.0': 5.5.0
+      '@girs/gdkpixbuf-2.0': 5.5.0
+      '@girs/gio-2.0': 5.5.0
+      '@girs/gjs': 5.5.0
+      '@girs/glib-2.0': 5.5.0
+      '@girs/gmodule-2.0': 5.5.0
+      '@girs/gobject-2.0': 5.5.0
+      '@girs/graphene-1.0': 5.5.0
+      '@girs/gsk-4.0': 5.5.0
+      '@girs/gtk-4.0': 5.5.0
+      '@girs/harfbuzz-0.0': 5.5.0
+      '@girs/pango-1.0': 5.5.0
+      '@girs/pangocairo-1.0': 5.5.0
 
   '@oxlint-tsgolint/darwin-arm64@7.0.2004':
     optional: true

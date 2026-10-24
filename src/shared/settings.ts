@@ -47,6 +47,10 @@ export const SettingsData = z.object({
   terminal: z.optional(z.string()),
   /** commande du terminal personnalisé (préfixe argv, ex. `foot -e`) */
   terminalCommand: z.optional(z.string()),
+  /** terminaux ouverts dans le panneau intégré (VTE) plutôt que dans le terminal externe */
+  terminalIntegrated: z.prefault(z.boolean(), true),
+  /** hauteur du panneau des terminaux intégrés, en px */
+  terminalPanelHeight: z.prefault(z.number(), 300),
   /** modèle par défaut des sessions sans modèle (`fournisseur/modèle`) ; absent = automatique */
   defaultModel: z.optional(z.string()),
   /** niveau de raisonnement par défaut associé au modèle par défaut */
@@ -54,7 +58,7 @@ export const SettingsData = z.object({
 });
 export type SettingsData = z.output<typeof SettingsData>;
 
-const DEFAULTS: SettingsData = { terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860 };
+const DEFAULTS: SettingsData = { terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300 };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -128,7 +132,7 @@ export class Settings {
     });
   }
 
-  setNumber(key: 'fontScale' | 'maxWidth' | 'sidebarWidth', value: number): void {
+  setNumber(key: 'fontScale' | 'maxWidth' | 'sidebarWidth' | 'terminalPanelHeight', value: number): void {
     if (this.data.peek()[key] !== value) this.update((d) => ({ ...d, [key]: value }));
   }
 
@@ -153,6 +157,10 @@ export class Settings {
 
   setNotificationSound(on: boolean): void {
     if (this.data.peek().notificationSound !== on) this.update((d) => ({ ...d, notificationSound: on }));
+  }
+
+  setTerminalIntegrated(on: boolean): void {
+    if (this.data.peek().terminalIntegrated !== on) this.update((d) => ({ ...d, terminalIntegrated: on }));
   }
 
   setShowTools(show: boolean): void {
