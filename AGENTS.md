@@ -17,7 +17,9 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   installée par `node scripts/install.ts`.
 
 ## Commandes (dans le shell devenv)
-- `pnpm check` : typecheck + lint (oxlint type-aware). Doit passer avant chaque commit.
+- `pnpm check` : typecheck + lint (oxlint type-aware) + `pnpm test`. Doit passer avant chaque commit.
+- `pnpm test` : tests GJS sous Xvfb (`tests/*.ts`, bundlés) ; échec sur tout `Gtk-WARNING`/`Gtk-CRITICAL`
+  ou délai dépassé. Ne jamais attacher un `Gtk.Popover` (`set_parent`) à un `Gtk.TextView` (#54).
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `pnpm screenshot [sortie.png] [-- --session ID]` : lance l'app sur un écran virtuel (Xvfb)
   et en fait une capture. Toujours valider un changement d'interface ainsi, jamais en ouvrant

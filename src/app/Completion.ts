@@ -3,6 +3,7 @@
 // Haut / Bas / Tab / Entrée / Échap à la liste tant qu'elle est ouverte.
 import Gdk from 'gi://Gdk?version=4.0';
 import type Gio from 'gi://Gio';
+import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 
@@ -51,8 +52,11 @@ export class CompletionPopover {
       widthRequest: WIDTH,
       cssClasses: ['completion'],
     });
-    this.#popover.set_parent(view);
-    view.connect('destroy', () => this.#popover.unparent());
+    // Jamais attaché au TextView lui-même : gtk_text_view_dispose retire ses enfants en boucle
+    // (`while (first_child) gtk_text_view_remove`) et ne sait pas retirer un popover : boucle
+    // infinie de « GtkPopover is not a child of GtkTextView » à la libération de la page (#54).
+    // Attaché au premier ancêtre ordinaire, au premier affichage (le TextView n'a pas encore de
+    // parent à la construction).
     // la zone de saisie perd le focus (clic ailleurs) : la liste se ferme
     const focus = new Gtk.EventControllerFocus();
     focus.connect('leave', () => this.hide());
@@ -78,11 +82,29 @@ export class CompletionPopover {
     // la surface d'un popover ouvert ne rétrécit pas : réouverture quand la liste raccourcit
     if (this.#popover.visible && Math.min(natural, MAX_HEIGHT) < this.#scrolled.get_height()) this.#popover.popdown();
     this.#select(0);
+    const anchor = this.#anchor();
+    if (anchor === null) return;
     const loc = this.#view.get_iter_location(at);
     const [x, y] = this.#view.buffer_to_window_coords(Gtk.TextWindowType.WIDGET, loc.x, loc.y);
-    this.#popover.set_pointing_to(new Gdk.Rectangle({ x, y, width: 1, height: loc.height }));
+    const [ok, point] = this.#view.compute_point(anchor, new Graphene.Point({ x, y }));
+    if (!ok) return;
+    this.#popover.set_pointing_to(new Gdk.Rectangle({ x: Math.round(point.x), y: Math.round(point.y), width: 1, height: loc.height }));
     if (this.#popover.visible) this.#popover.present();
     else this.#popover.popup();
+  }
+
+  /** Parent du popover : premier ancêtre du TextView qui n'est pas un TextView (null : pas encore dans l'arbre). */
+  #anchor(): Gtk.Widget | null {
+    const current = this.#popover.get_parent();
+    if (current !== null) return current;
+    let w = this.#view.get_parent();
+    while (w instanceof Gtk.TextView) w = w.get_parent();
+    if (w === null) return null;
+    this.#popover.set_parent(w);
+    this.#view.connect('destroy', () => {
+      if (this.#popover.get_parent() !== null) this.#popover.unparent();
+    });
+    return w;
   }
 
   hide(): void {

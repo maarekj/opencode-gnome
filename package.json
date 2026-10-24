@@ -8,11 +8,12 @@
     "gnim-types": "node scripts/gnim-types.ts",
     "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/shared && tsc -p src/app && tsc -p src/cli",
     "lint": "oxlint --type-aware",
-    "check": "pnpm typecheck && pnpm lint",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
     "build": "node scripts/build.ts",
     "start": "node scripts/build.ts && gjs -m dist/app/main.js",
     "install-local": "node scripts/install.ts",
-    "screenshot": "node scripts/screenshot.ts"
+    "screenshot": "node scripts/screenshot.ts",
+    "test": "node scripts/test.ts"
   },
   "dependencies": {
     "gnim": "^1.9.1",
