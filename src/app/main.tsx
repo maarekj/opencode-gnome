@@ -11,6 +11,7 @@ import { Settings } from '../shared/settings.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { Notifier } from './Notifier.ts';
+import { openExtensions } from './ExtensionsDialog.ts';
 import { openPreferences } from './PreferencesDialog.tsx';
 import { STYLESHEET } from './style.ts';
 import { openTasksWindow, TasksMonitor } from './TasksWindow.tsx';
@@ -108,6 +109,14 @@ preferences.connect('activate', () => {
   if (win !== null) openPreferences(win, settings, store.client.providers(GLib.get_home_dir()));
 });
 app.add_action(preferences);
+
+/** app.extensions : MCP et skills globaux (menu principal) */
+const extensions = new Gio.SimpleAction({ name: 'extensions' });
+extensions.connect('activate', () => {
+  const win = app.get_active_window();
+  if (win !== null) openExtensions(win, store.client, null);
+});
+app.add_action(extensions);
 app.set_accels_for_action('app.preferences', ['<Control>comma']);
 
 /** app.tasks(page) : fenêtre des tâches planifiées (`tasks` ou `history`) */

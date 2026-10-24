@@ -14,8 +14,10 @@ import { attachCommand, openTerminal } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag, subagentTag, type ConversationPageHandle } from './ConversationPage.tsx';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
+import { openExtensions } from './ExtensionsDialog.ts';
 import { openFolder } from './OpenFolder.ts';
 import { openGitWindow } from './GitWindow.tsx';
+import { reloadProjectConfig } from './ReloadConfig.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { confirmDelete, openEditor, STATUS, type EditorContext, type TasksMonitor, type TaskView } from './TasksWindow.tsx';
 import { describeSchedule, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
@@ -58,6 +60,10 @@ interface ProjectActions {
   toggle: (key: string) => void;
   sessionActions: (session: Session) => SessionActions;
   isFavorite: (path: string) => boolean;
+  /** dialogue « MCP et skills » du projet */
+  extensions: (from: Gtk.Widget, path: string) => void;
+  /** relit opencode.json, agents, commandes, skills et MCP du projet */
+  reloadConfig: (from: Gtk.Widget, project: ProjectView) => void;
   toggleFavorite: (path: string) => void;
   newSession: (directory: string) => void;
   /** opencode dans un terminal, nouvelle session */
@@ -109,6 +115,10 @@ function ProjectRow({
             { label: 'Ouvrir le dossier', activate: () => openFolder(self, project.path, actions.toast) },
           ],
           [{ label: 'Nouvelle tâche planifiée…', activate: () => openEditor(self, actions.tasks, undefined, project.path) }],
+          [
+            { label: 'MCP, skills et plugins…', activate: () => actions.extensions(self, project.path) },
+            { label: 'Recharger la configuration', activate: () => actions.reloadConfig(self, project) },
+          ],
         ]);
       }}
     >
@@ -364,6 +374,7 @@ function Sidebar({
                 menu.remove_all();
                 const n = unseenFailures.peek();
                 menu.append(n === 0 ? 'Tâches planifiées' : `Tâches planifiées (${n} échec${n > 1 ? 's' : ''})`, n === 0 ? 'app.tasks::tasks' : 'app.tasks::history');
+                menu.append('MCP, skills et plugins (global)', 'app.extensions');
                 menu.append('Préférences', 'app.preferences');
                 // pastille : un run planifié a échoué
                 const icon = new Gtk.Overlay({ child: new Gtk.Image({ iconName: 'open-menu-symbolic' }) });
@@ -772,6 +783,26 @@ function SessionsPage({
                 if (searchBar !== null) searchBar.bind_property('search-mode-enabled', self, 'active', GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE);
                 return GLib.SOURCE_REMOVE;
               });
+            }}
+          />
+          <Gtk.Button
+            $type="end"
+            iconName="document-revert-symbolic"
+            tooltipText="Recharger la configuration du projet (opencode.json, agents, commandes, skills, MCP)"
+            sensitive={key((k) => k !== null)}
+            onClicked={(self: Gtk.Button) => {
+              const p = current.peek();
+              if (p !== null) reloadProjectConfig(self, store.client, p.path, p.working, actions.toast);
+            }}
+          />
+          <Gtk.Button
+            $type="end"
+            iconName="application-x-addon-symbolic"
+            tooltipText="MCP, skills et plugins du projet"
+            sensitive={key((k) => k !== null)}
+            onClicked={(self: Gtk.Button) => {
+              const p = current.peek();
+              if (p !== null) openExtensions(self, store.client, p.path);
             }}
           />
           <Gtk.Button
@@ -1286,6 +1317,8 @@ export function MainWindow({
                 toggle: (key) => settings.setCollapsed(key, !settings.data.peek().collapsed.includes(key)),
                 sessionActions: (session) => actions.sessionActions(session),
                 isFavorite: (path) => settings.isFavorite(path),
+                extensions: (from, path) => openExtensions(from, store.client, path),
+                reloadConfig: (from, p) => reloadProjectConfig(from, store.client, p.path, p.working, actions.toast),
                 toggleFavorite: (path) => settings.toggleFavorite(path),
                 newSession: (dir) => actions.newSession(dir),
                 attach: (dir) => actions.attach(dir),

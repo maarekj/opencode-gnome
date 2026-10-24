@@ -164,6 +164,37 @@ export type VcsInfo = z.output<typeof VcsInfo>;
 /** Config opencode (`GET /config`), champs utilisés. */
 export const OpencodeConfig = z.looseObject({ model: z.optional(z.nullable(z.string())) });
 export type OpencodeConfig = z.output<typeof OpencodeConfig>;
+
+/** Déclaration d'un serveur MCP dans la configuration (`mcp.<nom>`). */
+export const McpConfig = z.looseObject({
+  type: z.optional(z.string()),
+  command: z.optional(z.array(z.string())),
+  url: z.optional(z.string()),
+  enabled: z.optional(z.boolean()),
+});
+export type McpConfig = z.output<typeof McpConfig>;
+/** Configuration réduite aux serveurs MCP. */
+export const McpSection = z.looseObject({ mcp: z.optional(z.nullable(z.record(z.string(), McpConfig))) });
+
+/** Configuration réduite aux plugins : `"nom@version"`, `"file://…"` ou `[nom, options]`. */
+export const PluginSection = z.looseObject({ plugin: z.optional(z.nullable(z.array(z.unknown()))) });
+
+/** État d'un serveur MCP (`GET /mcp`). */
+export const McpStatus = z.looseObject({
+  /** connected | disabled | failed | needs_auth | needs_client_registration */
+  status: z.string(),
+  error: z.optional(z.string()),
+});
+export type McpStatus = z.output<typeof McpStatus>;
+
+/** Skill disponible (`GET /skill`). */
+export const Skill = z.looseObject({
+  name: z.string(),
+  description: z.optional(z.string()),
+  /** chemin du SKILL.md, ou `<built-in>` */
+  location: z.string(),
+});
+export type Skill = z.output<typeof Skill>;
 export type FileDiff = z.output<typeof FileDiff>;
 
 /** Commande du serveur (`GET /command`) : commande intégrée, de l'utilisateur, du projet, skill ou MCP. */

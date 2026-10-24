@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
-import { Agent, AppEvent, type Attachment, Command, FileDiff, type Mention, SharedSession, GlobalEnvelope, Health, MessageWithParts, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { type McpConfig, Agent, AppEvent, type Attachment, Command, FileDiff, type Mention, SharedSession, GlobalEnvelope, Health, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
 Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
@@ -235,6 +235,39 @@ export class OpencodeClient {
 
   agents(directory: string): Promise<Agent[]> {
     return this.get('/agent', z.array(Agent), { directory });
+  }
+
+  /** État des serveurs MCP du répertoire (projet ou global). */
+  mcpStatus(directory: string): Promise<Record<string, McpStatus>> {
+    return this.get('/mcp', z.record(z.string(), McpStatus), { directory });
+  }
+
+  /** Serveurs MCP déclarés : configuration fusionnée du répertoire (`null` : configuration globale). */
+  async mcpConfig(directory: string | null): Promise<Record<string, McpConfig>> {
+    const c = directory === null ? await this.get('/global/config', McpSection) : await this.get('/config', McpSection, { directory });
+    return c.mcp ?? {};
+  }
+
+  /**
+   * Plugins déclarés (configuration fusionnée du répertoire, `null` : globale), y compris les
+   * fichiers découverts dans `.opencode/plugin(s)/` (URL `file://`).
+   */
+  async plugins(directory: string | null): Promise<unknown[]> {
+    const c = directory === null ? await this.get('/global/config', PluginSection) : await this.get('/config', PluginSection, { directory });
+    return c.plugin ?? [];
+  }
+
+  async mcpConnect(name: string, directory: string, connect: boolean): Promise<void> {
+    await this.request('POST', `/mcp/${encodeURIComponent(name)}/${connect ? 'connect' : 'disconnect'}`, z.unknown(), { query: { directory }, long: true });
+  }
+
+  /** Libère l'instance du répertoire : sa configuration (opencode.json, MCP…) est relue ensuite. */
+  async disposeInstance(directory: string): Promise<void> {
+    await this.request('POST', '/instance/dispose', z.unknown(), { query: { directory }, long: true });
+  }
+
+  skills(directory: string): Promise<Skill[]> {
+    return this.get('/skill', z.array(Skill), { directory });
   }
 
   config(directory: string): Promise<OpencodeConfig> {
