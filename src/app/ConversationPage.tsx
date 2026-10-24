@@ -7,6 +7,7 @@ import { Conversation } from '../shared/conversation.ts';
 import type { Settings } from '../shared/settings.ts';
 import { prettyPath, type Activity, type Store } from '../shared/store.ts';
 import { errorMessage } from '../shared/errors.ts';
+import { gitStatus, type GitStatus } from '../shared/git.ts';
 import type { Session } from '../shared/schemas.ts';
 import { builtinCommands } from './Builtins.ts';
 import { Composer } from './Composer.tsx';
@@ -41,6 +42,31 @@ async function attempt(toast: (m: string) => void, what: string, fn: () => Promi
     toast(`${what} : ${errorMessage(e)}`);
     return false;
   }
+}
+
+/** « ⎇ agent-3 (worktree) · ↑2 ↓1 · 3 modifiés » */
+export function gitSummary(g: GitStatus): string {
+  const head = g.branch === null ? `⎇ ${g.commit} (détachée)` : `⎇ ${g.branch}`;
+  const sync = [g.ahead > 0 ? `↑${g.ahead}` : '', g.behind > 0 ? `↓${g.behind}` : ''].filter((x) => x !== '').join(' ');
+  return [
+    g.mainWorktree === null ? head : `${head} (worktree)`,
+    sync,
+    g.changes === 0 ? '' : `${g.changes} modifié${g.changes > 1 ? 's' : ''}`,
+  ]
+    .filter((x) => x !== '')
+    .join('  ·  ');
+}
+
+/** Détail de l'état git (infobulle du titre). */
+export function gitTooltip(g: GitStatus): string {
+  const lines = [
+    g.branch === null ? `HEAD détachée sur ${g.commit}` : `Branche ${g.branch} (${g.commit})`,
+    g.upstream === null ? 'Pas de branche amont' : `Amont ${g.upstream} : ${g.ahead} en avance, ${g.behind} en retard`,
+    g.mainWorktree === null ? `Dépôt ${prettyPath(g.toplevel)}` : `Worktree ${prettyPath(g.toplevel)}\nDépôt principal ${prettyPath(g.mainWorktree)}`,
+    g.changes === 0 ? 'Aucune modification' : `${g.changes} fichier${g.changes > 1 ? 's' : ''} modifié${g.changes > 1 ? 's' : ''} ou non suivi${g.changes > 1 ? 's' : ''}`,
+    'Cliquer pour voir les modifications',
+  ];
+  return lines.join('\n');
 }
 
 export const sessionTag = (sessionID: string): string => `session:${sessionID}`;
@@ -90,12 +116,38 @@ export function createConversationPage(opts: {
       const m = /^(.*) \(@(\S+) subagent\)$/u.exec(v.session.title);
       return m === null ? v.session.title : `@${m[2] ?? ''} · ${m[1] ?? ''}`;
     });
+    // état git du dossier de la session, relu à chaque modification de fichiers, fin de tour ou retour sur la fenêtre
+    const [gitState, setGitState] = createState<GitStatus | null>(null);
+    let gitLoading = false;
+    let gitAgain = false;
+    const refreshGit = (): void => {
+      const d = conversation.directory ?? view.peek()?.session.directory;
+      if (d === undefined) return;
+      if (gitLoading) {
+        gitAgain = true;
+        return;
+      }
+      gitLoading = true;
+      gitStatus(d)
+        .then(setGitState)
+        .catch((e: unknown) => console.error(e))
+        .finally(() => {
+          gitLoading = false;
+          if (gitAgain) {
+            gitAgain = false;
+            refreshGit();
+          }
+        });
+    };
     const subtitle = createComputed(() => {
+      const g = gitState();
+      const git = g === null ? '' : gitSummary(g);
       if (conversation.questions().length > 0) return ACTIVITY_LABEL.question;
       if (conversation.permissions().length > 0) return ACTIVITY_LABEL.permission;
       const v = view();
       if (v === null) return '';
-      return ACTIVITY_LABEL[v.activity] || (child ? `Sous-agent · ${prettyPath(v.session.directory)}` : prettyPath(v.session.directory));
+      const base = ACTIVITY_LABEL[v.activity] || (child ? `Sous-agent · ${prettyPath(v.session.directory)}` : prettyPath(v.session.directory));
+      return git === '' ? base : `${base}  ·  ${git}`;
     });
     const busy = view((v) => v !== null && v.activity !== 'idle');
     // messages annulés par /undo (ici ou dans la TUI) : masqués jusqu'au prochain prompt
@@ -164,12 +216,29 @@ export function createConversationPage(opts: {
     };
 
     const showTools = settings.data((d) => d.showTools);
+    const openDiff = (self: Gtk.Button): void =>
+      openDiffWindow(self, {
+        directory: dir(),
+        title: GLib.path_get_basename(dir()),
+        load: () => client.gitDiff(dir()),
+        vcs: () => client.vcs(dir()),
+        changed: conversation.diffVersion,
+      });
 
     const page = (
       <Adw.NavigationPage title={title} tag={child ? subagentTag(sessionID) : sessionTag(sessionID)}>
         <Adw.ToolbarView>
           <Adw.HeaderBar $type="top">
-            <Adw.WindowTitle $type="title" title={title} subtitle={subtitle} />
+            <Gtk.Button
+              $type="title"
+              cssClasses={['flat', 'title-button']}
+              tooltipText={gitState((g) => (g === null ? '' : gitTooltip(g)))}
+              hasTooltip={gitState((g) => g !== null)}
+              sensitive={gitState((g) => g !== null)}
+              onClicked={openDiff}
+            >
+              <Adw.WindowTitle title={title} subtitle={subtitle} />
+            </Gtk.Button>
             <Gtk.ToggleButton
               $type="end"
               iconName="applications-engineering-symbolic"
@@ -181,15 +250,7 @@ export function createConversationPage(opts: {
               $type="end"
               iconName="document-edit-symbolic"
               tooltipText="Fichiers modifiés (git)"
-              onClicked={(self: Gtk.Button) =>
-                openDiffWindow(self, {
-                  directory: dir(),
-                  title: GLib.path_get_basename(dir()),
-                  load: () => client.gitDiff(dir()),
-                  vcs: () => client.vcs(dir()),
-                  changed: conversation.diffVersion,
-                })
-              }
+              onClicked={openDiff}
             />
             <Gtk.Button
               $type="end"
@@ -238,7 +299,21 @@ export function createConversationPage(opts: {
     if (!(page instanceof Adw.NavigationPage)) throw new TypeError('NavigationPage attendue');
 
     // construction de la conversation au premier affichage seulement (la page est ensuite conservée)
+    refreshGit();
+    const unsubscribeGit = [conversation.diffVersion.subscribe(refreshGit), busy.subscribe(refreshGit)];
+    // retour sur la fenêtre : un commit ou un changement de branche a pu avoir lieu ailleurs
+    let activeHandler = 0;
+    let activeWindow: Gtk.Window | null = null;
+    page.connect('realize', () => {
+      const root = page.get_root();
+      if (!(root instanceof Gtk.Window) || activeWindow !== null) return;
+      activeWindow = root;
+      activeHandler = root.connect('notify::is-active', () => {
+        if (root.isActive && page.get_mapped()) refreshGit();
+      });
+    });
     page.connect('shown', () => {
+      refreshGit();
       if (revealed.peek()) return;
       GLib.timeout_add(GLib.PRIORITY_DEFAULT, REVEAL_DELAY_MS, () => {
         setRevealed(true);
@@ -248,6 +323,8 @@ export function createConversationPage(opts: {
     return {
       page,
       dispose: () => {
+        for (const u of unsubscribeGit) u();
+        if (activeWindow !== null) activeWindow.disconnect(activeHandler);
         conversation.dispose();
         dispose();
       },
