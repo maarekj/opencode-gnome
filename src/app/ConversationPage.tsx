@@ -300,6 +300,18 @@ export function createConversationPage(opts: {
               },
               open: opts.openSubagent,
             }}
+            emptyClick={() => {
+              // zone de saisie du compositeur (premier TextView)
+              const find = (w: Gtk.Widget | null): Gtk.TextView | null => {
+                for (let c = w; c !== null; c = c.get_next_sibling()) {
+                  if (c instanceof Gtk.TextView) return c;
+                  const inner = find(c.get_first_child());
+                  if (inner !== null) return inner;
+                }
+                return null;
+              };
+              if (composer instanceof Gtk.Widget) find(composer.get_first_child())?.grab_focus();
+            }}
           />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
             <TodoPanel todos={conversation.todos} />

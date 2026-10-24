@@ -739,6 +739,7 @@ export function ConversationView({
   maxWidth,
   subagents,
   fork,
+  emptyClick,
 }: {
   conversation: Conversation;
   revealed: Accessor<boolean>;
@@ -748,6 +749,8 @@ export function ConversationView({
   maxWidth: Accessor<number>;
   subagents?: SubagentContext;
   fork?: ((messageID: string, text: string) => void) | undefined;
+  /** clic dans l'espace vide de part et d'autre de la conversation (focus du compositeur) */
+  emptyClick?: (() => void) | undefined;
 }): JSX.Element {
   // spinner tant que l'animation d'entrée n'est pas finie ou que rien n'est chargé
   const showLoading = createComputed(() => !revealed() || (conversation.loading() && conversation.blocks().length === 0));
@@ -778,6 +781,8 @@ export function ConversationView({
     });
   };
 
+  /** colonne des messages (le reste de la zone défilante est de l'espace vide) */
+  let column: Gtk.Box | null = null;
   const scrolled = (
     <Gtk.ScrolledWindow
       // EXTERNAL : pas de barre horizontale, mais pas de largeur minimale héritée du contenu
@@ -785,6 +790,15 @@ export function ConversationView({
       hscrollbarPolicy={Gtk.PolicyType.EXTERNAL}
       $={(self: Gtk.ScrolledWindow) => {
         stickToBottom(self);
+        // clic hors de la colonne des messages (marges du Clamp) : sans effet sur les messages eux-mêmes
+        const click = new Gtk.GestureClick({ button: Gdk.BUTTON_PRIMARY });
+        click.connect('released', (_g: Gtk.GestureClick, n: number, x: number, y: number) => {
+          if (n !== 1 || emptyClick === undefined || column === null) return;
+          const target = self.pick(x, y, Gtk.PickFlags.DEFAULT);
+          if (target !== null && (target === column || target.is_ancestor(column))) return;
+          emptyClick();
+        });
+        self.add_controller(click);
       }}
     >
       <Adw.Clamp
@@ -793,6 +807,9 @@ export function ConversationView({
         tighteningThreshold={maxWidth((w) => (w <= 0 ? 100_000 : Math.round(w * 0.7)))}
       >
         <Gtk.Box
+          $={(self: Gtk.Box) => {
+            column = self;
+          }}
           orientation={Gtk.Orientation.VERTICAL}
           spacing={14}
           marginTop={18}
