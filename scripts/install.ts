@@ -75,6 +75,13 @@ WantedBy=default.target
 `,
 );
 
+// plugin opencode : environnement direnv du projet dans les commandes shell des sessions
+// (lu au démarrage du serveur : redémarrer le serveur partagé pour le prendre en compte)
+const pluginFile = path.join(home, '.config', 'opencode', 'plugins', 'opencode-gnome-direnv.js');
+const pluginSource = fs.readFileSync(path.join(root, 'data', 'opencode-plugin', 'direnv.js'), 'utf8');
+const pluginChanged = variant === '' && (!fs.existsSync(pluginFile) || fs.readFileSync(pluginFile, 'utf8') !== pluginSource);
+if (variant === '') write(pluginFile, pluginSource);
+
 if (variant === '') write(
   path.join(binDir, 'oc'),
   `#!/usr/bin/env bash
@@ -170,6 +177,7 @@ if (variant === '') {
   execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'inherit' });
   execFileSync('systemctl', ['--user', 'enable', '--now', UNIT], { stdio: 'inherit' });
   // pas de redémarrage : il couperait les sessions en cours des agents
+  if (pluginChanged) console.log(`plugin direnv installé ou mis à jour : redémarrer le serveur partagé quand aucune session ne tourne (systemctl --user restart ${UNIT})`);
   console.log(`ok — serveur : http://127.0.0.1:${PORT}  ·  console : oc  ·  app : ${LAUNCHER}`);
 } else {
   console.log(`ok — app : ${LAUNCHER} (« opencode (${variant}) » dans GNOME), même serveur partagé`);
