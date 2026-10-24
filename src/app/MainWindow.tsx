@@ -12,12 +12,12 @@ import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import { attachCommand, openTerminal } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag, subagentTag, type ConversationPageHandle } from './ConversationPage.tsx';
-import type { Settings } from '../shared/settings.ts';
+import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { openFolder } from './OpenFolder.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { TerminalManager } from '../shared/terminals.ts';
-import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
+import { TerminalBar, TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
 import { askDelete, askRename, attachSessionMenu, type SessionActions } from './SessionMenu.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
@@ -66,19 +66,22 @@ function ProjectRow({
   project,
   favorite,
   open,
+  sessions,
   expanded,
   actions,
 }: {
   project: ProjectView;
   favorite: boolean;
   /** nombre de sessions ouvertes du projet */
+  sessions: number;
+  /** nombre de lignes enfants : sessions ouvertes et terminaux en cours */
   open: number;
   expanded: boolean;
   actions: ProjectActions;
 }): JSX.Element {
   const empty = project.sessions.length === 0;
   // replié (ou sans session ouverte) : résumé d'activité sur la ligne du projet
-  const summary = !expanded || open === 0;
+  const summary = !expanded || sessions === 0;
   return (
     <Adw.ActionRow
       name={`p:${project.key}`}
@@ -200,13 +203,16 @@ const normalize = (s: string): string => s.normalize('NFD').replaceAll(/\p{Diacr
 
 /** Élément de l'arbre aplati : un projet, ou une de ses sessions ouvertes. */
 type TreeItem =
-  | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly expanded: boolean }
-  | { readonly kind: 'session'; readonly view: SessionView; readonly last: boolean };
+  | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly sessions: number; readonly expanded: boolean }
+  | { readonly kind: 'session'; readonly view: SessionView; readonly last: boolean }
+  | { readonly kind: 'terminal'; readonly t: ProjectTerminal; readonly project: string; readonly last: boolean };
 
 const treeKey = (i: TreeItem): string =>
   i.kind === 'project'
-    ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.expanded}`
-    : `s|${i.view.session.id}|${i.view.activity}|${i.view.session.title}|${i.last}`;
+    ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}`
+    : i.kind === 'session'
+      ? `s|${i.view.session.id}|${i.view.activity}|${i.view.session.title}|${i.last}`
+      : `t|${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.last}`;
 
 function startServer(): void {
   try {
@@ -224,6 +230,7 @@ function Sidebar({
   actions,
   shown,
   allProjects,
+  terminals,
 }: {
   store: Store;
   settings: Settings;
@@ -234,6 +241,8 @@ function Sidebar({
   shown: Accessor<string>;
   /** tous les projets (la recherche ignore le mode Favoris / Tous) */
   allProjects: Accessor<readonly ProjectView[]>;
+  /** terminaux persistants : ceux qui tournent apparaissent sous leur projet */
+  terminals: TerminalContext;
 }): JSX.Element {
   const conn = store.connection;
   const mode = settings.data((d) => d.sidebarMode);
@@ -345,12 +354,20 @@ function Sidebar({
               onRowActivated={(_self: Gtk.ListBox, row: Gtk.ListBoxRow) => {
                 const name = row.name;
                 if (name.startsWith('s:')) actions.openSession(name.slice(2));
+                else if (name.startsWith('t:')) {
+                  const [project = '', id] = name.slice(2).split('\n');
+                  const t = terminals.settings.data.peek().terminals[project]?.find((x) => x.id === id);
+                  if (t !== undefined) terminalActions(t, project, terminals).open();
+                }
                 else if (name.startsWith('p:')) select(name.slice(2));
               }}
               $={(self: Gtk.ListBox) => {
-                // arbre aplati : chaque projet, puis ses sessions ouvertes (ordre d'ouverture) s'il est déplié
+                // arbre aplati : chaque projet, puis s'il est déplié ses sessions ouvertes (ordre
+                // d'ouverture) et ses terminaux en cours
+                terminals.manager.watch();
                 const items = createComputed((): TreeItem[] => {
-                  const { openSessions, collapsed } = settings.data();
+                  const { openSessions, collapsed, terminals: configured } = settings.data();
+                  const running = terminals.manager.running();
                   const favs = favorites();
                   const out: TreeItem[] = [];
                   for (const p of projects()) {
@@ -359,15 +376,21 @@ function Sidebar({
                       const v = byID.get(id);
                       return v === undefined ? [] : [v];
                     });
+                    const terms = (configured[p.path] ?? []).filter((t) => running.has(t.id));
+                    const children = open.length + terms.length;
                     const expanded = !collapsed.includes(p.key);
-                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: open.length, expanded });
-                    if (expanded) for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === open.length - 1 });
+                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children, sessions: open.length, expanded });
+                    if (!expanded) continue;
+                    for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1 });
+                    for (const [n, t] of terms.entries()) out.push({ kind: 'terminal', t, project: p.path, last: open.length + n === children - 1 });
                   }
                   return out;
                 });
                 onCleanup(
                   keyedListBox(self, items, treeKey, (i) =>
-                    asWidget(i.kind === 'project' ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, expanded: i.expanded, actions }) : SessionTreeRow({ view: i.view, last: i.last, actions })),
+                    i.kind === 'terminal'
+                      ? TerminalTreeRow({ t: i.t, project: i.project, last: i.last, ctx: terminals })
+                      : asWidget(i.kind === 'project' ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, actions }) : SessionTreeRow({ view: i.view, last: i.last, actions })),
                   ),
                 );
                 // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)
@@ -999,6 +1022,7 @@ export function MainWindow({
               select,
               shown,
               allProjects,
+              terminals,
               actions: {
                 showList: (key) => {
                   select(key);

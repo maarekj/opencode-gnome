@@ -183,7 +183,8 @@ export const STYLESHEET = `
   padding: 2px 8px;
   min-width: 0;
 }
-.terminal-split > .terminal-stop:hover {
+.terminal-split > .terminal-stop:hover,
+.terminal-tree-row .terminal-stop:hover {
   color: var(--error-color);
 }
 /* séparateur discret entre les parties du bouton divisé */
@@ -212,6 +213,14 @@ export const STYLESHEET = `
   min-width: 22px;
   min-height: 22px;
   padding: 0;
+}
+.terminal-tree-row .terminal-dot {
+  margin: 0 4px;
+}
+/* terminal : le point vert cède la place aux boutons au survol */
+.terminal-tree-row:hover .terminal-dot,
+.terminal-tree-row:selected .terminal-dot {
+  opacity: 0;
 }
 .session-tree-row:hover .close-button,
 .session-tree-row:selected .close-button,
