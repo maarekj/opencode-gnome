@@ -220,10 +220,16 @@ export function createConversationPage(opts: {
       abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),
     });
 
+    /** réponse envoyée, puis demandes relues ; false si l'envoi a échoué */
+    const answer = async (send: () => Promise<void>): Promise<boolean> => {
+      const ok = await attempt(toast, 'Réponse impossible', send);
+      void conversation.reloadRequests();
+      return ok;
+    };
     const requestActions: RequestActions = {
-      replyPermission: (id, reply) => void attempt(toast, 'Réponse impossible', () => client.replyPermission(id, dir(), reply)).then(() => conversation.reloadRequests()),
-      replyQuestion: (id, answers) => void attempt(toast, 'Réponse impossible', () => client.replyQuestion(id, dir(), answers)).then(() => conversation.reloadRequests()),
-      rejectQuestion: (id) => void attempt(toast, 'Réponse impossible', () => client.rejectQuestion(id, dir())).then(() => conversation.reloadRequests()),
+      replyPermission: (id, reply) => answer(() => client.replyPermission(id, dir(), reply)),
+      replyQuestion: (id, answers) => answer(() => client.replyQuestion(id, dir(), answers)),
+      rejectQuestion: (id) => answer(() => client.rejectQuestion(id, dir())),
     };
 
     const showTools = settings.data((d) => d.showTools);

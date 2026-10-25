@@ -6,10 +6,25 @@ import Pango from 'gi://Pango';
 import { esc } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionInfo, QuestionRequest } from '../shared/schemas.ts';
 
+/** Réponses : résolues à false en cas d'échec (erreur déjà affichée). */
 export interface RequestActions {
-  replyPermission: (id: string, reply: 'once' | 'always' | 'reject') => void;
-  replyQuestion: (id: string, answers: string[][]) => void;
-  rejectQuestion: (id: string) => void;
+  replyPermission: (id: string, reply: 'once' | 'always' | 'reject') => Promise<boolean>;
+  replyQuestion: (id: string, answers: string[][]) => Promise<boolean>;
+  rejectQuestion: (id: string) => Promise<boolean>;
+}
+
+/**
+ * Carte désactivée dès la première réponse (pas de double envoi), réactivée si l'envoi échoue ;
+ * en cas de succès, la carte disparaît avec la demande (#85).
+ */
+function answerOnce(card: () => Gtk.Widget | null, send: () => Promise<boolean>): void {
+  const widget = card();
+  if (widget === null || !widget.sensitive) return;
+  widget.sensitive = false;
+  void send().then((ok) => {
+    if (!ok) widget.sensitive = true;
+    return ok;
+  });
 }
 
 const field = (v: unknown, key: string): string | undefined => {
@@ -20,21 +35,30 @@ const field = (v: unknown, key: string): string | undefined => {
 
 export function PermissionCard({ request, actions }: { request: PermissionRequest; actions: RequestActions }): JSX.Element {
   const detail = field(request.metadata, 'command') ?? field(request.metadata, 'filepath') ?? (request.patterns ?? []).join('\n');
+  let card: Gtk.Widget | null = null;
+  const reply = (r: 'once' | 'always' | 'reject'): void => answerOnce(() => card, () => actions.replyPermission(request.id, r));
   return (
-    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={8} cssClasses={['card', 'request', 'permission']}>
+    <Gtk.Box
+      orientation={Gtk.Orientation.VERTICAL}
+      spacing={8}
+      cssClasses={['card', 'request', 'permission']}
+      $={(self: Gtk.Box) => {
+        card = self;
+      }}
+    >
       <Gtk.Box spacing={8}>
         <Gtk.Image iconName="dialog-warning-symbolic" cssClasses={['warning']} />
         <Gtk.Label useMarkup label={`Autoriser <b>${esc(request.permission)}</b> ?`} xalign={0} hexpand />
       </Gtk.Box>
       {detail === '' ? null : <Gtk.Label label={detail} xalign={0} wrap wrapMode={Pango.WrapMode.CHAR} selectable cssClasses={['monospace', 'tool-output']} />}
       <Gtk.Box spacing={6} halign={Gtk.Align.END}>
-        <Gtk.Button label="Refuser" onClicked={() => actions.replyPermission(request.id, 'reject')} />
+        <Gtk.Button label="Refuser" onClicked={() => reply('reject')} />
         <Gtk.Button
           label="Toujours"
           tooltipText={`Autoriser pour la session : ${(request.always ?? []).join(', ')}`}
-          onClicked={() => actions.replyPermission(request.id, 'always')}
+          onClicked={() => reply('always')}
         />
-        <Gtk.Button label="Autoriser" cssClasses={['suggested-action']} onClicked={() => actions.replyPermission(request.id, 'once')} />
+        <Gtk.Button label="Autoriser" cssClasses={['suggested-action']} onClicked={() => reply('once')} />
       </Gtk.Box>
     </Gtk.Box>
   );
@@ -84,14 +108,26 @@ function QuestionBlock({ info, answer }: { info: QuestionInfo; answer: { get: ()
 
 export function QuestionCard({ request, actions }: { request: QuestionRequest; actions: RequestActions }): JSX.Element {
   const answers = request.questions.map(() => ({ get: (): string[] => [] }));
+  let card: Gtk.Widget | null = null;
   return (
-    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={14} cssClasses={['card', 'request', 'question']}>
+    <Gtk.Box
+      orientation={Gtk.Orientation.VERTICAL}
+      spacing={14}
+      cssClasses={['card', 'request', 'question']}
+      $={(self: Gtk.Box) => {
+        card = self;
+      }}
+    >
       {request.questions.map((q, i) => (
         <QuestionBlock info={q} answer={answers[i] ?? { get: () => [] }} />
       ))}
       <Gtk.Box spacing={6} halign={Gtk.Align.END}>
-        <Gtk.Button label="Ignorer" onClicked={() => actions.rejectQuestion(request.id)} />
-        <Gtk.Button label="Répondre" cssClasses={['suggested-action']} onClicked={() => actions.replyQuestion(request.id, answers.map((a) => a.get()))} />
+        <Gtk.Button label="Ignorer" onClicked={() => answerOnce(() => card, () => actions.rejectQuestion(request.id))} />
+        <Gtk.Button
+          label="Répondre"
+          cssClasses={['suggested-action']}
+          onClicked={() => answerOnce(() => card, () => actions.replyQuestion(request.id, answers.map((a) => a.get())))}
+        />
       </Gtk.Box>
     </Gtk.Box>
   );
