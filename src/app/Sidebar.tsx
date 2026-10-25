@@ -450,6 +450,7 @@ export function Sidebar({
                 const n = unseenFailures.peek();
                 menu.append(n === 0 ? 'Tâches planifiées' : `Tâches planifiées (${n} échec${n > 1 ? 's' : ''})`, n === 0 ? 'app.tasks::tasks' : 'app.tasks::history');
                 menu.append('MCP, skills et plugins (global)', 'app.extensions');
+                menu.append('Serveur opencode', 'app.server');
                 menu.append('Préférences', 'app.preferences');
                 // pastille : un run planifié a échoué
                 const icon = new Gtk.Overlay({ child: new Gtk.Image({ iconName: 'open-menu-symbolic' }) });

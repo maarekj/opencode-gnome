@@ -68,7 +68,10 @@ After=network-online.target
 Type=simple
 WorkingDirectory=%h
 Environment=${unitQuote(`PATH=${userPath}`)}
-ExecStart=${unitQuote(which('opencode'))} serve --hostname 127.0.0.1 --port ${PORT}
+# accès réseau et mot de passe (fenêtre « Serveur opencode » de l'app) ; local par défaut
+Environment=OPENCODE_GNOME_HOST=127.0.0.1
+EnvironmentFile=-%h/.config/opencode-gnome/server.env
+ExecStart=${unitQuote(which('opencode'))} serve --hostname \${OPENCODE_GNOME_HOST} --port ${PORT}
 Restart=on-failure
 RestartSec=3
 
@@ -91,9 +94,17 @@ if (variant === '') write(
 # Exemples : oc   |   oc --continue   |   oc --session ses_xxx
 set -euo pipefail
 url="\${OPENCODE_GNOME_URL:-http://127.0.0.1:${PORT}}"
-if ! curl -sf "$url/global/health" >/dev/null 2>&1; then
+# mot de passe du serveur (accès réseau protégé) : lu par opencode attach (OPENCODE_SERVER_PASSWORD)
+env_file="\${XDG_CONFIG_HOME:-$HOME/.config}/opencode-gnome/server.env"
+if [ -z "\${OPENCODE_SERVER_PASSWORD:-}" ] && [ -r "$env_file" ]; then
+  pw=$(sed -n 's/^OPENCODE_SERVER_PASSWORD="\\(.*\\)"$/\\1/p' "$env_file")
+  [ -n "$pw" ] && export OPENCODE_SERVER_PASSWORD="$pw"
+fi
+auth=()
+[ -n "\${OPENCODE_SERVER_PASSWORD:-}" ] && auth=(-u "opencode:$OPENCODE_SERVER_PASSWORD")
+if ! curl -sf "\${auth[@]}" "$url/global/health" >/dev/null 2>&1; then
   systemctl --user start ${UNIT}
-  for _ in $(seq 50); do curl -sf "$url/global/health" >/dev/null 2>&1 && break; sleep 0.1; done
+  for _ in $(seq 50); do curl -sf "\${auth[@]}" "$url/global/health" >/dev/null 2>&1 && break; sleep 0.1; done
 fi
 exec opencode attach "$url" --dir "$PWD" "$@"
 `,

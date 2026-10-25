@@ -15,6 +15,7 @@ import { Notifier } from './Notifier.ts';
 import { openExtensions } from './ExtensionsDialog.ts';
 import { openPreferences } from './PreferencesDialog.tsx';
 import { STYLESHEET } from './style.ts';
+import { openServerWindow } from './ServerWindow.tsx';
 import { refreshMarkdownColors, setMarkdownStyle, setMonospaceFamily } from './Markdown.tsx';
 import { openTasksWindow, TasksMonitor } from './TasksWindow.tsx';
 
@@ -141,6 +142,14 @@ tasksAction.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | nul
   openTasksWindow({ app, store, monitor: tasksMonitor(), page, ...(directory === null ? {} : { directory }) });
 });
 app.add_action(tasksAction);
+
+/** app.server : fenêtre « Serveur opencode » (état, redémarrage, accès réseau) */
+const serverAction = new Gio.SimpleAction({ name: 'server' });
+serverAction.connect('activate', () => {
+  const win = app.get_active_window();
+  if (win !== null) openServerWindow(win, store);
+});
+app.add_action(serverAction);
 
 /** app.toggle-tools : afficher / masquer les appels d'outils (Ctrl+Maj+O) */
 const toggleTools = new Gio.SimpleAction({ name: 'toggle-tools' });

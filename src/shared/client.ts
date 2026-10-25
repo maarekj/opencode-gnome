@@ -4,6 +4,7 @@ import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
+import { serverPassword } from './server.ts';
 import { type McpConfig, Agent, AppEvent, type Attachment, Command, FileDiff, type Mention, SharedSession, GlobalEnvelope, Health, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -59,8 +60,22 @@ export class OpencodeClient {
   /** Flux SSE uniquement. */
   readonly #events = new Soup.Session({ timeout: 0, idleTimeout: 0 });
 
-  constructor(url: string) {
+  /** mot de passe HTTP Basic du serveur (accès réseau protégé), ou vide */
+  #auth = '';
+
+  constructor(url: string, password = serverPassword()) {
     this.url = url.replace(/\/+$/u, '');
+    this.setPassword(password);
+  }
+
+  /** Change le mot de passe envoyé (réglage modifié dans la fenêtre « Serveur opencode »). */
+  setPassword(password: string): void {
+    this.#auth = password === '' ? '' : `Basic ${GLib.base64_encode(encoder.encode(`opencode:${password}`))}`;
+  }
+
+  /** En-tête d'authentification sur chaque requête. */
+  #authorize(msg: Soup.Message): void {
+    if (this.#auth !== '') msg.get_request_headers().replace('Authorization', this.#auth);
   }
 
   #uri(path: string, query: Query = {}): string {
@@ -78,6 +93,7 @@ export class OpencodeClient {
   ): Promise<z.output<S>> {
     const msg = Soup.Message.new(method, this.#uri(path, opts.query));
     if (msg === null) throw new Error(`URL invalide : ${this.url}${path}`);
+    this.#authorize(msg);
     if (opts.body !== undefined) {
       msg.set_request_body_from_bytes('application/json', new GLib.Bytes(encoder.encode(JSON.stringify(opts.body))));
     }
@@ -383,6 +399,7 @@ export class OpencodeClient {
     const msg = Soup.Message.new('GET', this.#uri('/global/event'));
     if (msg === null) throw new Error(`URL invalide : ${this.url}`);
     msg.get_request_headers().append('Accept', 'text/event-stream');
+    this.#authorize(msg);
     const input = await this.#events.send_async(msg, GLib.PRIORITY_DEFAULT, cancellable);
     const status: number = msg.get_status();
     if (status !== 200) throw new HttpError(status, `/global/event : HTTP ${status}`);
