@@ -27,7 +27,7 @@ export const ScheduledTask = z.object({
   name: z.string(),
   directory: z.string(),
   prompt: z.string(),
-  /** horaire systemd (`OnCalendar`), forme normalisée */
+  /** horaire systemd (`OnCalendar`), forme normalisée ; vide : tâche lancée uniquement à la main */
   schedule: z.string(),
   /** saisie d'origine si elle était en syntaxe cron */
   cron: z.optional(z.string()),
@@ -292,9 +292,23 @@ const ogtBin = (): string => {
   return bin;
 };
 
+/** Tâche sans horaire : lancée uniquement à la main (pas de timer). */
+export const isManual = (task: Pick<ScheduledTask, 'schedule'>): boolean => task.schedule === '';
+
 export async function installUnits(task: ScheduledTask): Promise<void> {
   const bin = ogtBin();
   writeText(GLib.build_filenamev([unitDir(), unitName(task.id, 'service')]), serviceUnit(task, bin));
+  if (isManual(task)) {
+    // pas de planification : timer arrêté et retiré (le service reste lançable à la main)
+    await systemctl(['disable', '--now', unitName(task.id, 'timer')]).catch(() => '');
+    try {
+      Gio.File.new_for_path(GLib.build_filenamev([unitDir(), unitName(task.id, 'timer')])).delete(null);
+    } catch {
+      // déjà absent
+    }
+    await systemctl(['daemon-reload']);
+    return;
+  }
   writeText(GLib.build_filenamev([unitDir(), unitName(task.id, 'timer')]), timerUnit(task));
   await systemctl(['daemon-reload']);
   await systemctl([task.enabled ? 'enable' : 'disable', '--now', unitName(task.id, 'timer')]);
@@ -372,6 +386,7 @@ const DAY_FR: Readonly<Record<string, string>> = { Mon: 'lundi', Tue: 'mardi', W
 
 /** « tous les jours à 09:00 », « en semaine à 09:00 », « le lundi à 09:00 », « toutes les heures »… ; sinon l'expression. */
 export function describeSchedule(schedule: string): string {
+  if (schedule === '') return 'à la main';
   const m = /^(?:(\S+) )?\*-\*-\* (\d\d|\*):(\d\d)(?:\/(\d+))?:00$/u.exec(schedule);
   if (m === null) return schedule;
   const [, days, hour = '', minute = '', step] = m;

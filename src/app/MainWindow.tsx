@@ -20,7 +20,7 @@ import { openGitWindow } from './GitWindow.tsx';
 import { reloadProjectConfig } from './ReloadConfig.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { confirmDelete, openEditor, STATUS, type EditorContext, type TasksMonitor, type TaskView } from './TasksWindow.tsx';
-import { describeSchedule, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
+import { describeSchedule, isManual, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
 import { TerminalManager } from '../shared/terminals.ts';
 import { TerminalBar, TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
 import { TerminalDock } from './TerminalPanel.tsx';
@@ -212,7 +212,7 @@ function taskAct(actions: ProjectActions, what: string, fn: () => Promise<void>)
 function TaskTreeRow({ view, last, actions }: { view: TaskView; last: boolean; actions: ProjectActions }): JSX.Element {
   const { task, running } = view;
   const status = view.last === null ? null : STATUS[view.last.status];
-  const when = running ? 'Run en cours' : task.enabled ? (view.next === null ? 'Pas de prochaine exécution' : `Prochaine exécution : ${fmtStamp(view.next)}`) : 'Désactivée';
+  const when = running ? 'Run en cours' : isManual(task) ? 'Lancée à la main uniquement' : task.enabled ? (view.next === null ? 'Pas de prochaine exécution' : `Prochaine exécution : ${fmtStamp(view.next)}`) : 'Désactivée';
   const lastText = view.last === null ? 'Jamais lancée' : `Dernier run : ${STATUS[view.last.status].label.toLowerCase()} ${fmtRelative(view.last.start)}${view.last.error === undefined ? '' : `\n${view.last.error}`}`;
   const run = (): void => taskAct(actions, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task)));
   return (
@@ -603,11 +603,11 @@ function runTaskAction(ctx: ProjectTasksContext, what: string, fn: () => Promise
 function ProjectTaskRow({ view, ctx }: { view: TaskView; ctx: ProjectTasksContext }): Gtk.Widget {
   const { task, running } = view;
   const status = view.last === null ? null : STATUS[view.last.status];
-  const when = running ? 'run en cours…' : task.enabled ? (view.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(view.next)}`) : 'désactivée';
+  const when = running ? 'run en cours…' : isManual(task) ? '' : task.enabled ? (view.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(view.next)}`) : 'désactivée';
   const lastText = view.last === null ? 'jamais lancée' : `dernier run : ${STATUS[view.last.status].label.toLowerCase()} ${fmtRelative(view.last.start)}`;
   const row = new Adw.ActionRow({
     title: esc(task.name),
-    subtitle: esc(`${describeSchedule(task.schedule)} · ${when} · ${lastText}${view.last?.error === undefined ? '' : `\n${view.last.error}`}`),
+    subtitle: esc(`${[describeSchedule(task.schedule), when, lastText].filter((x) => x !== '').join(' · ')}${view.last?.error === undefined ? '' : `\n${view.last.error}`}`),
     subtitleLines: 2,
     activatable: true,
     tooltipText: task.prompt.slice(0, 400),

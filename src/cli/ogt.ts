@@ -6,6 +6,7 @@ import { errorMessage } from '../shared/errors.ts';
 import {
   findTask,
   installUnits,
+  isManual,
   loadRuns,
   loadTasks,
   newTaskId,
@@ -26,7 +27,7 @@ const HELP = `ogt — tâches planifiées d'opencode-gnome
 Usage :
   ogt list [--json]                      tâches, prochaine exécution, dernier run
   ogt show <tâche> [--json]
-  ogt add --name NOM --dir DOSSIER --at HORAIRE (--prompt TEXTE | --prompt-file FICHIER) [options]
+  ogt add --name NOM --dir DOSSIER (--at HORAIRE | --manual) (--prompt TEXTE | --prompt-file FICHIER) [options]
   ogt edit <tâche> [options]
   ogt run <tâche>                        lancer maintenant (en arrière-plan)
   ogt stop <tâche>                       interrompre le run en cours
@@ -37,6 +38,7 @@ Usage :
 Options de tâche :
   --name NOM  --dir DOSSIER  --prompt TEXTE  --prompt-file FICHIER
   --at HORAIRE        cron (« 0 9 * * 1-5 ») ou OnCalendar systemd (« Mon..Fri 09:00 », « daily », « hourly »)
+  --manual            pas d'horaire : tâche lancée uniquement à la main (ogt run, l'app)
   --model FOURNISSEUR/MODÈLE  --agent AGENT  --variant NIVEAU   (vide = défaut)
   --timeout MINUTES   durée maximale d'un run (30)
   --permissions all|ask    all : tout est autorisé ; ask : le run attend ta réponse (app, notification)
@@ -54,7 +56,7 @@ interface Args {
   readonly flags: Set<string>;
 }
 
-const FLAGS = new Set(['json', 'failed', 'disabled', 'enabled', 'help']);
+const FLAGS = new Set(['json', 'failed', 'disabled', 'enabled', 'help', 'manual']);
 
 function parseArgs(argv: readonly string[]): Args {
   const positional: string[] = [];
@@ -101,7 +103,11 @@ async function applyOptions(base: Partial<ScheduledTask>, o: Args['options'], fl
   const prompt = o.get('prompt') ?? (o.has('prompt-file') ? readPromptFile(o.get('prompt-file') ?? '') : undefined);
   if (prompt !== undefined) t.prompt = prompt;
   const at = o.get('at');
-  if (at !== undefined) {
+  if (at !== undefined && flags.has('manual')) throw new Error('--at et --manual sont incompatibles');
+  if (flags.has('manual')) {
+    t.schedule = '';
+    delete t.cron;
+  } else if (at !== undefined) {
     const { schedule, cron } = await parseSchedule(at);
     t.schedule = schedule;
     if (cron === undefined) delete t.cron;
@@ -134,9 +140,10 @@ async function applyOptions(base: Partial<ScheduledTask>, o: Args['options'], fl
   }
   if (flags.has('disabled')) t.enabled = false;
   if (flags.has('enabled')) t.enabled = true;
-  for (const key of ['name', 'directory', 'prompt', 'schedule'] as const) {
-    if (t[key] === undefined || t[key] === '') throw new Error(`--${key === 'directory' ? 'dir' : key === 'schedule' ? 'at' : key} est requis`);
+  for (const key of ['name', 'directory', 'prompt'] as const) {
+    if (t[key] === undefined || t[key] === '') throw new Error(`--${key === 'directory' ? 'dir' : key} est requis`);
   }
+  if (t.schedule === undefined) throw new Error('--at HORAIRE ou --manual est requis');
   return {
     id: t.id ?? newTaskId(t.name ?? ''),
     name: t.name ?? '',
@@ -200,9 +207,9 @@ async function main(argv: readonly string[]): Promise<number> {
       else if (tasks.length === 0) print('Aucune tâche. Ajoute-en une : ogt add --help');
       else
         for (const task of tasks) {
-          const state = task.running ? 'en cours…' : task.enabled ? `prochaine : ${fmt(task.next)}` : 'désactivée';
+          const state = task.running ? 'en cours…' : isManual(task) ? 'lancée à la main (ogt run)' : task.enabled ? `prochaine : ${fmt(task.next)}` : 'désactivée';
           const last = task.last === null ? 'jamais lancée' : `dernier : ${ICON[task.last.status]} ${fmt(task.last.start)}`;
-          print(`${task.id}  ${task.name}\n    ${task.cron ?? task.schedule}  ·  ${state}  ·  ${last}\n    ${task.directory}`);
+          print(`${task.id}  ${task.name}\n    ${isManual(task) ? 'à la main' : (task.cron ?? task.schedule)}  ·  ${state}  ·  ${last}\n    ${task.directory}`);
         }
       return 0;
     }
@@ -219,6 +226,7 @@ async function main(argv: readonly string[]): Promise<number> {
       const task = await applyOptions({}, args.options, args.flags);
       await saveTask(task);
       if (json) print(JSON.stringify(await describe(task), null, 2));
+      else if (isManual(task)) print(`Tâche « ${task.name} » créée (${task.id}) · à la main : ogt run ${task.id}`);
       else print(`Tâche « ${task.name} » créée (${task.id}) · ${task.schedule}${task.enabled ? ` · prochaine : ${fmt((await timerState(task)).next)}` : ' · désactivée'}`);
       return 0;
     }

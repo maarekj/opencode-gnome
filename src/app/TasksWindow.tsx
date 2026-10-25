@@ -13,6 +13,7 @@ import { esc, fmtDuration, fmtRelative, fmtStamp } from '../shared/format.ts';
 import { prettyPath, type Store } from '../shared/store.ts';
 import {
   describeSchedule,
+  isManual,
   isFailure,
   loadRuns,
   loadTasks,
@@ -168,11 +169,13 @@ const PRESETS: readonly Choice[] = [
   { label: 'Chaque lundi', value: 'monday' },
   { label: 'Toutes les heures', value: 'hourly' },
   { label: 'Personnalisé (cron ou OnCalendar)', value: 'custom' },
+  { label: 'À la main uniquement (pas de planification)', value: 'manual' },
 ];
 
 /** Préréglage et heure d'un horaire existant, sinon « personnalisé ». */
 function presetOf(task: ScheduledTask | undefined): { preset: string; time: string; custom: string } {
   if (task === undefined) return { preset: 'weekdays', time: '09:00', custom: '' };
+  if (isManual(task)) return { preset: 'manual', time: '09:00', custom: '' };
   const m = /^(?:(\S+) )?\*-\*-\* (\d\d):(\d\d):00$/u.exec(task.schedule);
   if (task.cron === undefined && m !== null) {
     const days = m[1];
@@ -195,6 +198,8 @@ function scheduleExpr(preset: string, time: string, custom: string): string {
       return `Mon *-*-* ${time}:00`;
     case 'hourly':
       return 'hourly';
+    case 'manual':
+      return '';
     default:
       return custom;
   }
@@ -234,6 +239,10 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
   const preset = comboRow('Fréquence', PRESETS, initial.preset);
   const time = new Adw.EntryRow({ title: 'Heure (HH:MM)', text: initial.time });
   const custom = new Adw.EntryRow({ title: 'Expression (cron « 0 9 * * 1-5 » ou OnCalendar « Mon..Fri 09:00 »)', text: initial.custom });
+  custom.tooltipText =
+    'cron : les 5 champs classiques « minute heure jour mois jour-de-la-semaine », ex. « 30 8 * * 1-5 » (8 h 30 en semaine).\n' +
+    'OnCalendar : la syntaxe des horaires de systemd (qui lance les tâches), plus lisible, ex. « Mon..Fri 08:30 », « *-*-01 09:00 » (le 1er du mois), « daily », « hourly ».\n' +
+    'La ligne « Prochaine exécution » vérifie l\'expression pendant la saisie.';
   const preview = new Adw.ActionRow({ title: 'Prochaine exécution', subtitle: '…', cssClasses: ['property'] });
   const when = new Adw.PreferencesGroup({ title: 'Horaire', description: 'Un créneau manqué (ordinateur éteint) est rattrapé au démarrage.' });
   for (const r of [preset.row, time, custom, preview]) when.add(r);
@@ -243,6 +252,13 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
     time.visible = ['daily', 'weekdays', 'monday'].includes(preset.get());
     custom.visible = preset.get() === 'custom';
     const seq = (previewSeq += 1);
+    enabled.visible = preset.get() !== 'manual';
+    when.description = preset.get() === 'manual' ? '' : 'Un créneau manqué (ordinateur éteint) est rattrapé au démarrage.';
+    if (preset.get() === 'manual') {
+      preview.subtitle = 'Jamais automatiquement : lance-la avec « Lancer maintenant » (ou ogt run)';
+      preview.remove_css_class('error');
+      return;
+    }
     parseSchedule(expr()).then(
       (s) => {
         if (seq !== previewSeq) return null;
@@ -359,7 +375,7 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
       if (name.text.trim() === '') throw new Error('Nom requis');
       if (directory === '') throw new Error('Projet requis');
       if (text === '') throw new Error('Prompt requis');
-      const s = await parseSchedule(expr());
+      const s = preset.get() === 'manual' ? { schedule: '' } : await parseSchedule(expr());
       const mode = sessionMode.get();
       const pinned = existing.get();
       if (mode === 'pinned' && pinned === '') throw new Error('Choisis une session existante');
@@ -374,9 +390,10 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
         timeout: Math.round(timeout.value),
         permissions: permissions.get() === 'ask' ? 'ask' : 'all',
         session: mode === 'new' ? { mode: 'new' } : mode === 'pinned' ? { mode: 'reuse', id: pinned, pinned: true } : keep === undefined ? { mode: 'reuse' } : { mode: 'reuse', id: keep },
-        enabled: enabled.active,
+        // une tâche manuelle n'a rien à activer : toujours lançable
+        enabled: preset.get() === 'manual' ? true : enabled.active,
         created: task?.created ?? Date.now(),
-        ...(s.cron === undefined ? {} : { cron: s.cron }),
+        ...('cron' in s && s.cron !== undefined ? { cron: s.cron } : {}),
         ...(model.get() === '' ? {} : { model: model.get() }),
         ...(agent.get() === '' ? {} : { agent: agent.get() }),
         // niveau valable seulement pour le modèle choisi
@@ -472,7 +489,7 @@ export function openTasksWindow(o: TasksWindowOptions): void {
   };
 
   // ---- tâches
-  const tasksGroup = new Adw.PreferencesGroup({ title: 'Tâches', description: 'Prompts lancés automatiquement, même quand l’application est fermée.' });
+  const tasksGroup = new Adw.PreferencesGroup({ title: 'Tâches', description: 'Prompts lancés selon leur horaire (même quand l’application est fermée) ou à la main (▶).' });
   const addButton = new Gtk.Button({ iconName: 'list-add-symbolic', tooltipText: 'Nouvelle tâche', cssClasses: ['flat'] });
   addButton.connect('clicked', () => openEditor(win, ctx, undefined, o.directory));
   tasksGroup.headerSuffix = addButton;
@@ -519,11 +536,11 @@ export function openTasksWindow(o: TasksWindowOptions): void {
     for (const [i, t] of tasks.entries()) {
       const st = states[i] ?? { next: null, active: false };
       const last = runs.find((r) => r.task === t.id);
-      const state = st.active ? 'en cours…' : t.enabled ? (st.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(st.next)}`) : 'désactivée';
+      const state = st.active ? 'en cours…' : isManual(t) ? '' : t.enabled ? (st.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(st.next)}`) : 'désactivée';
       const lastText = last === undefined ? 'jamais lancée' : `dernier run : ${STATUS[last.status].label.toLowerCase()} ${fmtRelative(last.start)}`;
       const row = new Adw.ActionRow({
         title: esc(t.name),
-        subtitle: esc(`${describeSchedule(t.schedule)} · ${state}\n${lastText} · ${prettyPath(t.directory)}`),
+        subtitle: esc(`${[describeSchedule(t.schedule), state].filter((x) => x !== '').join(' · ')}\n${lastText} · ${prettyPath(t.directory)}`),
         subtitleLines: 2,
         activatable: true,
         tooltipText: t.prompt.slice(0, 400),
@@ -541,7 +558,8 @@ export function openTasksWindow(o: TasksWindowOptions): void {
         cssClasses: ['flat'],
       });
       runBtn.connect('clicked', () => act(st.active ? 'Arrêt impossible' : 'Lancement impossible', () => (st.active ? stopRun(t) : startRun(t))));
-      const sw = new Gtk.Switch({ active: t.enabled, valign: Gtk.Align.CENTER, tooltipText: t.enabled ? 'Désactiver' : 'Activer' });
+      // tâche manuelle : rien à activer (pas de planification)
+      const sw = new Gtk.Switch({ active: t.enabled, valign: Gtk.Align.CENTER, tooltipText: t.enabled ? 'Désactiver' : 'Activer', visible: !isManual(t) });
       sw.connect('notify::active', () => {
         if (sw.active !== t.enabled) act('Modification impossible', () => saveTask({ ...t, enabled: sw.active }));
       });
