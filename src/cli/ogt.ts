@@ -20,6 +20,7 @@ import {
   type RunRecord,
   type ScheduledTask,
 } from '../shared/tasks.ts';
+import { notify } from './notify.ts';
 import { execTask, finalizeTask } from './exec.ts';
 
 const HELP = `ogt — tâches planifiées d'opencode-gnome
@@ -313,6 +314,12 @@ const run = async (): Promise<void> => {
   } catch (e) {
     printerr(`ogt : ${errorMessage(e)}`);
     code = 2;
+    // run planifié (systemd) qui échoue avant de démarrer (tasks.json illisible…) : sans
+    // notification, l'échec ne serait visible que dans le journal systemd (#100)
+    const command = system.programArgs[0];
+    if (command === 'exec' || command === 'finalize') {
+      notify({ id: `ogt-error-${system.programArgs[1] ?? ''}`, title: 'Tâche planifiée impossible à lancer', body: errorMessage(e), urgent: true });
+    }
   }
   loop.quit();
 };

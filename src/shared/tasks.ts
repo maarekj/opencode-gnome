@@ -36,7 +36,7 @@ export const ScheduledTask = z.object({
   agent: z.optional(z.string()),
   variant: z.optional(z.string()),
   /** durée maximale d'un run, en minutes */
-  timeout: z.prefault(z.number(), 30),
+  timeout: z.prefault(z.int().check(z.positive()), 30),
   /** all : toutes les permissions accordées ; ask : le run attend la réponse de l'utilisateur */
   permissions: z.prefault(z.enum(['all', 'ask']), 'all'),
   session: z.prefault(TaskSession, { mode: 'new' }),
@@ -100,7 +100,14 @@ function writeText(path: string, text: string): void {
 export function loadTasks(): ScheduledTask[] {
   const text = readText(tasksPath());
   if (text === null) return [];
-  const parsed = TasksFile.safeParse(JSON.parse(text));
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    // erreur explicite, avec le chemin du fichier (#100)
+    throw new Error(`${tasksPath()} illisible (JSON invalide) : ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+  }
+  const parsed = TasksFile.safeParse(json);
   if (!parsed.success) throw new Error(`${tasksPath()} illisible : ${z.prettifyError(parsed.error)}`);
   return parsed.data.tasks;
 }
