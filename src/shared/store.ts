@@ -47,6 +47,9 @@ const GLOBAL = 'global';
 const home = GLib.get_home_dir();
 export const prettyPath = (p: string): string => (p === home ? '~' : p.startsWith(`${home}/`) ? `~${p.slice(home.length)}` : p);
 
+/** Sous-agents gardés en mémoire (suivi de leurs cartes dans les conversations). */
+const MAX_CHILDREN = 300;
+
 interface ReloadChanges {
   readonly info: Set<string>;
   readonly activity: Set<string>;
@@ -83,6 +86,7 @@ export class Store {
   /** conversations ouvertes : rechargées à chaque reconnexion (événements manqués) */
   readonly #reconnectListeners = new Set<() => void>();
   #connectedOnce = false;
+  #childrenSignature = '';
   /** numéro du dernier rechargement (les réponses des précédents sont ignorées) */
   #reloadGen = 0;
   /** sessions changées par un événement pendant le rechargement en cours */
@@ -305,6 +309,7 @@ export class Store {
         else this.#children.set(event.properties.info.id, event.properties.info);
         break;
       case 'session.deleted':
+        for (const c of this.#children.values()) if (c.parentID === event.properties.sessionID) this.#children.delete(c.id);
         this.#changes?.info.add(event.properties.sessionID);
         this.#changes?.activity.add(event.properties.sessionID);
         this.#sessions.delete(event.properties.sessionID);
@@ -379,6 +384,24 @@ export class Store {
     return { key: project.id, path: project.worktree, vcs: project.vcs !== undefined, ...(project.name === undefined ? {} : { name: project.name }) };
   }
 
+  /**
+   * Sous-agents : au plus MAX_CHILDREN (les plus récemment actifs) ; republiés seulement si une
+   * session ou une activité change, pas à chaque publication du streaming (#102).
+   */
+  #publishChildren(): void {
+    if (this.#children.size > MAX_CHILDREN) {
+      const old = [...this.#children.values()].toSorted((a, b) => (a.time.updated ?? a.time.created) - (b.time.updated ?? b.time.created));
+      for (const c of old.slice(0, this.#children.size - MAX_CHILDREN)) this.#children.delete(c.id);
+    }
+    // activité de toutes les sessions aussi : les cartes de sous-agents relisent store.activity(id),
+    // y compris pour un sous-agent pas encore chargé
+    const active = [...new Set([...this.#status.keys(), ...this.#questions.keys(), ...this.#permissions.keys()])].map((id) => `${id}:${this.activity(id)}`);
+    const signature = [...[...this.#children.values()].map((c) => `${c.id}:${c.time.updated ?? ''}:${c.title}:${this.activity(c.id)}`), ...active].join('|');
+    if (signature === this.#childrenSignature) return;
+    this.#childrenSignature = signature;
+    this.#setChildren(new Map([...this.#children.values()].map((c) => [c.id, { session: c, activity: this.activity(c.id) }])));
+  }
+
   #publish(): void {
     const groups = new Map<string, { path: string; vcs: boolean; name: string; sessions: SessionView[] }>();
     for (const s of this.#sessions.values()) {
@@ -410,7 +433,7 @@ export class Store {
         updated: first === undefined ? (this.#projects.get(key)?.time?.updated ?? 0) : (first.time.updated ?? first.time.created),
       };
     });
-    this.#setChildren(new Map([...this.#children.values()].map((c) => [c.id, { session: c, activity: this.activity(c.id) }])));
+    this.#publishChildren();
     // projets avec sessions d'abord (activité récente en tête), projets vides en bas
     this.#setProjects(views.toSorted((a, b) => Number(a.sessions.length === 0) - Number(b.sessions.length === 0) || b.updated - a.updated));
   }
