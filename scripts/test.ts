@@ -10,7 +10,7 @@ const out = path.join(root, 'dist', 'tests');
 const tests = fs.readdirSync(path.join(root, 'tests')).filter((f) => f.endsWith('.ts'));
 const file = (t: string): string => path.join(out, t.replace(/\.ts$/u, '.js'));
 await Promise.all(
-  tests.map((t) => build({ entryPoints: [path.join(root, 'tests', t)], outfile: file(t), bundle: true, format: 'esm', target: 'es2022', external: ['gi://*', 'system'], logLevel: 'warning' })),
+  tests.map((t) => build({ entryPoints: [path.join(root, 'tests', t)], outfile: file(t), bundle: true, format: 'esm', target: 'es2022', external: ['gi://*', 'system', 'gettext', 'cairo'], tsconfigRaw: { compilerOptions: { jsx: 'react-jsx', jsxImportSource: 'gnim/gtk4', experimentalDecorators: false } }, logLevel: 'warning' })),
 );
 let failed = 0;
 for (const t of tests) {

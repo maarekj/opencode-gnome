@@ -16,22 +16,52 @@ export const escapeMarkup = (s: string): string =>
 /** Private-use character marking protected code spans (must not be a NUL: GLib strings stop there). */
 const MARK = '\uE000';
 
-/** Inline markdown -> Pango markup. */
+/** Private-use character marking protected links. */
+const LINK_MARK = '\uE001';
+
+/** Styles inline (gras, italique, barré) sur du texte déjà échappé. */
+const styles = (s: string): string =>
+  s
+    .replaceAll(/\*\*(.+?)\*\*/gu, '<b>$1</b>')
+    .replaceAll(/__(.+?)__/gu, '<b>$1</b>')
+    .replaceAll(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/gu, '$1<i>$2</i>')
+    .replaceAll(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/gu, '$1<i>$2</i>')
+    .replaceAll(/~~(.+?)~~/gu, '<s>$1</s>');
+
+/**
+ * Inline markdown -> Pango markup. Code spans and links are protected by markers before styles
+ * are applied: no `<i>` inside an href, no nested `<a>`. Crossed emphasis (`**a *b** c*`) can
+ * still produce invalid markup: renderers must validate (Pango.parse_markup) and fall back.
+ */
 export function inline(src: string): string {
   const codes: string[] = [];
+  const links: string[] = [];
+  const protect = (html: string): string => {
+    links.push(html);
+    return `${LINK_MARK}${links.length - 1}${LINK_MARK}`;
+  };
   let s = src.replaceAll(/`([^`]+)`/gu, (_m, code: string) => {
     codes.push(code);
     return `${MARK}${codes.length - 1}${MARK}`;
   });
   s = escapeMarkup(s);
-  s = s.replaceAll(/\[([^\]]+)\]\(([^)\s]+)\)/gu, (_m, text: string, url: string) => `<a href="${url}">${text}</a>`);
-  s = s.replaceAll(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/gu, (_m, pre: string, url: string) => `${pre}<a href="${url}">${url}</a>`);
-  s = s.replaceAll(/\*\*(.+?)\*\*/gu, '<b>$1</b>').replaceAll(/__(.+?)__/gu, '<b>$1</b>');
-  s = s.replaceAll(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/gu, '$1<i>$2</i>');
-  s = s.replaceAll(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/gu, '$1<i>$2</i>');
-  s = s.replaceAll(/~~(.+?)~~/gu, '<s>$1</s>');
+  // texte du lien : styles autorisés, mais pas de lien automatique à l'intérieur
+  s = s.replaceAll(/\[([^\]]+)\]\(([^)\s]+)\)/gu, (_m, text: string, url: string) => protect(`<a href="${url}">${styles(text)}</a>`));
+  s = s.replaceAll(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/gu, (_m, pre: string, url: string) => `${pre}${protect(`<a href="${url}">${url}</a>`)}`);
+  s = styles(s);
+  s = s.replaceAll(new RegExp(`${LINK_MARK}(\\d+)${LINK_MARK}`, 'gu'), (_m, i: string) => links[Number(i)] ?? '');
   return s.replaceAll(new RegExp(`${MARK}(\\d+)${MARK}`, 'gu'), (_m, i: string) => `<tt>${escapeMarkup(codes[Number(i)] ?? '')}</tt>`);
 }
+
+/** Markup without tags, entities decoded (plain-text fallback). */
+export const stripMarkup = (markup: string): string =>
+  markup
+    .replaceAll(/<[^>]+>/gu, '')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&amp;', '&');
 
 const TABLE_ROW = /^\s*\|.*\|\s*$/u;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-{2,}/u;

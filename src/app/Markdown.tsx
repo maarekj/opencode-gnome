@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import Pango from 'gi://Pango';
 import { createState, onCleanup } from 'gnim';
-import { parseMarkdown, type Block } from '../shared/markdown.ts';
+import { parseMarkdown, stripMarkup, type Block } from '../shared/markdown.ts';
 import { DEFAULT_MARKDOWN_STYLE, type MarkdownStyle } from '../shared/settings.ts';
 
 // ---------------------------------------------------------------- style (préférences)
@@ -74,13 +74,24 @@ export function setMonospaceFamily(family: string): void {
 }
 const familyOf = (font: MarkdownStyle['font']): string | null => (font === 'mono' ? mono : font === 'serif' ? 'serif' : null);
 
+/**
+ * Markup Pango valide ? `set_markup` / `insert_markup` ne lèvent pas d'erreur sur un markup
+ * invalide (simple g_warning, rien d'affiché) : il faut le valider avant (#56). Les `<a>`
+ * (propres à GtkLabel) sont vérifiés comme des `<span>`.
+ */
+export function validMarkup(markup: string): boolean {
+  try {
+    Pango.parse_markup(markup.replaceAll(/<a href="[^"]*">/gu, '<span>').replaceAll('</a>', '</span>'), -1, '');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Sets Pango markup, falling back to plain text if the markup is invalid. */
 function setMarkup(label: Gtk.Label, markup: string): void {
-  try {
-    label.set_markup(markup);
-  } catch {
-    label.set_text(markup);
-  }
+  if (validMarkup(markup)) label.set_markup(markup);
+  else label.set_text(stripMarkup(markup));
 }
 
 /** Selectable, wrapping label rendering Pango markup. */
@@ -273,7 +284,6 @@ const ttAsSpan = (markup: string, p: Palette): string =>
 .replaceAll('<tt>', `<span font_family="${mono}" background="${p.codeBackground}"${p.code === null ? '' : ` foreground="${p.code}"`}>`)
     .replaceAll('</tt>', '</span>');
 
-const LINK = /<a href="([^"]*)">(.*?)<\/a>/gu;
 
 /** Lien (TextTag) -> URL, pour les clics. */
 const linkUrls = new WeakMap<Gtk.TextTag, string>();
@@ -351,31 +361,44 @@ function tags(buffer: Gtk.TextBuffer, st: MarkdownStyle, p: Palette): Record<'pa
   };
 }
 
-/** Insère du markup Pango ; texte brut si le markup est invalide. */
+/** Repères de début / fin de lien, insérés dans le texte puis retirés (cf. insertMarkup). */
+const LINK_START = '\uE010';
+const LINK_END = '\uE011';
+
+/**
+ * Insère du markup Pango (texte brut si invalide). Les <a> ne sont pas gérés par GtkTextBuffer :
+ * remplacés par des repères (le markup reste d'un seul tenant, `**voir [doc](u)**` compris),
+ * puis chaque lien devient un TextTag associé à son URL.
+ */
 function insertMarkup(buffer: Gtk.TextBuffer, markup: string, p: Palette): void {
-  // les <a> ne sont pas gérés par GtkTextBuffer : chaque lien devient un TextTag associé à son URL
-  let last = 0;
-  for (const m of markup.matchAll(LINK)) {
-    insertSpan(buffer, markup.slice(last, m.index), p);
-    const start = buffer.get_char_count();
-    insertSpan(buffer, m[2] ?? '', p);
-    const url = unescapeUrl(m[1] ?? '');
+  if (markup === '') return;
+  const urls: string[] = [];
+  const marked = ttAsSpan(markup, p)
+    .replaceAll(/<a href="([^"]*)">/gu, (_m, url: string) => {
+      urls.push(unescapeUrl(url));
+      return LINK_START;
+    })
+    .replaceAll('</a>', LINK_END);
+  const start = buffer.get_char_count();
+  if (validMarkup(marked)) buffer.insert_markup(buffer.get_end_iter(), marked, -1);
+  else buffer.insert(buffer.get_end_iter(), stripMarkup(marked), -1);
+  if (urls.length === 0) return;
+  // repères -> TextTag de lien
+  let from = buffer.get_iter_at_offset(start);
+  for (const url of urls) {
+    const [opened, openStart, openEnd] = from.forward_search(LINK_START, Gtk.TextSearchFlags.TEXT_ONLY, null);
+    if (!opened || openStart === null || openEnd === null) break;
+    const linkStart = openStart.get_offset();
+    buffer.delete(openStart, openEnd);
+    const [closed, closeStart, closeEnd] = buffer.get_iter_at_offset(linkStart).forward_search(LINK_END, Gtk.TextSearchFlags.TEXT_ONLY, null);
+    if (!closed || closeStart === null || closeEnd === null) break;
+    const linkEnd = closeStart.get_offset();
+    buffer.delete(closeStart, closeEnd);
     const tag = new Gtk.TextTag({ underline: Pango.Underline.SINGLE, foreground: '#3584e4' });
     buffer.get_tag_table().add(tag);
     linkUrls.set(tag, url);
-    buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_end_iter());
-    last = m.index + m[0].length;
-  }
-  insertSpan(buffer, markup.slice(last), p);
-}
-
-/** Markup Pango sans lien ; texte sans balises si le markup est invalide. */
-function insertSpan(buffer: Gtk.TextBuffer, markup: string, p: Palette): void {
-  if (markup === '') return;
-  try {
-    buffer.insert_markup(buffer.get_end_iter(), ttAsSpan(markup, p), -1);
-  } catch {
-    buffer.insert(buffer.get_end_iter(), unescapeUrl(markup.replaceAll(/<[^>]+>/gu, '')), -1);
+    buffer.apply_tag(tag, buffer.get_iter_at_offset(linkStart), buffer.get_iter_at_offset(linkEnd));
+    from = buffer.get_iter_at_offset(linkEnd);
   }
 }
 
