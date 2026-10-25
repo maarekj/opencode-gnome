@@ -16,6 +16,7 @@ import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { openExtensions } from './ExtensionsDialog.ts';
 import { openFolder } from './OpenFolder.ts';
+import { IdeButton, ideFor, installedIdes, openInIde } from './Ide.ts';
 import { openGitWindow } from './GitWindow.tsx';
 import { reloadProjectConfig } from './ReloadConfig.ts';
 import { keyedListBox } from './KeyedBox.ts';
@@ -73,6 +74,8 @@ interface ProjectActions {
   /** tâches planifiées : édition, suppression (contexte de l'éditeur), fenêtre des tâches */
   tasks: EditorContext;
   openTasksWindow: (page: 'tasks' | 'history') => void;
+  /** réglages (IDE du projet) */
+  settings: Settings;
 }
 
 function ProjectRow({
@@ -114,6 +117,7 @@ function ProjectRow({
             { label: 'Nouvelle session', activate: () => actions.newSession(project.path) },
             { label: 'Ouvrir opencode dans le terminal', activate: () => actions.attach(project.path) },
             { label: 'Ouvrir le dossier', activate: () => openFolder(self, project.path, actions.toast) },
+            ...ideMenuItem(project.path, actions),
           ],
           [{ label: 'Nouvelle tâche planifiée…', activate: () => openEditor(self, actions.tasks, undefined, project.path) }],
           [
@@ -196,6 +200,24 @@ function SessionTreeRow({ view, last, actions }: { view: SessionView; last: bool
       </Gtk.Box>
     </Gtk.ListBoxRow>
   );
+}
+
+/** « Ouvrir dans <IDE> » (IDE du projet), si un IDE est installé. */
+function ideMenuItem(path: string, actions: ProjectActions): { label: string; activate: () => void }[] {
+  const ide = ideFor(actions.settings, path, installedIdes());
+  if (ide === null) return [];
+  return [
+    {
+      label: `Ouvrir dans ${ide.name}`,
+      activate: () => {
+        try {
+          openInIde(ide, path);
+        } catch (e) {
+          actions.toast(`Ouverture dans ${ide.name} impossible : ${errorMessage(e)}`);
+        }
+      },
+    },
+  ];
 }
 
 /** Lance / interrompt une action sur une tâche, erreur affichée. */
@@ -817,6 +839,7 @@ function SessionsPage({
               if (p !== null) openFolder(self, p.path, actions.toast);
             }}
           />
+          <Gtk.Box $type="end">{IdeButton({ project: current((p) => p?.path ?? null), settings: terminals.settings, toast: actions.toast })}</Gtk.Box>
           <Gtk.Button
             $type="end"
             iconName="og-git-symbolic"
@@ -1405,6 +1428,7 @@ export function MainWindow({
                 toast: (m) => actions.toast(m),
                 tasks: { store, monitor: tasks, toast: (m) => actions.toast(m) },
                 openTasksWindow: (page) => app.activate_action('tasks', new GLib.Variant('s', page)),
+                settings,
               },
             }),
           )}

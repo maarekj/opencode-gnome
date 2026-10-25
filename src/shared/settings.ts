@@ -35,6 +35,10 @@ export type MarkdownStyle = z.output<typeof MarkdownStyle>;
 export const DEFAULT_MARKDOWN_STYLE: MarkdownStyle = { font: 'system', lineSpacing: 2, paragraphSpacing: 8, colors: 'sober' };
 
 export const SettingsData = z.object({
+  /** IDE de chaque projet : chemin du projet -> identifiant .desktop */
+  ides: z.prefault(z.record(z.string(), z.string()), {}),
+  /** IDE par défaut (projets sans réglage) ; absent = premier détecté */
+  defaultIde: z.optional(z.string()),
   /** apparence du rendu markdown */
   markdown: z.prefault(MarkdownStyle, DEFAULT_MARKDOWN_STYLE),
   /** terminaux persistants : chemin du projet -> terminaux */
@@ -79,7 +83,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -145,11 +149,19 @@ export class Settings {
   }
 
   /** Modifie un réglage optionnel (`undefined` = valeur automatique, retirée du fichier). */
-  setOptional(key: 'terminal' | 'terminalCommand' | 'defaultModel' | 'defaultVariant', value: string | undefined): void {
+  setOptional(key: 'terminal' | 'terminalCommand' | 'defaultModel' | 'defaultVariant' | 'defaultIde', value: string | undefined): void {
     if (this.data.peek()[key] === value) return;
     this.update((d) => {
       const { [key]: _old, ...rest } = d;
       return value === undefined ? rest : { ...rest, [key]: value };
+    });
+  }
+
+  /** IDE du projet (`undefined` : celui des préférences). */
+  setProjectIde(project: string, id: string | undefined): void {
+    this.update((d) => {
+      const { [project]: _old, ...rest } = d.ides;
+      return { ...d, ides: id === undefined ? rest : { ...rest, [project]: id } };
     });
   }
 

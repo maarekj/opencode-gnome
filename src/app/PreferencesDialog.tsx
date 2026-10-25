@@ -5,6 +5,7 @@ import type { Providers } from '../shared/schemas.ts';
 import { createRoot } from 'gnim';
 import { DEFAULT_MARKDOWN_STYLE, type Settings, type Theme } from '../shared/settings.ts';
 import { MarkdownView } from './Markdown.tsx';
+import { automaticIde, installedIdes } from './Ide.ts';
 import { automaticTerminal, installedTerminals } from '../shared/terminal.ts';
 import { integratedAvailable } from './TerminalPanel.tsx';
 
@@ -277,11 +278,28 @@ function markdownPage(settings: Settings): Adw.PreferencesPage {
   return page;
 }
 
+/** Groupe « IDE » : IDE par défaut des projets (chaque projet peut choisir le sien). */
+function ideGroup(settings: Settings): Adw.PreferencesGroup {
+  const group = new Adw.PreferencesGroup({ title: 'IDE', description: 'Bouton « ouvrir dans l’IDE » des projets et sessions ; chaque projet peut choisir le sien (menu du bouton).' });
+  const ides = installedIdes();
+  const row = comboRow('IDE par défaut', '', false);
+  const ids = ['', ...ides.map((i) => i.id)];
+  setItems(row, [ides.length === 0 ? 'Aucun IDE détecté' : `Automatique (${automaticIde(ides)?.name ?? ''})`, ...ides.map((i) => i.name)], ids.indexOf(settings.data.peek().defaultIde ?? ''));
+  row.sensitive = ides.length > 0;
+  row.connect('notify::selected', () => {
+    const id = ids[row.selected] ?? '';
+    settings.setOptional('defaultIde', id === '' ? undefined : id);
+  });
+  group.add(row);
+  return group;
+}
+
 export function openPreferences(parent: Gtk.Widget, settings: Settings, providers: Promise<Providers>): void {
   const page = new Adw.PreferencesPage({ title: 'Général', iconName: 'preferences-system-symbolic' });
   page.add(appearanceGroup(settings));
   page.add(conversationGroup(settings));
   page.add(terminalGroup(settings));
+  page.add(ideGroup(settings));
   page.add(modelGroup(settings, providers));
   const dialog = new Adw.PreferencesDialog({ title: 'Préférences', searchEnabled: false });
   dialog.add(page);

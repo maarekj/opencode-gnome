@@ -11,6 +11,7 @@ import { gitStatus, type GitStatus } from '../shared/git.ts';
 import type { Session } from '../shared/schemas.ts';
 import { builtinCommands } from './Builtins.ts';
 import { Composer } from './Composer.tsx';
+import { IdeButton } from './Ide.ts';
 import { openFolder } from './OpenFolder.ts';
 import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
@@ -278,6 +279,7 @@ export function createConversationPage(opts: {
               tooltipText="Ouvrir le dossier"
               onClicked={(self: Gtk.Button) => openFolder(self, dir(), toast)}
             />
+            <Gtk.Box $type="end">{IdeButton({ project: projectPath, settings, toast, directory: dir })}</Gtk.Box>
           </Adw.HeaderBar>
           <Gtk.Box $type="top" visible={!child}>
             <TerminalBar project={projectPath} ctx={terminals} />
