@@ -5,7 +5,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import { CompletionPopover } from '../src/app/Completion.ts';
 
 Gtk.init();
-const win = new Gtk.Window();
+const win = new Gtk.Window({ defaultWidth: 600, defaultHeight: 400 });
 const outer = new Gtk.Box();
 const view = new Gtk.TextView();
 const scrolled = new Gtk.ScrolledWindow({ child: view });
@@ -20,7 +20,8 @@ GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
 });
 GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
   // libération explicite, comme le ramasse-miettes à la fermeture d'une session
-  outer.remove(scrolled);
+  win.set_child(null);
+  outer.run_dispose();
   scrolled.run_dispose();
   view.run_dispose();
   win.destroy();

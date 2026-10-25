@@ -93,12 +93,16 @@ export class CompletionPopover {
     else this.#popover.popup();
   }
 
-  /** Parent du popover : premier ancêtre du TextView qui n'est pas un TextView (null : pas encore dans l'arbre). */
+  /**
+   * Parent du popover : premier Gtk.Box ancêtre du TextView (null : pas encore dans l'arbre).
+   * Un Gtk.Box retire lui-même tous ses enfants à sa libération, popover compris ; un TextView
+   * (#54) ou un ScrolledWindow ne le font pas (#87).
+   */
   #anchor(): Gtk.Widget | null {
     const current = this.#popover.get_parent();
     if (current !== null) return current;
     let w = this.#view.get_parent();
-    while (w instanceof Gtk.TextView) w = w.get_parent();
+    while (w !== null && !(w instanceof Gtk.Box)) w = w.get_parent();
     if (w === null) return null;
     this.#popover.set_parent(w);
     this.#view.connect('destroy', () => {
