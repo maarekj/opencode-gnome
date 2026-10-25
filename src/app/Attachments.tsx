@@ -3,6 +3,7 @@ import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { isModelReadable } from '../shared/client.ts';
@@ -78,21 +79,39 @@ export async function pickFiles(parent: Gtk.Widget): Promise<Attachment[]> {
 // ---------------------------------------------------------------- affichage
 
 /** Textures décodées, par URL (une image n'est décodée qu'une fois, à l'affichage). */
-const textures = new Map<string, Gdk.Texture | null>();
+const textures = new Map<string, Promise<Gdk.Texture | null>>();
 
-export function textureOf(url: string): Gdk.Texture | null {
-  const cached = textures.get(url);
-  if (cached !== undefined) return cached;
-  let texture: Gdk.Texture | null = null;
+/**
+ * Décode une image hors de la boucle principale (GdkPixbuf, dans un thread) : une conversation
+ * pleine de captures ne fige plus l'interface à l'ouverture (#90).
+ */
+async function decode(url: string): Promise<Gdk.Texture | null> {
   try {
     const bytes = url.startsWith('file://') ? null : decodeDataUrl(url);
-    texture = bytes === null ? Gdk.Texture.new_from_file(Gio.File.new_for_uri(url)) : Gdk.Texture.new_from_bytes(new GLib.Bytes(bytes));
+    const stream = bytes === null ? await Gio.File.new_for_uri(url).read_async(GLib.PRIORITY_DEFAULT, null) : Gio.MemoryInputStream.new_from_bytes(new GLib.Bytes(bytes));
+    const pixbuf = await new Promise<GdkPixbuf.Pixbuf>((resolve, reject) => {
+      GdkPixbuf.Pixbuf.new_from_stream_async(stream, null, (_o: unknown, res: Gio.AsyncResult) => {
+        try {
+          resolve(GdkPixbuf.Pixbuf.new_from_stream_finish(res));
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      });
+    });
+    const format = pixbuf.get_has_alpha() ? Gdk.MemoryFormat.R8G8B8A8 : Gdk.MemoryFormat.R8G8B8;
+    return Gdk.MemoryTexture.new(pixbuf.get_width(), pixbuf.get_height(), format, pixbuf.read_pixel_bytes(), pixbuf.get_rowstride());
   } catch {
-    texture = null;
+    return null;
   }
+}
+
+export function loadTexture(url: string): Promise<Gdk.Texture | null> {
+  const cached = textures.get(url);
+  if (cached !== undefined) return cached;
   if (textures.size > 100) textures.clear();
-  textures.set(url, texture);
-  return texture;
+  const promise = decode(url);
+  textures.set(url, promise);
+  return promise;
 }
 
 /** Ouvre une pièce jointe avec l'application par défaut (les URL `data:` passent par un fichier temporaire). */
@@ -115,8 +134,13 @@ async function launch(parent: Gtk.Widget, a: { mime?: string | undefined; filena
 
 /** Aperçu d'une image dans un dialogue. */
 export function openPreview(parent: Gtk.Widget, a: { mime?: string | undefined; filename?: string | undefined; url: string }): void {
-  const texture = textureOf(a.url);
-  if (texture === null) return;
+  void loadTexture(a.url).then((texture) => {
+    if (texture !== null) showPreview(parent, a, texture);
+    return texture;
+  });
+}
+
+function showPreview(parent: Gtk.Widget, a: { mime?: string | undefined; filename?: string | undefined; url: string }, texture: Gdk.Texture): void {
   const dialog = new Adw.Dialog({
     title: a.filename ?? 'Image',
     contentWidth: Math.min(Math.max(texture.get_width(), 360), 1400),
@@ -138,10 +162,34 @@ const THUMB_HEIGHT = 120;
 const THUMB_MAX_WIDTH = 240;
 
 /** Miniature cliquable (aperçu) d'une image, ou puce cliquable (ouverture) d'un autre fichier. */
+/** Miniature d'une image décodée (Gtk.Picture plafonné par deux Clamp). */
+function thumbnail(texture: Gdk.Texture): Gtk.Widget {
+  const ratio = texture.get_width() / Math.max(1, texture.get_height());
+  const width = Math.round(Math.min(THUMB_MAX_WIDTH, THUMB_HEIGHT * ratio));
+  const picture = new Gtk.Picture({ paintable: texture, contentFit: Gtk.ContentFit.COVER, canShrink: true, widthRequest: width, heightRequest: THUMB_HEIGHT });
+  // Gtk.Picture demande la taille de l'image : les Clamp la plafonnent (largeur puis hauteur)
+  const inner = new Adw.Clamp({ maximumSize: width, tighteningThreshold: width, child: picture });
+  return new Adw.Clamp({ orientation: Gtk.Orientation.VERTICAL, maximumSize: THUMB_HEIGHT, tighteningThreshold: THUMB_HEIGHT, child: inner });
+}
+
 export function AttachmentView({ mime, filename, url, onRemove }: { mime?: string | undefined; filename?: string | undefined; url: string; onRemove?: () => void }): JSX.Element {
-  const texture = isImage(mime) ? textureOf(url) : null;
   let content: JSX.Element;
-  if (texture === null) {
+  if (isImage(mime)) {
+    // emplacement réservé pendant le décodage (asynchrone), remplacé par la miniature
+    const thumb = new Gtk.Button({
+      cssClasses: ['attachment-thumb'],
+      halign: Gtk.Align.START,
+      valign: Gtk.Align.START,
+      tooltipText: filename ?? '',
+      child: new Adw.Spinner({ widthRequest: THUMB_HEIGHT, heightRequest: THUMB_HEIGHT }),
+    });
+    thumb.connect('clicked', () => openPreview(thumb, { mime, filename, url }));
+    void loadTexture(url).then((texture) => {
+      thumb.child = texture === null ? new Gtk.Image({ iconName: 'image-missing-symbolic', pixelSize: 48, widthRequest: THUMB_HEIGHT, heightRequest: THUMB_HEIGHT }) : thumbnail(texture);
+      return texture;
+    });
+    content = thumb;
+  } else {
     const icon = Gio.content_type_get_symbolic_icon(Gio.content_type_from_mime_type(mime ?? '') ?? '');
     content = (
       <Gtk.Button
@@ -155,19 +203,6 @@ export function AttachmentView({ mime, filename, url, onRemove }: { mime?: strin
           <Gtk.Image gicon={icon} />
           <Gtk.Label label={filename ?? mime ?? 'fichier'} ellipsize={Pango.EllipsizeMode.MIDDLE} maxWidthChars={30} />
         </Gtk.Box>
-      </Gtk.Button>
-    );
-  } else {
-    const ratio = texture.get_width() / Math.max(1, texture.get_height());
-    const width = Math.round(Math.min(THUMB_MAX_WIDTH, THUMB_HEIGHT * ratio));
-    content = (
-      <Gtk.Button cssClasses={['attachment-thumb']} halign={Gtk.Align.START} valign={Gtk.Align.START} tooltipText={filename ?? ''} onClicked={(self: Gtk.Button) => openPreview(self, { mime, filename, url })}>
-        {/* Gtk.Picture demande la taille de l'image : les Clamp la plafonnent (largeur puis hauteur) */}
-        <Adw.Clamp orientation={Gtk.Orientation.VERTICAL} maximumSize={THUMB_HEIGHT} tighteningThreshold={THUMB_HEIGHT}>
-          <Adw.Clamp maximumSize={width} tighteningThreshold={width}>
-            <Gtk.Picture paintable={texture} contentFit={Gtk.ContentFit.COVER} canShrink widthRequest={width} heightRequest={THUMB_HEIGHT} />
-          </Adw.Clamp>
-        </Adw.Clamp>
       </Gtk.Button>
     );
   }
