@@ -9,7 +9,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import * as z from 'zod/mini';
-import { intercepted } from './sandbox.ts';
+import { intercepted, sandboxed } from './sandbox.ts';
 
 Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async', 'communicate_utf8_finish');
 
@@ -75,8 +75,13 @@ const suffix = (): string => (namespace() === '' ? '' : `-${namespace()}`);
 
 export const tasksPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', `tasks${suffix()}.json`]);
 export const runsPath = (): string => GLib.build_filenamev([GLib.get_user_data_dir(), 'opencode-gnome', `runs${suffix()}.jsonl`]);
-/** Unités générées : ~/.config/systemd/user (OGT_UNIT_DIR pour les tests). */
-const unitDir = (): string => GLib.getenv('OGT_UNIT_DIR') ?? GLib.build_filenamev([GLib.get_home_dir(), '.config', 'systemd', 'user']);
+/**
+ * Unités générées : ~/.config/systemd/user (OGT_UNIT_DIR pour les tests). Bac à sable (captures,
+ * tests) sans OGT_UNIT_DIR : dossier privé, jamais celui de l'utilisateur.
+ */
+const unitDir = (): string =>
+  GLib.getenv('OGT_UNIT_DIR') ??
+  (sandboxed() ? GLib.build_filenamev([GLib.get_user_runtime_dir(), 'opencode-gnome-sandbox', 'systemd']) : GLib.build_filenamev([GLib.get_home_dir(), '.config', 'systemd', 'user']));
 export const unitName = (id: string, type: 'service' | 'timer'): string => `opencode-gnome${suffix()}-task-${id}.${type}`;
 
 const decoder = new TextDecoder();

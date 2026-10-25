@@ -107,8 +107,13 @@ _OFFSET: tuple[int, int] | None = None
 class App:
     """L'application, pilotée par l'accessibilité."""
 
-    def __init__(self, fake: Fake, args: list[str], settings: dict | None = None, env: dict | None = None) -> None:
+    def __init__(self, fake: Fake, args: list[str], settings: dict | None = None, env: dict | None = None, files: dict | None = None) -> None:
         self.fake = fake
+        # fichiers posés avant le lancement, chemins relatifs aux dossiers XDG privés (config/…, data/…)
+        for rel, content in (files or {}).items():
+            path = fake.dir / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content if isinstance(content, str) else json.dumps(content))
         self.config_dir = fake.dir / 'config' / 'opencode-gnome'
         if settings is not None:
             self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -123,6 +128,9 @@ class App:
             XDG_DATA_HOME=str(fake.dir / 'data'),
             XDG_CACHE_HOME=str(fake.dir / 'cache'),
             OPENCODE_GNOME_SANDBOX='1',
+            # tâches : unités générées dans le dossier du test, `systemctl` journalisé (bac à sable)
+            OGT_UNIT_DIR=str(fake.dir / 'systemd'),
+            OGT_BIN='/nonexistent/ogt-e2e',
         )
         env.update(extra_env or {})
         self._log = self.log_path.open('w')
@@ -266,6 +274,17 @@ class App:
         wait_until(lambda: composer.text == text, 5, 'texte saisi dans le compositeur')
         self.click('button', contains='Envoyer')
 
+    def read(self, rel: str):
+        """Fichier écrit par l'application dans les dossiers XDG privés (JSON décodé si possible)."""
+        path = self.fake.dir / rel
+        if not path.exists():
+            return None
+        text = path.read_text()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+
     def settings(self) -> dict:
         """Réglages enregistrés par l'application (settings.json)."""
         path = self.config_dir / 'settings.json'
@@ -356,10 +375,10 @@ def run_app(request):
     """`run_app(scenario, *args)` : démarre un faux opencode et l'application ; tout est arrêté après le test."""
     started: list = []
 
-    def start(data: dict | None, *args: str, settings: dict | None = None, env: dict | None = None) -> tuple[Fake, App]:
+    def start(data: dict | None, *args: str, settings: dict | None = None, env: dict | None = None, files: dict | None = None) -> tuple[Fake, App]:
         fake = Fake(data)
         started.append(fake)
-        app = App(fake, list(args), settings, env)
+        app = App(fake, list(args), settings, env, files)
         started.append(app)
         return fake, app
 
