@@ -7,6 +7,7 @@ import Pango from 'gi://Pango';
 import { createRoot } from 'gnim';
 import { OpencodeClient } from '../shared/client.ts';
 import { serverUrl } from '../shared/config.ts';
+import { errorMessage } from '../shared/errors.ts';
 import { Settings } from '../shared/settings.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
@@ -101,8 +102,16 @@ replyPermission.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant |
   const [sessionID, directory, requestID, reply] = param.deepUnpack<[string, string, string, string]>();
   if (reply !== 'once' && reply !== 'reject') return;
   notifier?.withdraw(sessionID);
+  // échec : signalé par une notification (la précédente est déjà retirée), pas seulement en console (#93)
   store.client.replyPermission(requestID, directory, reply).catch((e: unknown) => {
     console.error(e);
+    const n = new Gio.Notification();
+    n.set_title('Réponse à la permission impossible');
+    n.set_body(errorMessage(e));
+    n.set_priority(Gio.NotificationPriority.HIGH);
+    n.set_default_action_and_target('app.open-session', new GLib.Variant('s', sessionID));
+    n.add_button_with_target('Ouvrir', 'app.open-session', new GLib.Variant('s', sessionID));
+    app.send_notification(`reply-error-${sessionID}`, n);
   });
 });
 app.add_action(replyPermission);
