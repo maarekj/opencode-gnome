@@ -48,6 +48,8 @@ const Scenario = z.object({
   providers: z.optional(z.looseObject({})),
   commands: z.optional(z.array(z.looseObject({ name: z.string() }))),
   skills: z.optional(z.array(z.looseObject({ name: z.string() }))),
+  /** fichiers du projet pour la complétion `@` (`GET /find/file`) ; un dossier finit par `/` */
+  files: z.optional(z.array(z.string())),
   /** liste de tâches par session (`GET /session/:id/todo`) */
   todos: z.optional(z.record(z.string(), z.array(z.looseObject({ content: z.string(), status: z.string() })))),
   /** requêtes qui échouent une fois (HTTP 500), ex. `GET /session/ses_a/message` */
@@ -280,8 +282,15 @@ function simpleRoute(p: string, query: Record<string, string>): unknown {
     case '/vcs':
       return { branch: 'main' };
     case '/vcs/diff':
-    case '/find/file':
       return [];
+    case '/find/file': {
+      // comme opencode : correspondance approximative sur le chemin, dossiers avec `type=directory`
+      const q = (query['query'] ?? '').toLowerCase();
+      const dirs = query['type'] === 'directory';
+      return (s.files ?? [])
+        .filter((f) => f.endsWith('/') === dirs && f.toLowerCase().includes(q))
+        .slice(0, Number(query['limit'] ?? 20));
+    }
     case '/instance/dispose':
       return true;
     case '/permission':

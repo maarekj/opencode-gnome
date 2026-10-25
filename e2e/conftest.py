@@ -236,6 +236,17 @@ class App:
             'compositeur',
         )
 
+    def focus_composer(self):
+        """Clic dans le compositeur (focus clavier), qui est renvoyé."""
+        composer = self.composer()
+        self._point(composer, 'b1c')
+        time.sleep(0.2)
+        return composer
+
+    def choose(self, label: str) -> None:
+        """Clic sur un libellé affiché (option d'une liste déroulante, d'une complétion)."""
+        self._point(self.find('label', label), 'b1c')
+
     def type_in_composer(self, text: str) -> None:
         """Saisit `text` dans le compositeur puis l'envoie (Ctrl+Entrée)."""
         composer = self.composer()
