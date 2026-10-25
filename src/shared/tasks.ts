@@ -296,34 +296,38 @@ async function systemctl(args: readonly string[]): Promise<string> {
 /** Variables transmises au run (serveur de test, réglages isolés, application à notifier). */
 const PASSED_ENV = ['OPENCODE_GNOME_URL', 'OPENCODE_GNOME_APP_ID', 'OGT_NAMESPACE', 'OGT_UNIT_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'OPENCODE_GNOME_TEST_NOTIFY'];
 
-const quoteUnit = (s: string): string => `"${s.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+/** Une valeur d'unité tient sur une ligne : un retour à la ligne injecterait des directives (#71). */
+const oneLine = (s: string): string => s.replaceAll(/[\r\n]+/gu, ' ');
+/** `%` introduit un spécificateur systemd (`%h`, `%n`…) : doublé pour rester littéral. */
+const unitText = (s: string): string => oneLine(s).replaceAll('%', '%%');
+const quoteUnit = (s: string): string => `"${unitText(s).replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 
-function serviceUnit(task: ScheduledTask, bin: string): string {
+export function serviceUnit(task: ScheduledTask, bin: string): string {
   const env = PASSED_ENV.map((k) => [k, GLib.getenv(k)] as const)
     .filter((e): e is readonly [string, string] => e[1] !== null)
     .map(([k, v]) => `Environment=${quoteUnit(`${k}=${v}`)}\n`)
     .join('');
   return `# Généré par opencode-gnome (ogt) : ne pas modifier, voir ${tasksPath()}
 [Unit]
-Description=opencode-gnome : tâche « ${task.name} »
+Description=opencode-gnome : tâche « ${unitText(task.name)} »
 
 [Service]
 Type=exec
-ExecStart=${quoteUnit(bin)} exec ${task.id}
-ExecStopPost=${quoteUnit(bin)} finalize ${task.id}
+ExecStart=${quoteUnit(bin)} exec ${quoteUnit(task.id)}
+ExecStopPost=${quoteUnit(bin)} finalize ${quoteUnit(task.id)}
 ${env}# filet de sécurité : le run s'arrête lui-même à son timeout
 RuntimeMaxSec=${task.timeout + 2}min
 TimeoutStopSec=30
 `;
 }
 
-function timerUnit(task: ScheduledTask): string {
+export function timerUnit(task: ScheduledTask): string {
   return `# Généré par opencode-gnome (ogt) : ne pas modifier
 [Unit]
-Description=opencode-gnome : planification de « ${task.name} »
+Description=opencode-gnome : planification de « ${unitText(task.name)} »
 
 [Timer]
-OnCalendar=${task.schedule}
+OnCalendar=${oneLine(task.schedule)}
 # exécution manquée (ordinateur éteint) : rattrapée au démarrage
 Persistent=true
 AccuracySec=1s

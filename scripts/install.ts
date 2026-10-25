@@ -35,6 +35,8 @@ const which = (bin: string): string => {
   if (found === undefined) throw new Error(`${bin} introuvable dans le PATH (lance ce script depuis le shell devenv)`);
   return fs.realpathSync(found);
 };
+/** Valeur d'unité systemd entre guillemets, `%` littéral. */
+const unitQuote = (s: string): string => `"${s.replaceAll('%', '%%').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 const shq = (s: string): string => `'${s.replaceAll("'", String.raw`'\''`)}'`;
 const write = (file: string, content: string, mode = 0o644): void => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -65,8 +67,8 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h
-Environment=PATH=${userPath}
-ExecStart=${which('opencode')} serve --hostname 127.0.0.1 --port ${PORT}
+Environment=${unitQuote(`PATH=${userPath}`)}
+ExecStart=${unitQuote(which('opencode'))} serve --hostname 127.0.0.1 --port ${PORT}
 Restart=on-failure
 RestartSec=3
 
