@@ -199,6 +199,11 @@ export function Table({ header, rows }: { header: string[]; rows: string[][] }):
     const line = new Gtk.Box({ spacing: COLUMN_SPACING });
     for (let x = 0; x < columns; x += 1) {
       const label = new Gtk.Label({ wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, xalign: 0, valign: Gtk.Align.START, selectable: true });
+      // liens des cellules : même ouverture que ceux du texte (journalisés en test : #96)
+      label.connect('activate-link', (_l: Gtk.Label, uri: string) => {
+        openLink(label, uri);
+        return true;
+      });
       const cell = row[x] ?? '';
       setMarkup(label, y === 0 ? `<b>${cell}</b>` : cell);
       cells[x]?.push(label);
@@ -322,15 +327,23 @@ function enableLinks(view: Gtk.TextView): void {
     if (n !== 1 || view.buffer.get_has_selection()) return;
     const url = linkAt(view, x, y);
     if (url === null) return;
-    // tests : le lien est journalisé au lieu d'ouvrir le navigateur
-    if (GLib.getenv('OPENCODE_GNOME_TEST_LINKS') !== null) {
-      console.log(`LIEN ${url}`);
-      return;
-    }
-    const root = view.get_root();
-    new Gtk.UriLauncher({ uri: url }).launch(root instanceof Gtk.Window ? root : null, null, null);
+    openLink(view, url);
   });
   view.add_controller(click);
+}
+
+/** Liens « ouverts » en mode test (OPENCODE_GNOME_TEST_LINKS). */
+export const testLinks: string[] = [];
+
+/** Ouvre un lien ; en test, il est journalisé au lieu d'ouvrir le navigateur. */
+function openLink(from: Gtk.Widget, url: string): void {
+  if (GLib.getenv('OPENCODE_GNOME_TEST_LINKS') !== null) {
+    console.log(`LIEN ${url}`);
+    testLinks.push(url);
+    return;
+  }
+  const root = from.get_root();
+  new Gtk.UriLauncher({ uri: url }).launch(root instanceof Gtk.Window ? root : null, null, null);
 }
 
 function tags(buffer: Gtk.TextBuffer, st: MarkdownStyle, p: Palette): Record<'para' | 'h1' | 'h2' | 'h3' | 'item' | 'quote' | 'code' | 'codeEnd' | 'rule', Gtk.TextTag> {
