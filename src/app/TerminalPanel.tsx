@@ -352,7 +352,7 @@ export class TerminalDock {
     });
   }
 
-  /** Nouveau shell dans le dossier du projet courant. */
+  /** Nouveau shell : dossier de la session affichée (worktree), sinon du projet courant. */
   newShell(): void {
     const p = this.#project;
     if (p === null) return;
@@ -410,7 +410,7 @@ export class TerminalDock {
       box.append(b);
       return b;
     };
-    button('list-add-symbolic', 'Nouveau shell dans le projet', () => this.newShell());
+    button('list-add-symbolic', 'Nouveau shell (dossier de la session ou du projet)', () => this.newShell());
     button('window-new-symbolic', 'Ouvrir l’onglet dans le terminal externe', () => {
       const p = this.#project;
       const tab = p === null ? null : (this.#panels.get(p)?.selected() ?? null);

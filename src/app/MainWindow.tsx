@@ -278,22 +278,28 @@ export function MainWindow({
   const dock = new TerminalDock({
     content: nav,
     settings,
-    newShell: (project, n) => ({
-      key: `shell:${GLib.get_monotonic_time()}`,
-      title: n === 1 ? 'Shell' : `Shell ${n}`,
-      tooltip: `${GLib.path_get_basename(shell)} dans ${prettyPath(project)}`,
-      icon: 'utilities-terminal-symbolic',
-      argv: [shell],
-      cwd: project,
-      external: () => {
-        try {
-          const { terminal, terminalCommand } = settings.data.peek();
-          openTerminalArgv([shell], project, { terminal, command: terminalCommand });
-        } catch (e) {
-          toast(errorMessage(e));
-        }
-      },
-    }),
+    // dossier de la session affichée (worktree compris), sinon racine du projet
+    newShell: (project, n) => {
+      const id = shownSession();
+      const dir = (id === null ? undefined : store.session(id)?.directory) ?? project;
+      const cwd = GLib.file_test(dir, GLib.FileTest.IS_DIR) ? dir : project;
+      return {
+        key: `shell:${GLib.get_monotonic_time()}`,
+        title: n === 1 ? 'Shell' : `Shell ${n}`,
+        tooltip: `${GLib.path_get_basename(shell)} dans ${prettyPath(cwd)}`,
+        icon: 'utilities-terminal-symbolic',
+        argv: [shell],
+        cwd,
+        external: () => {
+          try {
+            const { terminal, terminalCommand } = settings.data.peek();
+            openTerminalArgv([shell], cwd, { terminal, command: terminalCommand });
+          } catch (e) {
+            toast(errorMessage(e));
+          }
+        },
+      };
+    },
   });
   dock.setProject(current.peek()?.path ?? null);
   onCleanup(current.subscribe(() => dock.setProject(current.peek()?.path ?? null)));
