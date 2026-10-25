@@ -76,6 +76,9 @@ interface Tab {
   readonly term: VteNs.Terminal;
 }
 
+/** libération d'un terminal : abonnements, processus */
+const disposers = new WeakMap<VteNs.Terminal, () => void>();
+
 /** pid du processus de chaque terminal (arrêté à la fermeture de l'onglet, sans attendre le GC) */
 const pids = new WeakMap<VteNs.Terminal, number>();
 
@@ -106,9 +109,15 @@ function createTerminal(V: typeof VteNs, settings: Settings, spec: TerminalTab, 
   const style = Adw.StyleManager.get_default();
   const handler = style.connect('notify::dark', refresh);
   const unsubscribe = settings.data.subscribe(refresh);
-  term.connect('destroy', () => {
+  // libération explicite à la fermeture de l'onglet : ces abonnements gardent le terminal vivant,
+  // 'destroy' n'arriverait jamais (#67)
+  let disposed = false;
+  disposers.set(term, () => {
+    if (disposed) return;
+    disposed = true;
     style.disconnect(handler);
     unsubscribe();
+    hangup(term);
   });
 
   // Ctrl+Maj+C / V : copier / coller ; Ctrl+plus / moins / 0 : zoom
@@ -192,7 +201,8 @@ function projectPanel(V: typeof VteNs, settings: Settings, actions: Gtk.Widget, 
     if (tab !== undefined) {
       byPage.delete(page);
       tabs.delete(tab.spec.key);
-      hangup(tab.term);
+      disposers.get(tab.term)?.();
+      disposers.delete(tab.term);
     }
     view.close_page_finish(page, true);
     if (view.nPages === 0) emptied();
