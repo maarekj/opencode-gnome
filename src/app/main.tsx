@@ -31,6 +31,11 @@ let tasks: TasksMonitor | null = null;
 const tasksMonitor = (): TasksMonitor => (tasks ??= new TasksMonitor());
 let notifier: Notifier | null = null;
 let size: [number, number] | undefined;
+/**
+ * Fenêtre principale. Pas get_active_window() : la fenêtre git ou des tâches peut être la plus
+ * récente, et rester ouverte après la fermeture de la fenêtre principale (#66).
+ */
+let mainWindow: Gtk.Window | null = null;
 
 /**
  * Police à chasse fixe de GNOME (`monospace-font-name`, ex. « Adwaita Mono 11 »), appliquée
@@ -74,9 +79,8 @@ openSession.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | nul
   if (id === undefined || id === '') return;
   // fenêtre existante : simple present() (le jeton d'activation reçu avec l'action, ex. clic sur
   // une notification, l'autorise à passer au premier plan) ; sinon activation normale
-  const win = app.get_active_window();
-  if (win === null) app.activate();
-  else win.present();
+  if (mainWindow === null) app.activate();
+  else mainWindow.present();
   notifier?.withdraw(id);
   // la session n'est peut-être pas encore chargée : attendre le premier chargement
   if (store.projects.peek().length > 0 || store.connection.peek().state === 'error') {
@@ -191,9 +195,8 @@ app.connect('activate', () => {
   // réutiliser un jeton périmé (refusé par GNOME) quand une action redemande le premier plan
   GLib.unsetenv('XDG_ACTIVATION_TOKEN');
   GLib.unsetenv('DESKTOP_STARTUP_ID');
-  const existing = app.get_active_window();
-  if (existing !== null) {
-    existing.present();
+  if (mainWindow !== null) {
+    mainWindow.present();
     return;
   }
   store.start();
@@ -203,7 +206,7 @@ app.connect('activate', () => {
     store,
     settings,
     // la fenêtre doit avoir le focus : sinon la session affichée mérite aussi une notification
-    focusedSession: () => (app.get_active_window()?.isActive === true ? (api?.shownSession() ?? null) : null),
+    focusedSession: () => (mainWindow?.isActive === true ? (api?.shownSession() ?? null) : null),
   });
   createRoot((dispose) => {
     const win = MainWindow({
@@ -217,8 +220,10 @@ app.connect('activate', () => {
       },
     });
     if (!(win instanceof Gtk.Window)) throw new TypeError('fenêtre attendue');
+    mainWindow = win;
     win.connect('close-request', () => {
       api = null;
+      mainWindow = null;
       dispose();
       return false;
     });
