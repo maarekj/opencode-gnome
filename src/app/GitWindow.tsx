@@ -1,5 +1,5 @@
 // Fenêtre git d'un dossier (lecture seule), à onglets : Modifications (arbre de travail), Journal
-// (commits et leur détail), Branches (branches, worktrees, tags). Fenêtre séparée non modale, une
+// (commits et leur détail), Branches (branches, worktrees, tags), Comparer, Issues (GitHub). Fenêtre séparée non modale, une
 // par répertoire : la conversation reste utilisable à côté.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
@@ -13,6 +13,7 @@ import { gitChanges, gitCommit, gitFilePatch, gitLog, gitRefs, gitStatus, gitRes
 import type { FileDiff } from '../shared/schemas.ts';
 import { prettyPath } from '../shared/store.ts';
 import { createDiffView } from './DiffView.ts';
+import { issuesTab } from './IssuesTab.tsx';
 
 const LOG_PAGE = 300;
 
@@ -42,7 +43,7 @@ export interface GitSource {
   changed?: Accessor<number>;
 }
 
-export type GitTab = 'changes' | 'log' | 'branches' | 'compare';
+export type GitTab = 'changes' | 'log' | 'branches' | 'compare' | 'issues';
 
 // ------------------------------------------------------------------ éléments communs
 
@@ -730,6 +731,8 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
   stack.add_titled_with_icon(log.widget, 'log', 'Journal', 'document-open-recent-symbolic');
   stack.add_titled_with_icon(branches.widget, 'branches', 'Branches', 'media-playlist-consecutive-symbolic');
   stack.add_titled_with_icon(compare.widget, 'compare', 'Comparer', 'object-flip-horizontal-symbolic');
+  const issues = issuesTab(source.directory);
+  stack.add_titled_with_icon(issues.widget, 'issues', 'Issues', 'mail-unread-symbolic');
   windows.set(source.directory, { window: dialog, stack });
 
   const title = new Adw.WindowTitle({ title: source.title, subtitle: prettyPath(source.directory) });
@@ -742,7 +745,7 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
   dialog.content = view;
 
   // chaque onglet est chargé à sa première ouverture, puis rafraîchi à la demande
-  const loaders: Record<GitTab, () => Promise<void>> = { changes: changes.load, log: log.load, branches: branches.load, compare: compare.load };
+  const loaders: Record<GitTab, () => Promise<void>> = { changes: changes.load, log: log.load, branches: branches.load, compare: compare.load, issues: issues.load };
   const loaded = new Set<string>();
   const isTab = (name: string): name is GitTab => name in loaders;
   const loadVisible = (force: boolean): void => {
@@ -787,7 +790,9 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
     if (now - lastActive < 5_000_000) return;
     lastActive = now;
     loaded.clear();
-    if (stack.visibleChildName === 'compare') loaded.add('compare');
+    // Comparer et Issues (réseau) : rechargés à la demande
+    const visible = stack.visibleChildName ?? '';
+    if (visible === 'compare' || visible === 'issues') loaded.add(visible);
     else loadVisible(true);
   });
   dialog.connect('close-request', () => {

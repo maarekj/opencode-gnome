@@ -291,6 +291,10 @@ row.unread .title {
   margin: -2px -3px 0 0;
 }
 
+.issue-post {
+  padding: 12px 16px;
+}
+
 .stamp {
   font-size: 0.8em;
   margin: 0 4px;
