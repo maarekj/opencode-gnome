@@ -81,8 +81,9 @@ export class Notifier {
       if (now === 'question') this.#notify(id, 'Question', 'L’agent attend ta réponse.', 'question');
       else if (now === 'permission') this.#notify(id, 'Permission demandée', 'L’agent attend ton autorisation.', 'permission');
       else if (now === 'idle' && isWorking(before)) this.#notify(id, 'Terminé', 'La session a fini de répondre.', 'done');
-      // la demande a été traitée (réponse depuis la console, l'app…) : notification retirée
-      else if ((before === 'question' || before === 'permission') && now !== 'idle') this.withdraw(id);
+      // la demande a été traitée, refusée ou annulée (réponse depuis la console, l'app…, session
+      // passée directement au repos) : notification retirée (#94)
+      else if (before === 'question' || before === 'permission') this.withdraw(id);
     }
   }
 
