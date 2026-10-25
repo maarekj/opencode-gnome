@@ -99,7 +99,17 @@ export function openSearch(parent: Gtk.Widget, o: SearchOptions): void {
     }
     const period = PERIODS[periodDD.selected]?.ms ?? null;
     const project = projectKeys[projectDD.selected] ?? null;
-    const hits = o.index.search(entry.text, { ...(project === null ? {} : { project }), ...(period === null ? {} : { since: Date.now() - period }) });
+    let hits: SearchHit[];
+    try {
+      hits = o.index.search(entry.text, { ...(project === null ? {} : { project }), ...(period === null ? {} : { since: Date.now() - period }) });
+    } catch (e) {
+      // libgda absent, base illisible…
+      empty.title = 'Recherche indisponible';
+      empty.description = esc(errorMessage(e));
+      stack.visibleChildName = 'empty';
+      status.label = '';
+      return;
+    }
     // groupés par session, dans l'ordre de leur résultat le plus récent
     const groups = new Map<string, SearchHit[]>();
     for (const h of hits) groups.set(h.session.id, [...(groups.get(h.session.id) ?? []), h]);

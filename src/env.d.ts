@@ -10,3 +10,4 @@ import '@girs/pango-1.0';
 import '@girs/gsound-1.0';
 import '@girs/gtksource-5';
 import '@girs/vte-3.91';
+import '@girs/gda-6.0';
