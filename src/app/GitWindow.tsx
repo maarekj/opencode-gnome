@@ -405,25 +405,24 @@ function logTab(directory: string, compare: (from: string, to: string) => void):
     if (c !== undefined && c.hash !== current) showCommit(c);
   });
 
-  let loading = false;
+  /** numéro du dernier chargement : un clic sur une branche pendant un chargement l'emporte (#78) */
+  let logGeneration = 0;
   const load = async (): Promise<void> => {
-    if (loading) return;
-    loading = true;
+    const gen = ++logGeneration;
     if (commits.length === 0) leftStack.visibleChildName = 'loading';
     try {
       const all = allBranches.active;
       const next = await gitLog(directory, all ? ['--branches', '--remotes', '--tags', 'HEAD'] : [ref], limit + 1);
+      if (gen !== logGeneration) return;
       // même journal (rafraîchissement sans nouveau commit) : rien à reconstruire
       const same = next.length === commits.length + (more.visible ? 1 : 0) && commits.every((c, i) => c.hash === next[i]?.hash && c.refs.join() === next[i]?.refs.join());
-      if (same && commits.length > 0) {
-        loading = false;
-        return;
-      }
+      if (same && commits.length > 0) return;
       more.visible = next.length > limit;
       commits = next.slice(0, limit);
       if (all) refTitle.label = 'Toutes les branches';
       else if (ref === 'HEAD') {
         const g = await gitStatus(directory);
+        if (gen !== logGeneration) return;
         refTitle.label = g === null ? 'HEAD' : (g.branch ?? `HEAD détachée (${g.commit})`);
       } else refTitle.label = refLabel;
       refSubtitle.label = more.visible ? `${limit} derniers commits` : plural(commits.length, 'commit');
@@ -442,10 +441,10 @@ function logTab(directory: string, compare: (from: string, to: string) => void):
         if (commits[index]?.hash !== keep) showCommit(commits[index] ?? null);
       }
     } catch (e) {
+      if (gen !== logGeneration) return;
       leftError.description = esc(errorMessage(e));
       leftStack.visibleChildName = 'error';
     }
-    loading = false;
   };
   more.connect('clicked', () => {
     limit += LOG_PAGE;
