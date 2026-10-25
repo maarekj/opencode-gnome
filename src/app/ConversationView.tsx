@@ -159,12 +159,17 @@ function ToolDetails({ part }: { part: Part }): JSX.Element {
 }
 
 /** Appel `todowrite` / `todoread` : une ligne « Liste de tâches mise à jour · 3/7 », les tâches en détail. */
-function TodoToolLine({ part: p }: { part: Part }): JSX.Element {
+function TodoToolLine({ part: p, open }: { part: Part; open: Unfold }): JSX.Element {
   const todos = todosOfCall(p.state?.input, p.state?.metadata);
-  if (todos === null || p.state?.status === 'error') return <ToolLine part={p} generic />;
+  if (todos === null || p.state?.status === 'error') return <ToolLine part={p} open={open} generic />;
   const label = p.tool === 'todoread' ? 'Liste de tâches consultée' : 'Liste de tâches mise à jour';
   return (
-    <Gtk.Expander>
+    <Gtk.Expander
+      expanded={open.value}
+      onNotifyExpanded={(self: Gtk.Expander) => {
+        open.value = self.expanded;
+      }}
+    >
       <Gtk.Box $type="label" spacing={8}>
         <StatusIcon status={p.state?.status ?? 'pending'} />
         <Gtk.Label label={label} cssClasses={['heading']} />
@@ -209,19 +214,26 @@ function diffStat(patch: string): { add: string; del: string } {
  * Appel `edit` / `write` : chemin, décompte des lignes ajoutées / retirées et bouton pour ouvrir le
  * fichier ; déplié, le diff coloré (comme la fenêtre des fichiers modifiés), construit à la demande.
  */
-function EditToolLine({ part: p, patch }: { part: Part; patch: string }): JSX.Element {
+function EditToolLine({ part: p, patch, open }: { part: Part; patch: string; open: Unfold }): JSX.Element {
   const filePath = field(p.state?.input, 'filePath') ?? '';
   const stat = diffStat(patch);
   const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, marginTop: 6, marginStart: 28, cssClasses: ['diff-frame'], overflow: Gtk.Overflow.HIDDEN });
   let built = false;
+  const build = (): void => {
+    if (built) return;
+    built = true;
+    const diff = createDiffView({ inline: true });
+    body.append(diff.widget);
+    diff.show(filePath, patch);
+  };
+  // ligne reconstruite déjà dépliée : diff construit d'emblée
+  if (open.value) build();
   return (
     <Gtk.Expander
+      expanded={open.value}
       onNotifyExpanded={(self: Gtk.Expander) => {
-        if (!self.expanded || built) return;
-        built = true;
-        const diff = createDiffView({ inline: true });
-        body.append(diff.widget);
-        diff.show(filePath, patch);
+        open.value = self.expanded;
+        if (self.expanded) build();
       }}
     >
       <Gtk.Box $type="label" spacing={8}>
@@ -245,19 +257,26 @@ function EditToolLine({ part: p, patch }: { part: Part; patch: string }): JSX.El
   );
 }
 
-function ToolLine({ part: p, generic = false }: { part: Part; generic?: boolean }): JSX.Element {
-  if (!generic && (p.tool === 'todowrite' || p.tool === 'todoread')) return <TodoToolLine part={p} />;
+/**
+ * État déplié d'un appel d'outil, gardé par le bloc : la ligne est reconstruite à chaque mise à
+ * jour de l'appel (statut, sortie en direct) sans se replier (#73).
+ */
+interface Unfold {
+  value: boolean;
+}
+
+function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold; generic?: boolean }): JSX.Element {
+  if (!generic && (p.tool === 'todowrite' || p.tool === 'todoread')) return <TodoToolLine part={p} open={open} />;
   if (!generic && (p.tool === 'edit' || p.tool === 'write') && p.state?.status !== 'error') {
     const patch = editPatch(p);
-    if (patch !== null) return <EditToolLine part={p} patch={patch} />;
+    if (patch !== null) return <EditToolLine part={p} patch={patch} open={open} />;
   }
-  let expanded = false;
   const waiting = p.tool === 'question' && (p.state?.status === 'running' || p.state?.status === 'pending');
   return (
     <Gtk.Expander
-      expanded={expanded}
+      expanded={open.value}
       onNotifyExpanded={(self: Gtk.Expander) => {
-        expanded = self.expanded;
+        open.value = self.expanded;
       }}
     >
       <Gtk.Box $type="label" spacing={8}>
@@ -409,6 +428,7 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
       </Gtk.Box>
     );
   }
+  const open: Unfold = { value: false };
   // masqué par la bascule, sauf demande en attente, erreur ou question
   const visible = createComputed(() => ctx.showTools() || pending() !== null || alwaysShown(part()));
   return (
@@ -420,7 +440,7 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
             <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
               <With value={part}>
                 {(p: Part) =>
-                  p.tool === 'question' && (p.state?.status === 'completed' || p.state?.status === 'error') ? <AnsweredQuestions part={p} /> : <ToolLine part={p} />
+                  p.tool === 'question' && (p.state?.status === 'completed' || p.state?.status === 'error') ? <AnsweredQuestions part={p} /> : <ToolLine part={p} open={open} />
                 }
               </With>
             </Gtk.Box>
