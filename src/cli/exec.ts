@@ -23,14 +23,21 @@ function noop(): void {
   // rien à réveiller
 }
 
-/** Attend `ms`, ou moins si `signal.wake()` est appelé. */
+/**
+ * Attend `ms`, ou moins si `signal.wake()` est appelé ; la minuterie est retirée au réveil.
+ */
 function waitFor(signal: { wake: () => void }, ms: number): Promise<void> {
   return new Promise((resolve) => {
-    signal.wake = resolve;
-    GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+    const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+      signal.wake = noop;
       resolve();
       return GLib.SOURCE_REMOVE;
     });
+    signal.wake = () => {
+      GLib.source_remove(timer);
+      signal.wake = noop;
+      resolve();
+    };
   });
 }
 
@@ -42,7 +49,13 @@ async function ensureServer(client: OpencodeClient): Promise<void> {
     await client.health();
     return;
   } catch {
-    GLib.spawn_command_line_async('systemctl --user start opencode-gnome-server.service');
+    // serveur partagé seulement : un autre serveur (test, OPENCODE_GNOME_URL) n'est pas démarré ici (#101)
+    if (GLib.getenv('OPENCODE_GNOME_URL') !== null) throw new Error(`serveur opencode injoignable (${client.url})`);
+    try {
+      GLib.spawn_command_line_async('systemctl --user start opencode-gnome-server.service');
+    } catch (e) {
+      throw new Error(`démarrage du serveur partagé impossible : ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+    }
   }
   for (let i = 0; i < 30; i += 1) {
     // oxlint-disable-next-line no-await-in-loop -- attente du démarrage
@@ -195,8 +208,9 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
   let status: RunStatus = 'success';
   let error: string | undefined;
   for (;;) {
+    // événement arrivé pendant le contrôle précédent (filet) : pas d'attente (#101)
     // oxlint-disable-next-line no-await-in-loop -- attente d'un événement ou du prochain contrôle
-    await waitFor(signal, POLL_MS);
+    if (!ended && signal.sendError === null) await waitFor(signal, POLL_MS);
     if (signal.sendError !== null) {
       status = 'error';
       error = `envoi du prompt : ${signal.sendError}`;
