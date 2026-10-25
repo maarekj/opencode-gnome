@@ -64,6 +64,7 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   | `opencode-gnome-2` | agent 2, `agent-2` | 4798 | « opencode (2) » (`opencode-gnome-2`) |
   | `opencode-gnome-3` | agent 3, `agent-3` | 4797 | « opencode (3) » (`opencode-gnome-3`) |
   | `opencode-gnome-4` | agent 4, `agent-4` | 4796 | « opencode (4) » (`opencode-gnome-4`) |
+  | `opencode-gnome-5` | agent 5, `agent-5` | 4795 | « opencode (5) » (`opencode-gnome-5`) |
 
 - Ne jamais toucher au dossier d'un autre agent, ni arrêter son serveur de test.
 - Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise, puis
