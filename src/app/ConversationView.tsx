@@ -937,7 +937,8 @@ export function ConversationView({
               keepReadingPosition(self, showTools);
               whenRevealed(() => {
                 const t0 = Date.now();
-                const stop = keyedBox(self, conversation.blocks, (b) => b.id, (b) => BlockView({ block: b, ctx }));
+                // type dans la clé : un bloc qui change de type (même id) est reconstruit (#88)
+                const stop = keyedBox(self, conversation.blocks, (b) => `${b.id}:${b.kind}`, (b) => BlockView({ block: b, ctx }));
                 if (GLib.getenv('OPENCODE_GNOME_TIMING') !== null) console.log(`TIMING blocs=${conversation.blocks.peek().length} ${Date.now() - t0} ms`);
                 return stop;
               });
