@@ -141,6 +141,7 @@ export class Conversation {
   #flushQueued = false;
   #signature = '';
   #unsubscribe: (() => void) | null = null;
+  #unreconnect: (() => void) | null = null;
   #disposed = false;
   /** premier message annulé (masqué avec les suivants) */
   #revert: string | null = null;
@@ -184,6 +185,10 @@ export class Conversation {
   /** Charge l'historique et suit les événements. Les événements reçus pendant le chargement sont conservés. */
   async start(): Promise<void> {
     this.#unsubscribe ??= this.#store.onSessionEvents(this.sessionID, (e) => this.#apply(e));
+    // flux reconnecté : les événements de la coupure sont perdus, tout est relu (#60)
+    this.#unreconnect ??= this.#store.onReconnect(() => {
+      void Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]);
+    });
     // répertoire inconnu avant le chargement (session de sous-agent) : demandes rechargées ensuite
     const known = this.directory !== null;
     await (known ? Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]) : this.reload());
@@ -280,6 +285,8 @@ export class Conversation {
     this.#disposed = true;
     this.#unsubscribe?.();
     this.#unsubscribe = null;
+    this.#unreconnect?.();
+    this.#unreconnect = null;
   }
 
   #apply(e: SessionEvent): void {

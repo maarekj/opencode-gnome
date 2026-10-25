@@ -69,6 +69,9 @@ export class Store {
   /** sessionID -> abonnés aux événements de messages (conversations ouvertes) */
   readonly #messageListeners = new Map<string, Set<(e: SessionEvent) => void>>();
   readonly #errorListeners = new Set<(sessionID: string, message: string) => void>();
+  /** conversations ouvertes : rechargées à chaque reconnexion (événements manqués) */
+  readonly #reconnectListeners = new Set<() => void>();
+  #connectedOnce = false;
   #stop: (() => void) | null = null;
   #refreshQueued = false;
 
@@ -89,8 +92,11 @@ export class Store {
     this.#stop ??= this.client.listen(
       (e) => this.#onEvent(e),
       (connected, error) => {
-        if (connected) void this.reload();
-        else this.#setConnection({ state: 'error', message: error ?? 'déconnecté' });
+        if (connected) {
+          void this.reload();
+          if (this.#connectedOnce) for (const fn of this.#reconnectListeners) fn();
+          this.#connectedOnce = true;
+        } else this.#setConnection({ state: 'error', message: error ?? 'déconnecté' });
       },
     );
   }
@@ -155,6 +161,14 @@ export class Store {
   }
 
   /** S'abonne aux événements de messages d'une session. Retourne la fonction de désabonnement. */
+  /** Appelé à chaque reconnexion au flux d'événements (pas à la première connexion). */
+  onReconnect(fn: () => void): () => void {
+    this.#reconnectListeners.add(fn);
+    return () => {
+      this.#reconnectListeners.delete(fn);
+    };
+  }
+
   onSessionEvents(sessionID: string, fn: (e: SessionEvent) => void): () => void {
     const set = this.#messageListeners.get(sessionID) ?? new Set();
     set.add(fn);
