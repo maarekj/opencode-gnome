@@ -8,9 +8,10 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   schémas zod/mini (`schemas.ts`), état réactif des projets/sessions (`store.ts`),
   conversation en direct (`conversation.ts`), ouverture de terminal (`terminal.ts`).
 - `src/app/` : application `Adw.Application` en TSX avec gnim (`gnim/gtk4`).
-- `src/cli/` : CLI `ogt` des tâches planifiées (GJS). Tâches dans `src/shared/tasks.ts` (config
+- `src/cli/` : CLI `ocg` (GJS) : `ocg terminal` (terminaux persistants), `ocg link` (liens épinglés),
+  `ocg task` (tâches planifiées) ; aide complète : `ocg help all`. Tâches dans `src/shared/tasks.ts` (config
   `tasks.json`, timers systemd utilisateur générés, journal `runs.jsonl`). Tests : lanceur avec
-  `OGT_NAMESPACE=test`, `OGT_UNIT_DIR=$XDG_RUNTIME_DIR/systemd/user`, `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
+  `OCG_NAMESPACE=test`, `OCG_UNIT_DIR=$XDG_RUNTIME_DIR/systemd/user`, `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
   dans /tmp, `OPENCODE_GNOME_URL` du serveur de test, `OPENCODE_GNOME_TEST_NOTIFY=1`.
 - `scripts/` : outillage Node 24 (build esbuild, types gnim, installation locale, captures).
 - Serveur partagé : unité systemd utilisateur `opencode-gnome-server` (port 4096),
@@ -54,7 +55,7 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 ## Travail en parallèle (worktrees)
 - **`opencode-gnome` (dépôt principal) est l'orchestre** : toujours sur `main`, propre (aucune
   modification non commitée), **jamais de développement**. On y crée et répartit les issues, on y
-  suit l'avancement, et on y installe la version de référence (serveur partagé, `oc`, `ogt`,
+  suit l'avancement, et on y installe la version de référence (serveur partagé, `oc`, `ocg`,
   plugin opencode, application « opencode »).
 - **Tout le développement se fait dans les worktrees**, un agent par dossier :
 
@@ -89,7 +90,7 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - Chaque agent construit **et installe** son application après une modification d'interface :
   `node scripts/install.ts` (dans le shell devenv). Chaque dossier a son lanceur, son .desktop et
   son identifiant d'application : toutes les versions apparaissent dans GNOME et tournent ensemble.
-  Le serveur partagé, `oc`, `ogt` et le plugin opencode ne sont installés que depuis l'orchestre
+  Le serveur partagé, `oc`, `ocg` et le plugin opencode ne sont installés que depuis l'orchestre
   (après une fusion qui les modifie : `node scripts/install.ts` dans `opencode-gnome`, à
   demander à l'utilisateur).
 

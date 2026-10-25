@@ -1,4 +1,4 @@
-// Exécution d'un run (`ogt exec`, lancé par le service systemd de la tâche) : session nouvelle ou
+// Exécution d'un run (`ocg task exec`, lancé par le service systemd de la tâche) : session nouvelle ou
 // réutilisée sur le serveur partagé, envoi du prompt, attente de la fin, journal et notification.
 import GLib from 'gi://GLib';
 import { OpencodeClient } from '../shared/client.ts';

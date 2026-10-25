@@ -27,13 +27,13 @@ export async function buildApp(): Promise<string> {
   return out;
 }
 
-/** CLI `ogt` (tâches planifiées) dans dist/cli. */
+/** CLI `ocg` (terminaux, liens, tâches) dans dist/cli. */
 export async function buildCli(): Promise<string> {
   const out = path.join(dist, 'cli');
   fs.rmSync(out, { recursive: true, force: true });
   await build({
-    entryPoints: [path.join(root, 'src', 'cli', 'ogt.ts')],
-    outfile: path.join(out, 'ogt.js'),
+    entryPoints: [path.join(root, 'src', 'cli', 'ocg.ts')],
+    outfile: path.join(out, 'ocg.js'),
     bundle: true,
     format: 'esm',
     target: 'es2022',

@@ -1,14 +1,15 @@
 // Tâches planifiées : un prompt opencode lancé à heures régulières dans un dossier.
 // Configuration dans ~/.config/opencode-gnome/tasks.json (seule source de vérité), planification
 // par des timers systemd utilisateur générés à partir d'elle (pas de démon), journal des runs dans
-// ~/.local/share/opencode-gnome/runs.jsonl. Partagé entre la CLI `ogt` et l'application.
+// ~/.local/share/opencode-gnome/runs.jsonl. Partagé entre la CLI `ocg` et l'application.
 //
-// Espace de noms (OGT_NAMESPACE, posé par le lanceur) : vide pour l'installation principale,
+// Espace de noms (OCG_NAMESPACE, posé par le lanceur) : vide pour l'installation principale,
 // numéro du worktree sinon. Fichiers et unités séparés : un worktree ne planifie jamais les
 // tâches de la version principale.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import * as z from 'zod/mini';
+import { withLock } from './lock.ts';
 import { intercepted, sandboxed } from './sandbox.ts';
 
 Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async', 'communicate_utf8_finish');
@@ -54,7 +55,7 @@ export type RunStatus = z.output<typeof RunStatus>;
 export const RunRecord = z.object({
   run: z.string(),
   task: z.string(),
-  /** schedule : timer ; manual : `ogt run` / l'app */
+  /** schedule : timer ; manual : `ocg task run` / l'app */
   trigger: z.enum(['schedule', 'manual']),
   status: RunStatus,
   start: z.number(),
@@ -70,17 +71,17 @@ export type RunRecord = z.output<typeof RunRecord>;
 
 // ------------------------------------------------------------------ chemins
 
-export const namespace = (): string => GLib.getenv('OGT_NAMESPACE') ?? '';
+export const namespace = (): string => GLib.getenv('OCG_NAMESPACE') ?? '';
 const suffix = (): string => (namespace() === '' ? '' : `-${namespace()}`);
 
 export const tasksPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', `tasks${suffix()}.json`]);
 export const runsPath = (): string => GLib.build_filenamev([GLib.get_user_data_dir(), 'opencode-gnome', `runs${suffix()}.jsonl`]);
 /**
- * Unités générées : ~/.config/systemd/user (OGT_UNIT_DIR pour les tests). Bac à sable (captures,
- * tests) sans OGT_UNIT_DIR : dossier privé, jamais celui de l'utilisateur.
+ * Unités générées : ~/.config/systemd/user (OCG_UNIT_DIR pour les tests). Bac à sable (captures,
+ * tests) sans OCG_UNIT_DIR : dossier privé, jamais celui de l'utilisateur.
  */
 const unitDir = (): string =>
-  GLib.getenv('OGT_UNIT_DIR') ??
+  GLib.getenv('OCG_UNIT_DIR') ??
   (sandboxed() ? GLib.build_filenamev([GLib.get_user_runtime_dir(), 'opencode-gnome-sandbox', 'systemd']) : GLib.build_filenamev([GLib.get_home_dir(), '.config', 'systemd', 'user']));
 export const unitName = (id: string, type: 'service' | 'timer'): string => `opencode-gnome${suffix()}-task-${id}.${type}`;
 
@@ -145,7 +146,7 @@ export function newTaskId(name: string): string {
 }
 
 /**
- * Lecture-modification-écriture de tasks.json sous verrou : l'app, `ogt` et les runs (`ogt exec`)
+ * Lecture-modification-écriture de tasks.json sous verrou : l'app, `ocg` et les runs (`ocg task exec`)
  * écrivent le même fichier (#70). Verrou par fichier `.lock` créé en exclusif ; un verrou de plus
  * de 10 s (processus tué) est ignoré.
  */
@@ -153,47 +154,10 @@ function updateTasks(fn: (tasks: ScheduledTask[]) => ScheduledTask[]): void {
   withLock(tasksPath(), () => saveTasks(fn(loadTasks())));
 }
 
-/** Exécute `fn` sous le verrou du fichier `path` (`path.lock` créé en exclusif ; périmé après 10 s). */
-function withLock(path: string, fn: () => void): void {
-  const lock = Gio.File.new_for_path(`${path}.lock`);
-  GLib.mkdir_with_parents(GLib.path_get_dirname(path), 0o700);
-  const deadline = Date.now() + 2000;
-  for (;;) {
-    try {
-      lock.create(Gio.FileCreateFlags.NONE, null).close(null);
-      break;
-    } catch {
-      let age = 0;
-      try {
-        age = Date.now() / 1000 - (lock.query_info('time::modified', Gio.FileQueryInfoFlags.NONE, null).get_modification_date_time()?.to_unix() ?? 0);
-      } catch {
-        continue; // verrou retiré entre-temps : nouvel essai
-      }
-      if (age > 10 || Date.now() > deadline) {
-        try {
-          lock.delete(null);
-        } catch {
-          // retiré par un autre processus
-        }
-        continue;
-      }
-      GLib.usleep(20_000);
-    }
-  }
-  try {
-    fn();
-  } finally {
-    try {
-      lock.delete(null);
-    } catch {
-      // déjà retiré
-    }
-  }
-}
 
 /**
  * Enregistre la tâche (ajout ou remplacement) et met ses unités systemd à jour. Session réutilisée
- * non épinglée : son identifiant est un état d'exécution (écrit par `ogt exec`), repris du fichier
+ * non épinglée : son identifiant est un état d'exécution (écrit par `ocg task exec`), repris du fichier
  * plutôt que de la copie de l'appelant, peut-être antérieure au run qui l'a créée.
  */
 export async function saveTask(task: ScheduledTask): Promise<void> {
@@ -307,14 +271,14 @@ async function run(argv: readonly string[]): Promise<{ ok: boolean; out: string 
 
 async function systemctl(args: readonly string[]): Promise<string> {
   // captures et tests sans espace de noms de test : les unités de l'utilisateur ne sont pas modifiées
-  if (args[0] !== 'show' && GLib.getenv('OGT_NAMESPACE') === null && intercepted('SYSTEMCTL', args.join(' '))) return '';
+  if (args[0] !== 'show' && GLib.getenv('OCG_NAMESPACE') === null && intercepted('SYSTEMCTL', args.join(' '))) return '';
   const { ok, out } = await run(['systemctl', '--user', ...args]);
   if (!ok) throw new Error(`systemctl ${args.join(' ')} : ${out.trim()}`);
   return out;
 }
 
 /** Variables transmises au run (serveur de test, réglages isolés, application à notifier). */
-const PASSED_ENV = ['OPENCODE_GNOME_URL', 'OPENCODE_GNOME_APP_ID', 'OGT_NAMESPACE', 'OGT_UNIT_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'OPENCODE_GNOME_TEST_NOTIFY'];
+const PASSED_ENV = ['OPENCODE_GNOME_URL', 'OPENCODE_GNOME_APP_ID', 'OCG_NAMESPACE', 'OCG_UNIT_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'OPENCODE_GNOME_TEST_NOTIFY'];
 
 /** Une valeur d'unité tient sur une ligne : un retour à la ligne injecterait des directives (#71). */
 const oneLine = (s: string): string => s.replaceAll(/[\r\n]+/gu, ' ');
@@ -327,14 +291,14 @@ export function serviceUnit(task: ScheduledTask, bin: string): string {
     .filter((e): e is readonly [string, string] => e[1] !== null)
     .map(([k, v]) => `Environment=${quoteUnit(`${k}=${v}`)}\n`)
     .join('');
-  return `# Généré par opencode-gnome (ogt) : ne pas modifier, voir ${tasksPath()}
+  return `# Généré par opencode-gnome (ocg) : ne pas modifier, voir ${tasksPath()}
 [Unit]
 Description=opencode-gnome : tâche « ${unitText(task.name)} »
 
 [Service]
 Type=exec
-ExecStart=${quoteUnit(bin)} exec ${quoteUnit(task.id)}
-ExecStopPost=${quoteUnit(bin)} finalize ${quoteUnit(task.id)}
+ExecStart=${quoteUnit(bin)} task exec ${quoteUnit(task.id)}
+ExecStopPost=${quoteUnit(bin)} task finalize ${quoteUnit(task.id)}
 ${env}# filet de sécurité : le run s'arrête lui-même à son timeout
 RuntimeMaxSec=${task.timeout + 2}min
 TimeoutStopSec=30
@@ -342,7 +306,7 @@ TimeoutStopSec=30
 }
 
 export function timerUnit(task: ScheduledTask): string {
-  return `# Généré par opencode-gnome (ogt) : ne pas modifier
+  return `# Généré par opencode-gnome (ocg) : ne pas modifier
 [Unit]
 Description=opencode-gnome : planification de « ${unitText(task.name)} »
 
@@ -358,10 +322,10 @@ WantedBy=timers.target
 `;
 }
 
-/** Exécutable `ogt` inscrit dans les unités (posé par le lanceur). */
+/** Exécutable `ocg` inscrit dans les unités (posé par le lanceur). */
 const ogtBin = (): string => {
-  const bin = GLib.getenv('OGT_BIN');
-  if (bin === null) throw new Error('OGT_BIN absent : lance ogt via son lanceur (node scripts/install.ts)');
+  const bin = GLib.getenv('OCG_BIN');
+  if (bin === null) throw new Error('OCG_BIN absent : lance ocg via son lanceur (node scripts/install.ts)');
   return bin;
 };
 

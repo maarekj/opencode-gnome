@@ -13,6 +13,6 @@ const task: ScheduledTask = {
   enabled: true,
   created: 1,
 };
-const units = `${serviceUnit(task, '/bin/ogt %test')}\n${timerUnit(task)}`;
+const units = `${serviceUnit(task, '/bin/ocg %test')}\n${timerUnit(task)}`;
 const injected = units.split('\n').some((l) => l.startsWith('ExecStartPre'));
-print(!injected && units.includes('%%h') && units.includes('"/bin/ogt %%test"') ? 'TEST OK' : `unité incorrecte :\n${units}`);
+print(!injected && units.includes('%%h') && units.includes('"/bin/ocg %%test"') ? 'TEST OK' : `unité incorrecte :\n${units}`);

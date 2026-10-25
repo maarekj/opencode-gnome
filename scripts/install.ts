@@ -116,31 +116,34 @@ write(
   `#!/usr/bin/env bash
 # Lance opencode-gnome (version de développement : ${root}).
 export OPENCODE_GNOME_APP_ID=${APP_ID}
-# tâches planifiées : unités générées vers la CLI ogt de la même version
-export OGT_BIN=${shq(path.join(binDir, `ogt${suffix}`))}
-export OGT_NAMESPACE=${shq(variant)}
+# tâches planifiées : unités générées vers la CLI ocg de la même version
+export OCG_BIN=${shq(path.join(binDir, `ocg${suffix}`))}
+export OCG_NAMESPACE=${shq(variant)}
 export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
 exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "$@"
 `,
   0o755,
 );
 
-// CLI des tâches planifiées : `ogt` (worktree : `ogt-2`, tâches et unités séparées de la version principale)
-const OGT = `ogt${suffix}`;
+// CLI `ocg` : terminaux, liens, tâches (worktree : `ocg-2`, tâches et unités séparées de la version
+// principale ; terminaux et liens partagés, comme dans l'application)
+const OCG = `ocg${suffix}`;
 write(
-  path.join(binDir, OGT),
+  path.join(binDir, OCG),
   `#!/usr/bin/env bash
-# Tâches planifiées d'opencode-gnome (version : ${root}).
-export OGT_BIN=${shq(path.join(binDir, OGT))}
-export OGT_NAMESPACE=${shq(variant)}
+# CLI d'opencode-gnome : terminaux, liens, tâches planifiées (version : ${root}).
+export OCG_BIN=${shq(path.join(binDir, OCG))}
+export OCG_NAMESPACE=${shq(variant)}
 export OPENCODE_GNOME_APP_ID=${APP_ID}
 export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
-exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'cli', 'ogt.js'))} "$@"
+exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'cli', 'ocg.js'))} "$@"
 `,
   0o755,
 );
-// unités des tâches existantes : pointent vers le lanceur à jour
-execFileSync(path.join(binDir, OGT), ['sync'], { stdio: 'inherit' });
+// ancienne CLI `ogt` (remplacée par `ocg task`) : retirée
+fs.rmSync(path.join(binDir, `ogt${suffix}`), { force: true });
+// unités des tâches existantes : régénérées vers le lanceur à jour (`ocg task exec`)
+execFileSync(path.join(binDir, OCG), ['task', 'sync'], { stdio: 'inherit' });
 
 // Icône (data/icons) installée sous l'identifiant de l'application ; worktree : pastille numérotée.
 const iconsDir = path.join(home, '.local', 'share', 'icons', 'hicolor');

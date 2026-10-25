@@ -1,10 +1,11 @@
 // Réglages locaux d'opencode-gnome (~/.config/opencode-gnome/settings.json), partagés avec
-// l'extension. Jamais édités à la main : tout passe par l'interface. Rechargés si le fichier
-// change (autre processus).
+// la CLI `ocg` (terminaux, liens). Écrits sous verrou ; rechargés si le fichier change (autre
+// processus).
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { createState, type Accessor } from 'gnim';
 import * as z from 'zod/mini';
+import { withLock } from './lock.ts';
 
 export const SidebarMode = z.enum(['favorites', 'all']);
 export type SidebarMode = z.output<typeof SidebarMode>;
@@ -172,14 +173,21 @@ export class Settings {
     });
   }
 
+  /**
+   * Modifie les réglages sous verrou (l'app et la CLI `ocg` écrivent le même fichier) : le fichier
+   * est relu juste avant, pour ne pas écraser une modification d'un autre processus.
+   */
   update(fn: (d: SettingsData) => SettingsData): void {
-    const next = fn(this.data.peek());
-    this.#set(next);
-    const json = JSON.stringify(next);
-    this.#written = json;
     try {
-      GLib.mkdir_with_parents(GLib.path_get_dirname(this.#path), 0o700);
-      GLib.file_set_contents(this.#path, encoder.encode(`${JSON.stringify(next, null, 2)}\n`));
+      withLock(this.#path, () => {
+        const onDisk = read(this.#path);
+        const base = onDisk ?? this.data.peek();
+        const next = fn(base);
+        this.#set(next);
+        this.#written = JSON.stringify(next);
+        GLib.mkdir_with_parents(GLib.path_get_dirname(this.#path), 0o700);
+        GLib.file_set_contents(this.#path, encoder.encode(`${JSON.stringify(next, null, 2)}\n`));
+      });
     } catch (e) {
       console.error(`réglages non enregistrés : ${String(e)}`);
     }

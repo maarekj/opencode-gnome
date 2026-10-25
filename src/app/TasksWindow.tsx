@@ -1,6 +1,6 @@
 // Fenêtre « Tâches planifiées » : liste des tâches (activer, lancer, modifier, supprimer), éditeur,
 // historique des runs (clic : session ouverte dans l'application). Même configuration que la CLI
-// `ogt` ; les unités systemd sont régénérées à chaque enregistrement.
+// `ocg task` ; les unités systemd sont régénérées à chaque enregistrement.
 import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -356,7 +356,7 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
     enabled.visible = preset.get() !== 'manual';
     when.description = preset.get() === 'manual' ? '' : 'Un créneau manqué (ordinateur éteint) est rattrapé au démarrage.';
     if (preset.get() === 'manual') {
-      preview.subtitle = 'Jamais automatiquement : lance-la avec « Lancer maintenant » (ou ogt run)';
+      preview.subtitle = 'Jamais automatiquement : lance-la avec « Lancer maintenant » (ou ocg task run)';
       preview.remove_css_class('error');
       return;
     }

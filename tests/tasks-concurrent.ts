@@ -3,10 +3,10 @@
 import GLib from 'gi://GLib';
 import { loadTasks, patchTask, saveTask, type ScheduledTask } from '../src/shared/tasks.ts';
 
-const dir = GLib.dir_make_tmp('ogt-test-XXXXXX');
+const dir = GLib.dir_make_tmp('ocg-test-XXXXXX');
 GLib.setenv('XDG_CONFIG_HOME', dir, true);
-GLib.setenv('OGT_UNIT_DIR', `${dir}/units`, true);
-GLib.setenv('OGT_NAMESPACE', 'test', true);
+GLib.setenv('OCG_UNIT_DIR', `${dir}/units`, true);
+GLib.setenv('OCG_NAMESPACE', 'test', true);
 const task: ScheduledTask = {
   id: 't',
   name: 't',

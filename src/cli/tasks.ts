@@ -1,8 +1,6 @@
-// ogt : tâches planifiées d'opencode-gnome (prompts lancés à heures régulières).
+// `ocg task` : tâches planifiées d'opencode-gnome (prompts lancés à heures régulières ou à la main).
 // Même configuration que l'application ; planification par timers systemd utilisateur.
 import GLib from 'gi://GLib';
-import system from 'system';
-import { errorMessage } from '../shared/errors.ts';
 import {
   findTask,
   installUnits,
@@ -20,26 +18,29 @@ import {
   type RunRecord,
   type ScheduledTask,
 } from '../shared/tasks.ts';
-import { notify } from './notify.ts';
+import { expand, parseArgs } from './args.ts';
 import { execTask, finalizeTask } from './exec.ts';
 
-const HELP = `ogt — tâches planifiées d'opencode-gnome
+export const TASK_HELP = `ocg task — tâches planifiées (prompts envoyés à heures régulières ou à la main)
+
+Chaque run crée (ou réutilise) une session opencode et y envoie le prompt ; il est exécuté par
+systemd, même quand l'application est fermée. Historique : ocg task history.
 
 Usage :
-  ogt list [--json]                      tâches, prochaine exécution, dernier run
-  ogt show <tâche> [--json]
-  ogt add --name NOM --dir DOSSIER (--at HORAIRE | --manual) (--prompt TEXTE | --prompt-file FICHIER) [options]
-  ogt edit <tâche> [options]
-  ogt run <tâche>                        lancer maintenant (en arrière-plan)
-  ogt stop <tâche>                       interrompre le run en cours
-  ogt enable | disable | rm <tâche>
-  ogt history [<tâche>] [--failed] [--limit N] [--json]
-  ogt sync                               régénérer les unités systemd de toutes les tâches
+  ocg task list [--json]                      tâches, prochaine exécution, dernier run
+  ocg task show <tâche> [--json]
+  ocg task add --name NOM --dir DOSSIER (--at HORAIRE | --manual) (--prompt TEXTE | --prompt-file FICHIER) [options]
+  ocg task edit <tâche> [options]
+  ocg task run <tâche>                        lancer maintenant (en arrière-plan)
+  ocg task stop <tâche>                       interrompre le run en cours
+  ocg task enable | disable | rm <tâche>
+  ocg task history [<tâche>] [--failed] [--limit N] [--json]
+  ocg task sync                               régénérer les unités systemd de toutes les tâches
 
 Options de tâche :
   --name NOM  --dir DOSSIER  --prompt TEXTE  --prompt-file FICHIER
   --at HORAIRE        cron (« 0 9 * * 1-5 ») ou OnCalendar systemd (« Mon..Fri 09:00 », « daily », « hourly »)
-  --manual            pas d'horaire : tâche lancée uniquement à la main (ogt run, l'app)
+  --manual            pas d'horaire : tâche lancée uniquement à la main (ocg task run, l'app)
   --model FOURNISSEUR/MODÈLE  --agent AGENT  --variant NIVEAU   (vide = défaut)
   --timeout MINUTES   durée maximale d'un run (30)
   --permissions all|ask    all : tout est autorisé ; ask : le run attend ta réponse (app, notification)
@@ -47,47 +48,21 @@ Options de tâche :
                       ses_… : session existante réutilisée (si elle est occupée, le run est sauté)
   --disabled | --enabled
 
-<tâche> : identifiant ou nom. Configuration : ${tasksPath()}`;
+<tâche> : identifiant ou nom. Configuration : ${tasksPath()}
 
-// ------------------------------------------------------------------ arguments
+Exemples :
+  ocg task add --name "Revue du matin" --dir . --at "Mon..Fri 09:00" --prompt "Résume les commits d'hier."
+  ocg task add --name "Point" --dir ~/projet --manual --prompt-file point.md --model anthropic/claude-opus-5-5
+  ocg task run revue-du-matin && ocg task history revue-du-matin`;
 
-interface Args {
-  readonly positional: string[];
-  readonly options: Map<string, string>;
-  readonly flags: Set<string>;
-}
-
-const FLAGS = new Set(['json', 'failed', 'disabled', 'enabled', 'help', 'manual']);
-
-function parseArgs(argv: readonly string[]): Args {
-  const positional: string[] = [];
-  const options = new Map<string, string>();
-  const flags = new Set<string>();
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i] ?? '';
-    if (a === '-h') flags.add('help');
-    else if (a.startsWith('--')) {
-      const [key = '', inline] = a.slice(2).split(/=(.*)/su);
-      if (FLAGS.has(key)) flags.add(key);
-      else {
-        const value = inline ?? argv[(i += 1)];
-        if (value === undefined) throw new Error(`--${key} : valeur manquante`);
-        options.set(key, value);
-      }
-    } else positional.push(a);
-  }
-  return { positional, options, flags };
-}
-
-const expand = (p: string): string => {
-  const path = p.startsWith('~/') || p === '~' ? GLib.build_filenamev([GLib.get_home_dir(), p.slice(1)]) : p;
-  return GLib.canonicalize_filename(path, GLib.get_current_dir());
-};
+const FLAGS = new Set(['failed', 'disabled', 'enabled', 'manual']);
 
 function readPromptFile(path: string): string {
   const [, bytes] = GLib.file_get_contents(expand(path));
   return new TextDecoder().decode(bytes).trim();
 }
+
+type Args = ReturnType<typeof parseArgs>;
 
 const optional = (v: string | undefined): string | undefined => (v === undefined || v.trim() === '' ? undefined : v.trim());
 
@@ -190,9 +165,9 @@ async function describe(t: ScheduledTask): Promise<Described> {
 
 // ------------------------------------------------------------------ commandes
 
-async function main(argv: readonly string[]): Promise<number> {
+export async function taskCommand(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
-  const args = parseArgs(rest);
+  const args = parseArgs(rest, FLAGS);
   const ref = args.positional[0];
   const json = args.flags.has('json');
   switch (command) {
@@ -200,15 +175,15 @@ async function main(argv: readonly string[]): Promise<number> {
     case 'help':
     case '--help':
     case '-h':
-      print(HELP);
+      print(TASK_HELP);
       return 0;
     case 'list': {
       const tasks = await Promise.all(loadTasks().map((t) => describe(t)));
       if (json) print(JSON.stringify(tasks, null, 2));
-      else if (tasks.length === 0) print('Aucune tâche. Ajoute-en une : ogt add --help');
+      else if (tasks.length === 0) print('Aucune tâche. Ajoute-en une : ocg task add --help');
       else
         for (const task of tasks) {
-          const state = task.running ? 'en cours…' : isManual(task) ? 'lancée à la main (ogt run)' : task.enabled ? `prochaine : ${fmt(task.next)}` : 'désactivée';
+          const state = task.running ? 'en cours…' : isManual(task) ? 'lancée à la main (ocg task run)' : task.enabled ? `prochaine : ${fmt(task.next)}` : 'désactivée';
           const last = task.last === null ? 'jamais lancée' : `dernier : ${ICON[task.last.status]} ${fmt(task.last.start)}`;
           print(`${task.id}  ${task.name}\n    ${isManual(task) ? 'à la main' : (task.cron ?? task.schedule)}  ·  ${state}  ·  ${last}\n    ${task.directory}`);
         }
@@ -221,13 +196,13 @@ async function main(argv: readonly string[]): Promise<number> {
     }
     case 'add': {
       if (args.flags.has('help')) {
-        print(HELP);
+        print(TASK_HELP);
         return 0;
       }
       const task = await applyOptions({}, args.options, args.flags);
       await saveTask(task);
       if (json) print(JSON.stringify(await describe(task), null, 2));
-      else if (isManual(task)) print(`Tâche « ${task.name} » créée (${task.id}) · à la main : ogt run ${task.id}`);
+      else if (isManual(task)) print(`Tâche « ${task.name} » créée (${task.id}) · à la main : ocg task run ${task.id}`);
       else print(`Tâche « ${task.name} » créée (${task.id}) · ${task.schedule}${task.enabled ? ` · prochaine : ${fmt((await timerState(task)).next)}` : ' · désactivée'}`);
       return 0;
     }
@@ -255,7 +230,7 @@ async function main(argv: readonly string[]): Promise<number> {
     case 'run': {
       const task = need(ref);
       await startRun(task);
-      print(`Run de « ${task.name} » lancé (suivi : ogt history ${task.id}, journalctl --user -u opencode-gnome*-task-${task.id})`);
+      print(`Run de « ${task.name} » lancé (suivi : ocg task history ${task.id}, journalctl --user -u opencode-gnome*-task-${task.id})`);
       return 0;
     }
     case 'stop': {
@@ -301,28 +276,6 @@ async function main(argv: readonly string[]): Promise<number> {
       await finalizeTask(need(ref));
       return 0;
     default:
-      throw new Error(`commande inconnue : ${command} (ogt help)`);
+      throw new Error(`commande inconnue : ${command} (ocg task help)`);
   }
 }
-
-// boucle principale explicite : les appels asynchrones (libsoup, sous-processus) en ont besoin
-const loop = new GLib.MainLoop(null, false);
-let code = 0;
-const run = async (): Promise<void> => {
-  try {
-    code = await main(system.programArgs);
-  } catch (e) {
-    printerr(`ogt : ${errorMessage(e)}`);
-    code = 2;
-    // run planifié (systemd) qui échoue avant de démarrer (tasks.json illisible…) : sans
-    // notification, l'échec ne serait visible que dans le journal systemd (#100)
-    const command = system.programArgs[0];
-    if (command === 'exec' || command === 'finalize') {
-      notify({ id: `ogt-error-${system.programArgs[1] ?? ''}`, title: 'Tâche planifiée impossible à lancer', body: errorMessage(e), urgent: true });
-    }
-  }
-  loop.quit();
-};
-void run();
-loop.run();
-system.exit(code);

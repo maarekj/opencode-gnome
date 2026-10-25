@@ -1,6 +1,6 @@
 """Tâches planifiées : fenêtre, éditeur, actions et historique.
 
-systemd n'est jamais touché : en bac à sable (sans OGT_NAMESPACE), les appels `systemctl` sont
+systemd n'est jamais touché : en bac à sable (sans OCG_NAMESPACE), les appels `systemctl` sont
 journalisés (`SYSTEMCTL …`) au lieu d'être lancés. tasks.json et runs.jsonl sont dans les
 dossiers XDG privés du test.
 """

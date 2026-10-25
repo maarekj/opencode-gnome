@@ -43,6 +43,20 @@ config.actionDelay = 0.3
 config.defaultDelay = 0.3
 
 
+_BUTTONS = {'b1c': ('1', 'click'), 'b3c': ('3', 'click'), 'b4c': ('4', 'click'), 'b5c': ('5', 'click')}
+
+
+def mouse(x: int, y: int, event: str) -> None:
+    """Événement souris réel (XTest via xdotool) : `b1c` clic gauche, `b3c` droit, `b4c`/`b5c` molette.
+
+    Pas Atspi.generate_mouse_event / generate_keyboard_event : quand un portail de bureau à distance
+    est activable sur le bus (xdg-desktop-portal-gnome), AT-SPI y envoie les événements, et sans
+    session GNOME ils sont perdus. XTest va directement au serveur X virtuel.
+    """
+    button, _ = _BUTTONS[event]
+    subprocess.run(['xdotool', 'mousemove', str(int(x)), str(int(y)), 'click', button], check=True, timeout=5)
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -136,8 +150,8 @@ class App:
             XDG_CACHE_HOME=str(fake.dir / 'cache'),
             OPENCODE_GNOME_SANDBOX='1',
             # tâches : unités générées dans le dossier du test, `systemctl` journalisé (bac à sable)
-            OGT_UNIT_DIR=str(fake.dir / 'systemd'),
-            OGT_BIN='/nonexistent/ogt-e2e',
+            OCG_UNIT_DIR=str(fake.dir / 'systemd'),
+            OCG_BIN='/nonexistent/ocg-e2e',
             # notifications et sons journalisés (`NOTIF …`, `SON …`)
             OPENCODE_GNOME_TEST_NOTIFY='1',
             # identifiant propre au test : actions D-Bus (boutons des notifications, --session)
@@ -159,11 +173,11 @@ class App:
 
     def _try(self, node, x: int, y: int) -> bool:
         """Clique en (x, y) ; vrai si la bascule `node` a changé d'état (remise ensuite dans l'état initial)."""
-        Atspi.generate_mouse_event(x, y, 'b1c')
+        mouse(x, y, 'b1c')
         time.sleep(0.12)
         if not self._pressed(node):
             return False
-        Atspi.generate_mouse_event(x, y, 'b1c')
+        mouse(x, y, 'b1c')
         wait_until(lambda: not self._pressed(node), 3, 'bascule de calibrage relâchée')
         return True
 
@@ -331,7 +345,7 @@ class App:
                 return
             # molette au centre de l'écran, dans la zone défilante qui contient le nœud
             x = max(0, min(e.x + e.width // 2 + dx, 1279))
-            Atspi.generate_mouse_event(x, height // 2, 'b5c' if bottom > height else 'b4c')
+            mouse(x, height // 2, 'b5c' if bottom > height else 'b4c')
             time.sleep(0.05)
         raise AssertionError('nœud impossible à faire défiler à l\'écran')
 
@@ -340,7 +354,7 @@ class App:
         self.scroll_into_view(node)
         e = node.get_extents(Atspi.CoordType.WINDOW)
         dx, dy = _OFFSET or (0, 0)
-        Atspi.generate_mouse_event(e.x + e.width // 2 + dx, e.y + e.height // 2 + dy, button)
+        mouse(e.x + e.width // 2 + dx, e.y + e.height // 2 + dy, button)
 
     def menu(self, node, item: str) -> None:
         """Clic droit sur `node` puis choix de l'entrée `item` dans le menu contextuel."""
@@ -349,18 +363,20 @@ class App:
         entry.doActionNamed('click')
 
     def key(self, combo: str) -> None:
-        """Raccourci clavier (syntaxe dogtail : '<Control>k', 'Escape', 'Return')."""
-        from dogtail import rawinput
+        """Raccourci clavier ('<Control>k', '<Control><Shift>o', 'Escape', 'Return', 'Up'…), par XTest (xdotool)."""
+        import re
 
-        if combo.startswith('<'):
-            rawinput.keyCombo(combo)
-        else:
-            rawinput.pressKey(combo)
+        mods = re.findall(r'<(\w+)>', combo)
+        key = re.sub(r'<\w+>', '', combo)
+        names = {'Control': 'ctrl', 'Shift': 'shift', 'Alt': 'alt', 'Super': 'super'}
+        keysym = '+'.join([names.get(m, m.lower()) for m in mods] + [key])
+        subprocess.run(['xdotool', 'key', '--clearmodifiers', keysym], check=True, timeout=5)
+        time.sleep(0.15)
 
     def type(self, text: str) -> None:
-        from dogtail import rawinput
-
-        rawinput.typeText(text)
+        """Saisie de texte (Unicode compris) dans le widget qui a le focus."""
+        subprocess.run(['xdotool', 'type', '--delay', '20', '--', text], check=True, timeout=30)
+        time.sleep(0.15)
 
     def action(self, name: str, parameter: str | None = None) -> None:
         """Active une action de l'application par D-Bus (comme GNOME Shell pour un bouton de notification)."""
@@ -372,6 +388,12 @@ class App:
     def second_instance(self, *args: str) -> None:
         """Relance l'application : la nouvelle instance transmet ses arguments à celle qui tourne."""
         subprocess.run(['gjs', '-m', str(ROOT / 'dist' / 'app' / 'main.js'), *args], env=self.env, timeout=15, capture_output=True)
+
+    def ocg(self, *args: str, cwd: str | None = None) -> str:
+        """CLI `ocg` avec les mêmes réglages que l'application ; renvoie sa sortie (échec : exception)."""
+        res = subprocess.run(['gjs', '-m', str(ROOT / 'dist' / 'cli' / 'ocg.js'), *args], env=self.env, cwd=cwd, capture_output=True, text=True, timeout=30)
+        assert res.returncode == 0, f'ocg {" ".join(args)} : {res.stderr or res.stdout}'
+        return res.stdout
 
     def clipboard(self) -> str:
         """Contenu du presse-papier (écran virtuel)."""

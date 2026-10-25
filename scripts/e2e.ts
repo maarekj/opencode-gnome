@@ -7,10 +7,11 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildApp } from './build.ts';
+import { buildApp, buildCli } from './build.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 await buildApp();
+await buildCli();
 
 // posé par devenv.nix (at-spi2-core)
 const libexec = process.env['ATSPI_LIBEXEC'];
