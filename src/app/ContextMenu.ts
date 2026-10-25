@@ -9,6 +9,31 @@ export interface MenuItem {
   readonly activate: () => void;
 }
 
+/**
+ * Nom accessible des entrées d'un menu (GtkModelButton) : GTK 4 ne l'expose pas, les lecteurs
+ * d'écran (et les tests e2e) ne voient que des entrées sans nom. Appelée à l'affichage du menu.
+ */
+export function labelMenuItems(popover: Gtk.Popover): void {
+  const walk = (w: Gtk.Widget): void => {
+    if (w.get_css_name() === 'modelbutton') {
+      const text: unknown = Reflect.get(w, 'text');
+      if (typeof text === 'string' && text !== '') {
+        // le libellé interne (« labelled-by ») prendrait le pas sur le nom
+        w.reset_relation(Gtk.AccessibleRelation.LABELLED_BY);
+        w.update_property([Gtk.AccessibleProperty.LABEL], [text.replaceAll('_', '')]);
+      }
+    }
+    for (let c = w.get_first_child(); c !== null; c = c.get_next_sibling()) walk(c);
+  };
+  walk(popover);
+}
+
+/** Menus des boutons à menu (`menuModel` déjà posé) : entrées nommées à chaque ouverture. */
+export function labelMenuButton(button: { readonly popover: Gtk.Popover | null }): void {
+  const popover = button.popover;
+  popover?.connect('show', () => labelMenuItems(popover));
+}
+
 /** menus ouverts, et fonctions à appeler quand ils sont tous refermés */
 const openMenus = new Set<Gtk.Popover>();
 const waiters: (() => void)[] = [];
@@ -69,6 +94,7 @@ export function attachContextMenu(widget: Gtk.Widget, sections: () => readonly (
     });
     openMenus.add(popover);
     popover.popup();
+    labelMenuItems(popover);
   };
 
   // bouton « ⋮ » : le menu s'ouvre aussi au clic normal, sous le bouton

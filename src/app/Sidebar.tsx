@@ -13,7 +13,7 @@ import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
-import { attachContextMenu } from './ContextMenu.ts';
+import { attachContextMenu, labelMenuButton } from './ContextMenu.ts';
 import { openFolder } from './OpenFolder.ts';
 import { ideFor, installedIdes, openInIde } from './Ide.ts';
 import { keyedListBox } from './KeyedBox.ts';
@@ -460,6 +460,7 @@ export function Sidebar({
               update();
               onCleanup(unseenFailures.subscribe(update));
               self.menuModel = menu;
+              labelMenuButton(self);
             }}
           />
           <Gtk.Button $type="end" iconName="view-refresh-symbolic" tooltipText="Recharger" onClicked={() => void store.reload()} />

@@ -99,10 +99,21 @@ class Fake:
         self.proc.wait(5)
 
 
+# Décalage entre les coordonnées « fenêtre » de l'accessibilité (GTK 4 sous X11) et l'écran :
+# mesuré une fois par lancement de pytest (cf. App._calibrate), 17 px avec Adwaita sous Xvfb.
+_OFFSET: tuple[int, int] | None = None
+
+
 class App:
     """L'application, pilotée par l'accessibilité."""
 
-    def __init__(self, fake: Fake, args: list[str]) -> None:
+    def __init__(self, fake: Fake, args: list[str], settings: dict | None = None) -> None:
+        self.fake = fake
+        self.config_dir = fake.dir / 'config' / 'opencode-gnome'
+        if settings is not None:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            (self.config_dir / 'settings.json').write_text(json.dumps(settings))
+        self.log_path = fake.dir / 'app.log'
         env = dict(os.environ)
         env.update(
             OPENCODE_GNOME_URL=fake.url,
@@ -112,10 +123,44 @@ class App:
             XDG_CACHE_HOME=str(fake.dir / 'cache'),
             OPENCODE_GNOME_SANDBOX='1',
         )
-        self.proc = subprocess.Popen(['gjs', '-m', str(ROOT / 'dist' / 'app' / 'main.js'), '--size', '1280x800', *args], env=env)
+        self._log = self.log_path.open('w')
+        self.proc = subprocess.Popen(['gjs', '-m', str(ROOT / 'dist' / 'app' / 'main.js'), '--size', '1280x800', *args], env=env, stdout=self._log, stderr=subprocess.STDOUT)
         self.root = wait_until(self._find_app, 15, "démarrage de l'application")
         # premier rendu : la liste des projets est chargée
         wait_until(lambda: self.root.findChildren(lambda n: n.roleName == 'list item'), 15, 'chargement des projets')
+        self._calibrate()
+
+    def _pressed(self, node) -> bool:
+        st = node.getState()
+        return st.contains(Atspi.StateType.CHECKED) or st.contains(Atspi.StateType.PRESSED)
+
+    def _try(self, node, x: int, y: int) -> bool:
+        """Clique en (x, y) ; vrai si la bascule `node` a changé d'état (remise ensuite dans l'état initial)."""
+        Atspi.generate_mouse_event(x, y, 'b1c')
+        time.sleep(0.12)
+        if not self._pressed(node):
+            return False
+        Atspi.generate_mouse_event(x, y, 'b1c')
+        wait_until(lambda: not self._pressed(node), 3, 'bascule de calibrage relâchée')
+        return True
+
+    def _calibrate(self) -> None:
+        """Décalage accessibilité → écran, mesuré sur la bascule de recherche de la barre latérale."""
+        global _OFFSET
+        toggle = self.find('toggle button', 'Rechercher un projet (Ctrl+K)')
+        e = toggle.get_extents(Atspi.CoordType.WINDOW)
+        cx, cy = e.x + e.width // 2, e.y + e.height // 2
+        if _OFFSET is not None and self._try(toggle, cx + _OFFSET[0], cy + _OFFSET[1]):
+            return
+        if self._try(toggle, cx + 17, cy + 17):
+            _OFFSET = (17, 17)
+            return
+        # recherche des bords de la bascule (thème, échelle ou version de GTK différents)
+        ys = [y for y in range(cy - 40, cy + 41, 2) if self._try(toggle, cx + 17, y)]
+        assert ys, 'calibrage impossible : bascule de recherche introuvable à l\'écran'
+        my = (ys[0] + ys[-1]) // 2
+        xs = [x for x in range(cx - 40, cx + 41, 2) if self._try(toggle, x, my)]
+        _OFFSET = ((xs[0] + xs[-1]) // 2 - cx, my - cy)
 
     def _find_app(self):
         for a in tree.root.children:
@@ -128,8 +173,13 @@ class App:
 
     # ---------------------------------------------------------------- recherche
 
-    def find(self, role: str | None = None, name: str | None = None, *, contains: str | None = None, timeout: float = 10, showing: bool = True):
-        """Premier nœud visible du rôle et du nom (exact, ou contenant `contains`)."""
+    def dialog(self, timeout: float = 10):
+        """Dialogue (Adw.AlertDialog, Adw.Dialog) actuellement affiché."""
+        return wait_until(lambda: (self.all('alert') + self.all('dialog') or [None])[-1], timeout, 'dialogue affiché')
+
+    def find(self, role: str | None = None, name: str | None = None, *, contains: str | None = None, timeout: float = 10, showing: bool = True, within=None):
+        """Premier nœud visible du rôle et du nom (exact, ou contenant `contains`), dans `within` sinon toute l'app."""
+        scope = within or self.root
 
         def match(n) -> bool:
             if role is not None and n.roleName != role:
@@ -140,7 +190,7 @@ class App:
                 return False
             return not showing or n.showing
 
-        return wait_until(lambda: self.root.findChild(match, retry=False, requireResult=False), timeout, f'{role or "nœud"} « {name or contains} »')
+        return wait_until(lambda: scope.findChild(match, retry=False, requireResult=False), timeout, f'{role or "nœud"} « {name or contains} »')
 
     def has(self, role: str | None = None, name: str | None = None, *, contains: str | None = None) -> bool:
         try:
@@ -166,17 +216,14 @@ class App:
 
     # ---------------------------------------------------------------- actions
 
-    def click(self, role: str | None = None, name: str | None = None, *, contains: str | None = None, timeout: float = 10):
+    def click(self, role: str | None = None, name: str | None = None, *, contains: str | None = None, timeout: float = 10, within=None):
         """Active un widget par son action d'accessibilité (indépendant des coordonnées)."""
-        node = self.find(role, name, contains=contains, timeout=timeout)
+        node = self.find(role, name, contains=contains, timeout=timeout, within=within)
         if 'click' in node.actions:
             node.doActionNamed('click')
         else:
-            # lignes de liste : pas d'action d'accessibilité, clic réel au centre du nœud. GTK 4
-            # sous X11 ne donne pas de coordonnées écran, mais des coordonnées fenêtre ; Xvfb n'a
-            # pas de gestionnaire de fenêtres : la fenêtre est en 0,0, les deux coïncident
-            e = node.get_extents(Atspi.CoordType.WINDOW)
-            Atspi.generate_mouse_event(e.x + e.width // 2, e.y + e.height // 2, 'b1c')
+            # lignes de liste : pas d'action d'accessibilité, clic réel au centre du nœud
+            self._point(node, 'b1c')
         return node
 
     def composer(self):
@@ -195,12 +242,62 @@ class App:
         wait_until(lambda: composer.text == text, 5, 'texte saisi dans le compositeur')
         self.click('button', contains='Envoyer')
 
+    def settings(self) -> dict:
+        """Réglages enregistrés par l'application (settings.json)."""
+        path = self.config_dir / 'settings.json'
+        return json.loads(path.read_text()) if path.exists() else {}
+
+    def logged(self, label: str, contains: str = '', timeout: float = 5) -> str:
+        """Ligne du bac à sable (`DOSSIER …`, `LIEN …`, `TERMINAL …`) écrite par l'application."""
+
+        def check() -> str | None:
+            for line in self.log_path.read_text(errors='replace').splitlines():
+                i = line.find(f'{label} ')
+                if i != -1 and contains in line[i:]:
+                    return line[i:]
+            return None
+
+        return wait_until(check, timeout, f'ligne « {label} {contains} » journalisée')
+
+    def all(self, role: str, name: str | None = None, *, contains: str | None = None) -> list:
+        """Tous les nœuds visibles du rôle et du nom."""
+        return self.root.findChildren(
+            lambda n: n.roleName == role and n.showing and (name is None or n.name == name) and (contains is None or contains in (n.name or '')),
+        )
+
+    def _point(self, node, button: str) -> None:
+        # GTK 4 sous X11 : pas de coordonnées écran, coordonnées fenêtre décalées (cf. _calibrate)
+        e = node.get_extents(Atspi.CoordType.WINDOW)
+        dx, dy = _OFFSET or (0, 0)
+        Atspi.generate_mouse_event(e.x + e.width // 2 + dx, e.y + e.height // 2 + dy, button)
+
+    def menu(self, node, item: str) -> None:
+        """Clic droit sur `node` puis choix de l'entrée `item` dans le menu contextuel."""
+        self._point(node, 'b3c')
+        entry = self.find('menu item', item)
+        entry.doActionNamed('click')
+
+    def key(self, combo: str) -> None:
+        """Raccourci clavier (syntaxe dogtail : '<Control>k', 'Escape', 'Return')."""
+        from dogtail import rawinput
+
+        if combo.startswith('<'):
+            rawinput.keyCombo(combo)
+        else:
+            rawinput.pressKey(combo)
+
+    def type(self, text: str) -> None:
+        from dogtail import rawinput
+
+        rawinput.typeText(text)
+
     def stop(self) -> None:
         self.proc.terminate()
         try:
             self.proc.wait(5)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+        self._log.close()
 
 
 def scenario(name: str) -> dict:
@@ -212,10 +309,10 @@ def run_app(request):
     """`run_app(scenario, *args)` : démarre un faux opencode et l'application ; tout est arrêté après le test."""
     started: list = []
 
-    def start(data: dict | None, *args: str) -> tuple[Fake, App]:
+    def start(data: dict | None, *args: str, settings: dict | None = None) -> tuple[Fake, App]:
         fake = Fake(data)
         started.append(fake)
-        app = App(fake, list(args))
+        app = App(fake, list(args), settings)
         started.append(app)
         return fake, app
 

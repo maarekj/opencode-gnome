@@ -9,6 +9,7 @@ import { errorMessage } from '../shared/errors.ts';
 import type { Settings } from '../shared/settings.ts';
 import { shq } from '../shared/terminal.ts';
 import { intercepted } from '../shared/sandbox.ts';
+import { labelMenuButton } from './ContextMenu.ts';
 
 export interface Ide {
   /** identifiant du fichier .desktop (ex. code.desktop) */
@@ -213,6 +214,7 @@ export function IdeButton({
     pick.append_item(menuItem(`${own === undefined ? '✓ ' : ''}Par défaut (préférences)`, 'ide.choose', ''));
     menu.append_section('IDE de ce projet', pick);
     button.menuModel = menu;
+    labelMenuButton(button);
   };
   update();
   onCleanup(project.subscribe(update));

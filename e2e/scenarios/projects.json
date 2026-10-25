@@ -1,0 +1,16 @@
+{
+  "projects": [
+    { "id": "prj_alpha", "worktree": "/tmp/opencode-fake/alpha", "name": "alpha", "vcs": "git", "time": { "created": 1, "updated": 3 } },
+    { "id": "prj_beta", "worktree": "/tmp/opencode-fake/beta", "name": "béta-projet", "time": { "created": 1, "updated": 2 } }
+  ],
+  "sessions": [
+    { "id": "ses_a1", "projectID": "prj_alpha", "directory": "/tmp/opencode-fake/alpha", "title": "Refonte de l'API", "agent": "build", "model": { "id": "fake-model", "providerID": "fake" }, "time": { "created": 1792900000000, "updated": 1792900090000 } },
+    { "id": "ses_a2", "projectID": "prj_alpha", "directory": "/tmp/opencode-fake/alpha", "title": "Corriger les tests", "agent": "plan", "time": { "created": 1792900000000, "updated": 1792900080000 } },
+    { "id": "ses_b1", "projectID": "prj_beta", "directory": "/tmp/opencode-fake/beta", "title": "Documentation", "agent": "build", "time": { "created": 1792900000000, "updated": 1792900070000 } }
+  ],
+  "messages": {
+    "ses_a1": [{ "info": { "id": "msg_001", "role": "user", "sessionID": "ses_a1", "time": { "created": 1792900000000 } }, "parts": [{ "id": "prt_001", "type": "text", "messageID": "msg_001", "sessionID": "ses_a1", "text": "Refais l'API REST." }] }],
+    "ses_a2": [],
+    "ses_b1": []
+  }
+}

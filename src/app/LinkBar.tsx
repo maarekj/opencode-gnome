@@ -11,7 +11,7 @@ import { expandVariables, variablesOf, withScheme } from '../shared/direnv.ts';
 import { intercepted } from '../shared/sandbox.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { ProjectLink, Settings } from '../shared/settings.ts';
-import { attachContextMenu } from './ContextMenu.ts';
+import { attachContextMenu, labelMenuButton } from './ContextMenu.ts';
 import { keyedBox } from './KeyedBox.ts';
 
 export interface Browser {
@@ -221,6 +221,7 @@ function BrowserButton({ project, ctx }: { project: Accessor<string | null>; ctx
     pick.append_item(def);
     menu.append_section('Navigateur de ce projet', pick);
     button.menuModel = menu;
+    labelMenuButton(button);
   };
   update();
   onCleanup(project.subscribe(update));
