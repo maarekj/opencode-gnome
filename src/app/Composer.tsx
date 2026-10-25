@@ -366,11 +366,15 @@ export function Composer(props: ComposerProps): JSX.Element {
   };
 
   // ---------------------------------------------------------------- envoi
-  const clear = (): void => {
+  /** Vide le texte (les pièces jointes restent). */
+  const clearText = (): void => {
     setText('');
     mentioned.clear();
-    setFiles([]);
     historyIndex = null;
+  };
+  const clear = (): void => {
+    clearText();
+    setFiles([]);
   };
   const submit = (): void => {
     const raw = buffer.text;
@@ -402,7 +406,8 @@ export function Composer(props: ComposerProps): JSX.Element {
     const go = async (): Promise<void> => {
       if (command?.entry.builtin !== undefined) {
         const builtin = command.entry.builtin;
-        clear();
+        // commande intégrée (/compact, /new…) : les pièces jointes ne sont pas utilisées, gardées (#84)
+        clearText();
         sending = false;
         try {
           const restored = await builtin.run(command.args, choice);
@@ -423,7 +428,10 @@ export function Composer(props: ComposerProps): JSX.Element {
       }
       const ok = await props.send(text, choice, payload);
       sending = false;
-      if (ok) clear();
+      if (!ok) return;
+      // saisi ou joint pendant l'envoi : conservé, seul ce qui a été envoyé est retiré (#84)
+      if (buffer.text === raw) clearText();
+      setFiles(files.peek().filter((f) => !attached.includes(f)));
     };
     void go();
   };
