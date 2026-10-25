@@ -151,10 +151,21 @@ function fullLabelFactory(inRow = false): Gtk.SignalListItemFactory {
   return factory;
 }
 
-function comboRow(title: string, choices: readonly Choice[], value: string | undefined, subtitle = ''): { row: Adw.ComboRow; get: () => string; set: (c: readonly Choice[], v?: string) => void } {
+/**
+ * Liste déroulante de choix. `keep` : une valeur absente de la liste (session supprimée, modèle
+ * retiré…) est conservée comme option « (introuvable) » au lieu de basculer en silence sur le
+ * premier choix, ce qui modifierait la tâche au simple enregistrement (#69).
+ */
+function comboRow(
+  title: string,
+  choices: readonly Choice[],
+  value: string | undefined,
+  subtitle = '',
+): { row: Adw.ComboRow; get: () => string; set: (c: readonly Choice[], v?: string, keep?: boolean) => void } {
   const row = new Adw.ComboRow({ title, subtitle, useSubtitle: false, factory: fullLabelFactory(true), listFactory: fullLabelFactory() });
   let current: readonly Choice[] = [];
-  const set = (c: readonly Choice[], v?: string): void => {
+  const set = (c: readonly Choice[], v?: string, keep = false): void => {
+    if (keep && v !== undefined && v !== '' && !c.some((x) => x.value === v)) c = [{ label: `${v} (introuvable)`, value: v }, ...c];
     current = c;
     row.model = Gtk.StringList.new(c.map((x) => x.label));
     row.selected = Math.max(0, c.findIndex((x) => x.value === v));
@@ -346,15 +357,22 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
       .flatMap((p) => p.sessions)
       .filter((v) => v.session.directory === directory)
       .map((v) => ({ label: v.session.title === '' ? v.session.id : v.session.title, value: v.session.id }));
-    existing.set(sessions.length === 0 ? [{ label: 'Aucune session dans ce dossier', value: '' }] : sessions, existing.get() || (task?.session.pinned === true ? task.session.id : undefined));
+    // session épinglée de la tâche, dans son dossier : conservée même absente de la liste
+    const pinned = task?.session.pinned === true && task.directory === directory ? task.session.id : undefined;
+    const wantedSession = existing.get() || pinned;
+    existing.set(
+      sessions.length === 0 && pinned === undefined ? [{ label: 'Aucune session dans ce dossier', value: '' }] : sessions,
+      wantedSession,
+      wantedSession !== undefined && wantedSession === pinned,
+    );
     try {
       const [providers, agents] = await Promise.all([store.client.providers(directory), store.client.agents(directory)]);
       const models = providers.providers.flatMap((p) => Object.values(p.models).map((m) => ({ label: `${m.name ?? m.id} — ${p.name ?? p.id} (${m.id})`, value: `${p.id}/${m.id}` })));
       variantsOf = new Map(providers.providers.flatMap((p) => Object.values(p.models).map((m) => [`${p.id}/${m.id}`, Object.keys(m.variants ?? {})] as const)));
-      model.set([{ label: 'Par défaut', value: '' }, ...models.toSorted((a, b) => a.label.localeCompare(b.label))], model.get() || task?.model);
+      model.set([{ label: 'Par défaut', value: '' }, ...models.toSorted((a, b) => a.label.localeCompare(b.label))], model.get() || task?.model, true);
       updateVariants();
       const primary = agents.filter((a) => a.mode !== 'subagent' && a.hidden !== true).map((a) => ({ label: a.name, value: a.name }));
-      agent.set([{ label: 'Par défaut', value: '' }, ...primary], agent.get() || task?.agent);
+      agent.set([{ label: 'Par défaut', value: '' }, ...primary], agent.get() || task?.agent, true);
     } catch (e) {
       toast(`Modèles et agents indisponibles : ${errorMessage(e)}`);
     }
