@@ -79,6 +79,9 @@ interface Tab {
 /** libération d'un terminal : abonnements, processus */
 const disposers = new WeakMap<VteNs.Terminal, () => void>();
 
+/** terminaux dont le processus s'est terminé */
+const ended = new WeakSet<VteNs.Terminal>();
+
 /** pid du processus de chaque terminal (arrêté à la fermeture de l'onglet, sans attendre le GC) */
 const pids = new WeakMap<VteNs.Terminal, number>();
 
@@ -145,6 +148,7 @@ function createTerminal(V: typeof VteNs, settings: Settings, spec: TerminalTab, 
 
   term.connect('child-exited', (_t: VteNs.Terminal, status: number) => {
     pids.delete(term);
+    ended.add(term);
     if (status === 0) {
       exited();
       return;
@@ -219,6 +223,17 @@ function projectPanel(V: typeof VteNs, settings: Settings, actions: Gtk.Widget, 
     },
     open: (spec) => {
       let tab = tabs.get(spec.key);
+      // processus terminé (en erreur : onglet laissé ouvert) : l'onglet est recréé, la commande
+      // relancée, au lieu de réafficher l'onglet mort (#91)
+      if (tab !== undefined && ended.has(tab.term)) {
+        const dead = tab;
+        tabs.delete(spec.key);
+        byPage.delete(dead.page);
+        disposers.get(dead.term)?.();
+        disposers.delete(dead.term);
+        view.close_page(dead.page);
+        tab = undefined;
+      }
       if (tab === undefined) {
         const term = createTerminal(V, settings, spec, () => {
           const t = tabs.get(spec.key);
