@@ -503,10 +503,13 @@ export function openTasksWindow(o: TasksWindowOptions): void {
   const overlay = new Adw.ToastOverlay();
   const toast = (m: string): void => overlay.add_toast(new Adw.Toast({ title: esc(m), timeout: 4 }));
   const ctx: EditorContext = { store, monitor, toast };
-  const act = (what: string, fn: () => Promise<void>): void => {
+  const act = (what: string, fn: () => Promise<void>, failed?: () => void): void => {
     fn()
       .then(() => monitor.changed())
-      .catch((e: unknown) => toast(`${what} : ${errorMessage(e)}`));
+      .catch((e: unknown) => {
+        toast(`${what} : ${errorMessage(e)}`);
+        failed?.();
+      });
   };
 
   // ---- tâches
@@ -545,18 +548,18 @@ export function openTasksWindow(o: TasksWindowOptions): void {
   // ---- remplissage
   const rows: Gtk.Widget[] = [];
   const runRows: Gtk.Widget[] = [];
-  let seq = 0;
-  const render = async (): Promise<void> => {
-    const n = (seq += 1);
-    const tasks = loadTasks();
-    const runs = loadRuns();
-    const states = await Promise.all(tasks.map((t) => timerState(t)));
-    if (n !== seq) return;
+  /**
+   * Tâches : état lu par le moniteur (relu périodiquement, publié seulement s'il change) ; les
+   * lignes ne sont reconstruites qu'à un changement réel, plus toutes les 5 s (#80).
+   */
+  const renderTasks = (): void => {
+    const views = monitor.tasks.peek();
     for (const r of rows.splice(0)) tasksGroup.remove(r);
-    tasksStack.visibleChildName = tasks.length === 0 ? 'empty' : 'list';
-    for (const [i, t] of tasks.entries()) {
-      const st = states[i] ?? { next: null, active: false };
-      const last = runs.find((r) => r.task === t.id);
+    tasksStack.visibleChildName = views.length === 0 ? 'empty' : 'list';
+    for (const v of views) {
+      const t = v.task;
+      const st = { next: v.next, active: v.running };
+      const last = v.last ?? undefined;
       const state = st.active ? 'en cours…' : isManual(t) ? '' : t.enabled ? (st.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(st.next)}`) : 'désactivée';
       const lastText = last === undefined ? 'jamais lancée' : `dernier run : ${STATUS[last.status].label.toLowerCase()} ${fmtRelative(last.start)}`;
       const row = new Adw.ActionRow({
@@ -582,7 +585,10 @@ export function openTasksWindow(o: TasksWindowOptions): void {
       // tâche manuelle : rien à activer (pas de planification)
       const sw = new Gtk.Switch({ active: t.enabled, valign: Gtk.Align.CENTER, tooltipText: t.enabled ? 'Désactiver' : 'Activer', visible: !isManual(t) });
       sw.connect('notify::active', () => {
-        if (sw.active !== t.enabled) act('Modification impossible', () => saveTask({ ...t, enabled: sw.active }));
+        if (sw.active !== t.enabled)
+          act('Modification impossible', () => saveTask({ ...t, enabled: sw.active }), () => {
+            sw.active = t.enabled;
+          });
       });
       const del = new Gtk.Button({ iconName: 'user-trash-symbolic', tooltipText: 'Supprimer', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
       del.connect('clicked', () => confirmDelete(win, t, () => act('Suppression impossible', () => removeTask(t.id))));
@@ -593,7 +599,12 @@ export function openTasksWindow(o: TasksWindowOptions): void {
       tasksGroup.add(row);
       rows.push(row);
     }
+  };
 
+  /** Historique : relu à chaque modification du journal des runs ou du filtre. */
+  const renderRuns = (): void => {
+    const tasks = loadTasks();
+    const runs = loadRuns();
     for (const r of runRows.splice(0)) runsGroup.remove(r);
     const names = new Map(tasks.map((t) => [t.id, t.name]));
     const shown = runs.filter((r) => !failedOnly.active || isFailure(r)).slice(0, 100);
@@ -625,23 +636,25 @@ export function openTasksWindow(o: TasksWindowOptions): void {
     historyTab.needsAttention = monitor.unseen.peek() > 0 && stack.visibleChildName !== 'history';
     historyTab.badgeNumber = monitor.unseen.peek();
   };
-  const refresh = (): void => {
-    render().catch((e: unknown) => toast(errorMessage(e)));
+  const refreshRuns = (): void => {
+    try {
+      renderRuns();
+    } catch (e) {
+      toast(errorMessage(e));
+    }
   };
-  failedOnly.connect('notify::active', refresh);
+  const refresh = (): void => {
+    renderTasks();
+    refreshRuns();
+  };
+  failedOnly.connect('notify::active', refreshRuns);
 
   stack.connect('notify::visible-child-name', () => {
     if (stack.visibleChildName === 'history') monitor.markSeen();
-    refresh();
+    refreshRuns();
   });
-  const unsubscribe = [monitor.version.subscribe(refresh), monitor.unseen.subscribe(refresh)];
-  // prochaine exécution, run en cours : lus dans systemd
-  const timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
-    refresh();
-    return GLib.SOURCE_CONTINUE;
-  });
+  const unsubscribe = [monitor.tasks.subscribe(renderTasks), monitor.version.subscribe(refreshRuns), monitor.unseen.subscribe(refreshRuns)];
   win.connect('close-request', () => {
-    GLib.source_remove(timer);
     for (const u of unsubscribe) u();
     current = null;
     return false;
