@@ -21,6 +21,10 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - `pnpm test` : specs unitaires jasmine-gjs (`specs/*.spec.ts`, describe / it / expect ; une seule :
   `pnpm test specs/git.spec.ts`), puis tests GJS sous Xvfb (`tests/*.ts`, bundlés) ; échec sur tout `Gtk-WARNING`/`Gtk-CRITICAL`
   ou délai dépassé. Ne jamais attacher un `Gtk.Popover` (`set_parent`) à un `Gtk.TextView` (#54).
+- `pnpm e2e` : tests de bout en bout (`e2e/test_*.py`, pytest + dogtail) sur le faux opencode : l'app est
+  pilotée par l'accessibilité (rôle et nom : texte ou infobulle) sur un écran virtuel, bus D-Bus,
+  bus d'accessibilité, GSettings et dossier d'exécution privés. Un seul : `pnpm e2e -k permission`.
+  Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `pnpm screenshot [sortie.png] [-- --session ID]` : lance l'app sur un écran virtuel (Xvfb)
   et en fait une capture. Toujours valider un changement d'interface ainsi, jamais en ouvrant

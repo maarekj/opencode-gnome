@@ -14,7 +14,8 @@
     "install-local": "node scripts/install.ts",
     "screenshot": "node scripts/screenshot.ts",
     "test": "node scripts/test.ts",
-    "fake-opencode": "node scripts/fake-opencode.ts"
+    "fake-opencode": "node scripts/fake-opencode.ts",
+    "e2e": "node scripts/e2e.ts"
   },
   "dependencies": {
     "gnim": "^1.9.1",
