@@ -843,22 +843,55 @@ export function ConversationView({
   const loadOlder = (): void => {
     if (!conversation.hasOlder.peek() || conversation.loadingOlder.peek()) return;
     const sw = scrolledRef;
-    if (sw === null) return;
+    const box = blocksRef;
+    if (sw === null || box === null) return;
     const adj = sw.get_vadjustment();
-    const fromBottom = adj.upper - adj.value;
+    // ancre : premier bloc visible, gardé au même endroit pendant que les messages précédents
+    // s'ajoutent au-dessus ; du contenu arrivant en bas ne déplace pas la vue (#89)
+    let anchor: Gtk.Widget | null = null;
+    let before = 0;
+    for (let w = box.get_first_child(); w !== null; w = w.get_next_sibling()) {
+      const [ok, rect] = w.compute_bounds(sw);
+      if (ok && w.get_visible() && rect.get_y() + rect.get_height() > 0) {
+        anchor = w;
+        before = rect.get_y();
+        break;
+      }
+    }
     void (async () => {
       await conversation.loadOlder();
-      // les blocs sont construits au prochain tour de boucle : on suit la croissance du contenu
-      // un court moment, puis on rend la main
-      const handler = adj.connect('notify::upper', () => {
-        adj.value = adj.upper - fromBottom;
-      });
-      GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+      if (anchor === null || disposed) return;
+      const target = anchor;
+      // les blocs sont construits au prochain tour de boucle : recalage à chaque croissance du
+      // contenu, jusqu'à 400 ms sans changement
+      let quiet = 0;
+      const recalc = (): void => {
+        const [ok, rect] = target.compute_bounds(sw);
+        if (ok) adj.value += rect.get_y() - before;
+        if (quiet !== 0) GLib.source_remove(quiet);
+        quiet = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
+          quiet = 0;
+          adj.disconnect(handler);
+          stopAnchoring = null;
+          return GLib.SOURCE_REMOVE;
+        });
+      };
+      const handler = adj.connect('notify::upper', recalc);
+      stopAnchoring = () => {
+        if (quiet !== 0) GLib.source_remove(quiet);
         adj.disconnect(handler);
-        return GLib.SOURCE_REMOVE;
-      });
+      };
+      recalc();
     })();
   };
+  let disposed = false;
+  let stopAnchoring: (() => void) | null = null;
+  onCleanup(() => {
+    disposed = true;
+    stopAnchoring?.();
+  });
+  /** boîte des blocs de la conversation */
+  let blocksRef: Gtk.Box | null = null;
   let scrolledRef: Gtk.ScrolledWindow | null = null;
   /** distance au haut (px) en deçà de laquelle les messages précédents sont chargés */
   const NEAR_TOP = 600;
@@ -934,6 +967,7 @@ export function ConversationView({
             orientation={Gtk.Orientation.VERTICAL}
             spacing={14}
             $={(self: Gtk.Box) => {
+              blocksRef = self;
               keepReadingPosition(self, showTools);
               whenRevealed(() => {
                 const t0 = Date.now();
