@@ -7,7 +7,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createState, onCleanup, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
-import { esc, fmtRelative, fmtStamp } from '../shared/format.ts';
+import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
@@ -15,8 +15,8 @@ import { attachContextMenu } from './ContextMenu.ts';
 import { openFolder } from './OpenFolder.ts';
 import { ideFor, installedIdes, openInIde } from './Ide.ts';
 import { keyedListBox } from './KeyedBox.ts';
-import { confirmDelete, openEditor, STATUS, type EditorContext, type TaskView } from './TasksWindow.tsx';
-import { describeSchedule, isManual, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
+import { openEditor, taskIcon, taskMenu, taskRunButton, taskState, type EditorContext, type TaskRowContext, type TaskView } from './TasksWindow.tsx';
+import { describeSchedule } from '../shared/tasks.ts';
 import { TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
 import { askDelete, askRename, type SessionActions } from './SessionMenu.ts';
 
@@ -200,58 +200,28 @@ function ideMenuItem(path: string, actions: ProjectActions): { label: string; ac
 }
 
 /** Lance / interrompt une action sur une tâche, erreur affichée. */
-function taskAct(actions: ProjectActions, what: string, fn: () => Promise<void>): void {
-  fn()
-    .then(() => actions.tasks.monitor.changed())
-    .catch((e: unknown) => actions.toast(`${what} : ${errorMessage(e)}`));
-}
-
 /**
  * Tâche planifiée, sous son projet : état du dernier run (spinner pendant un run), prochaine
  * exécution en infobulle, ▶ / ■ au survol, menu contextuel. Clic : session du dernier run.
  */
 function TaskTreeRow({ view, last, actions }: { view: TaskView; last: boolean; actions: ProjectActions }): JSX.Element {
-  const { task, running } = view;
-  const status = view.last === null ? null : STATUS[view.last.status];
-  const when = running ? 'Run en cours' : isManual(task) ? 'Lancée à la main uniquement' : task.enabled ? (view.next === null ? 'Pas de prochaine exécution' : `Prochaine exécution : ${fmtStamp(view.next)}`) : 'Désactivée';
-  const lastText = view.last === null ? 'Jamais lancée' : `Dernier run : ${STATUS[view.last.status].label.toLowerCase()} ${fmtRelative(view.last.start)}${view.last.error === undefined ? '' : `\n${view.last.error}`}`;
-  const run = (): void => taskAct(actions, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task)));
+  const { task } = view;
+  const ctx: TaskRowContext = { editor: actions.tasks, openSession: actions.openSession, openTasksWindow: actions.openTasksWindow };
+  const state = taskState(view);
+  const error = view.last?.error === undefined ? '' : `\n${view.last.error}`;
   return (
     <Gtk.ListBoxRow
       name={`k:${task.id}`}
       cssClasses={[...(last ? ['session-tree-row', 'last'] : ['session-tree-row']), ...(task.enabled ? [] : ['dim-label'])]}
-      tooltipText={`${task.name} · ${describeSchedule(task.schedule)}\n${when}\n${lastText}`}
-      $={(self: Gtk.ListBoxRow) => {
-        attachContextMenu(self, () => [
-          [
-            { label: running ? 'Interrompre le run' : 'Lancer maintenant', activate: run },
-            ...(view.last?.session === undefined ? [] : [{ label: 'Ouvrir la dernière session', activate: () => actions.openSession(view.last?.session ?? '') }]),
-            { label: 'Historique…', activate: () => actions.openTasksWindow('history') },
-          ],
-          [
-            { label: 'Modifier…', activate: () => openEditor(self, actions.tasks, task) },
-            { label: task.enabled ? 'Désactiver' : 'Activer', activate: () => taskAct(actions, 'Modification impossible', () => saveTask({ ...task, enabled: !task.enabled })) },
-          ],
-          [{ label: 'Supprimer…', activate: () => confirmDelete(self, task, () => taskAct(actions, 'Suppression impossible', () => removeTask(task.id))) }],
-        ]);
-      }}
+      tooltipText={`${task.name} · ${describeSchedule(task.schedule)}\n${state.when === '' ? 'Lancée à la main uniquement' : state.when}\n${state.last}${error}`}
+      $={(self: Gtk.ListBoxRow) => attachContextMenu(self, () => taskMenu(view, self, ctx))}
     >
       <Gtk.Box spacing={8} marginStart={34} marginEnd={4} cssClasses={['session-tree-inner']}>
         <Gtk.Box widthRequest={16} valign={Gtk.Align.CENTER}>
-          {running ? (
-            <Adw.Spinner tooltipText="Run en cours" />
-          ) : (
-            <Gtk.Image iconName="alarm-symbolic" cssClasses={status === null || view.last?.status === 'success' ? ['dim-label'] : [status.css]} tooltipText={status?.label ?? 'Jamais lancée'} />
-          )}
+          {taskIcon(view)}
         </Gtk.Box>
         <Gtk.Label label={task.name} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['session-title']} />
-        <Gtk.Button
-          iconName={running ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic'}
-          tooltipText={running ? 'Interrompre le run' : 'Lancer maintenant'}
-          valign={Gtk.Align.CENTER}
-          cssClasses={['flat', 'circular', 'close-button']}
-          onClicked={run}
-        />
+        {taskRunButton(view, ctx, ['flat', 'circular', 'close-button'])}
       </Gtk.Box>
     </Gtk.ListBoxRow>
   );

@@ -4,8 +4,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
-import { errorMessage } from '../shared/errors.ts';
-import { esc, fmtCost, fmtRelative, fmtStamp } from '../shared/format.ts';
+import { esc, fmtCost, fmtRelative } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import { attachContextMenu } from './ContextMenu.ts';
@@ -15,8 +14,8 @@ import { IdeButton } from './Ide.ts';
 import { openGitWindow } from './GitWindow.tsx';
 import { reloadProjectConfig } from './ReloadConfig.ts';
 import { keyedListBox } from './KeyedBox.ts';
-import { confirmDelete, openEditor, STATUS, type EditorContext, type TaskView } from './TasksWindow.tsx';
-import { describeSchedule, isManual, removeTask, saveTask, startRun, stopRun } from '../shared/tasks.ts';
+import { openEditor, taskIcon, taskMenu, taskRunButton, taskState, taskSwitch, type EditorContext, type TaskView } from './TasksWindow.tsx';
+import { describeSchedule } from '../shared/tasks.ts';
 import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
 import { attachSessionMenu, deleteButton, type SessionActions } from './SessionMenu.ts';
 import { asWidget, normalize } from './Sidebar.tsx';
@@ -88,56 +87,24 @@ export interface ProjectTasksContext {
   readonly toast: (message: string) => void;
 }
 
-function runTaskAction(ctx: ProjectTasksContext, what: string, fn: () => Promise<void>, failed?: () => void): void {
-  fn()
-    .then(() => ctx.editor.monitor.changed())
-    .catch((e: unknown) => {
-      ctx.toast(`${what} : ${errorMessage(e)}`);
-      failed?.();
-    });
-}
-
 /** Ligne d'une tâche sur la page du projet : état, horaire, prochaine exécution, actions. */
 function ProjectTaskRow({ view, ctx }: { view: TaskView; ctx: ProjectTasksContext }): Gtk.Widget {
-  const { task, running } = view;
-  const status = view.last === null ? null : STATUS[view.last.status];
-  const when = running ? 'run en cours…' : isManual(task) ? '' : task.enabled ? (view.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(view.next)}`) : 'désactivée';
-  const lastText = view.last === null ? 'jamais lancée' : `dernier run : ${STATUS[view.last.status].label.toLowerCase()} ${fmtRelative(view.last.start)}`;
+  const { task } = view;
+  const state = taskState(view);
   const row = new Adw.ActionRow({
     title: esc(task.name),
-    subtitle: esc(`${[describeSchedule(task.schedule), when, lastText].filter((x) => x !== '').join(' · ')}${view.last?.error === undefined ? '' : `\n${view.last.error}`}`),
+    subtitle: esc(`${[describeSchedule(task.schedule), state.when, state.last].filter((x) => x !== '').join(' · ')}${view.last?.error === undefined ? '' : `\n${view.last.error}`}`),
     subtitleLines: 2,
     activatable: true,
     tooltipText: task.prompt.slice(0, 400),
   });
   if (!task.enabled) row.add_css_class('dim-label');
-  row.add_prefix(
-    running
-      ? new Adw.Spinner({ tooltipText: 'Run en cours' })
-      : new Gtk.Image({ iconName: 'alarm-symbolic', cssClasses: status === null || view.last?.status === 'success' ? ['dim-label'] : [status.css], tooltipText: status?.label ?? 'Jamais lancée' }),
-  );
-  const runBtn = new Gtk.Button({ iconName: running ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic', tooltipText: running ? 'Interrompre le run' : 'Lancer maintenant', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
-  runBtn.connect('clicked', () => runTaskAction(ctx, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task))));
-  const sw = new Gtk.Switch({ active: task.enabled, valign: Gtk.Align.CENTER, tooltipText: task.enabled ? 'Désactiver' : 'Activer' });
-  sw.connect('notify::active', () => {
-    // échec : l'interrupteur revient à l'état réel de la tâche (#81)
-    if (sw.active !== task.enabled) runTaskAction(ctx, 'Modification impossible', () => saveTask({ ...task, enabled: sw.active }), () => {
-        sw.active = task.enabled;
-      });
-  });
+  row.add_prefix(taskIcon(view));
   const more = new Gtk.Button({ iconName: 'view-more-symbolic', tooltipText: 'Plus d’actions', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
-  const menu = (): readonly (readonly { label: string; activate: () => void }[])[] => [
-    [
-      ...(view.last?.session === undefined ? [] : [{ label: 'Ouvrir la dernière session', activate: () => ctx.openSession(view.last?.session ?? '') }]),
-      { label: 'Historique…', activate: () => ctx.openTasksWindow('history') },
-      { label: 'Modifier…', activate: () => openEditor(row, ctx.editor, task) },
-    ],
-    [{ label: 'Supprimer…', activate: () => confirmDelete(row, task, () => runTaskAction(ctx, 'Suppression impossible', () => removeTask(task.id))) }],
-  ];
-  attachContextMenu(row, menu);
-  attachContextMenu(more, menu, { primary: true });
-  row.add_suffix(runBtn);
-  row.add_suffix(sw);
+  attachContextMenu(row, () => taskMenu(view, row, ctx));
+  attachContextMenu(more, () => taskMenu(view, row, ctx), { primary: true });
+  row.add_suffix(taskRunButton(view, ctx));
+  row.add_suffix(taskSwitch(view, ctx));
   row.add_suffix(more);
   // clic : session du dernier run, sinon l'éditeur
   row.connect('activated', () => {

@@ -10,6 +10,7 @@ import Pango from 'gi://Pango';
 import { createState, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtDuration, fmtRelative, fmtStamp } from '../shared/format.ts';
+import { attachContextMenu } from './ContextMenu.ts';
 import { prettyPath, type Store } from '../shared/store.ts';
 import {
   describeSchedule,
@@ -41,6 +42,92 @@ export const STATUS: Readonly<Record<RunRecord['status'], { icon: string; label:
   cancelled: { icon: 'media-playback-stop-symbolic', label: 'Annulé', css: 'dim-label' },
   skipped: { icon: 'action-unavailable-symbolic', label: 'Sauté', css: 'warning' },
 };
+
+// ------------------------------------------------------------------ lignes de tâche (communes)
+
+/** Contexte d'une ligne de tâche : barre latérale, page du projet, fenêtre des tâches (#104). */
+export interface TaskRowContext {
+  readonly editor: EditorContext;
+  readonly openSession: (sessionID: string) => void;
+  readonly openTasksWindow: (page: 'tasks' | 'history') => void;
+}
+
+/** Action sur une tâche : erreur affichée (et `failed` appelé), état relu en cas de succès. */
+export function taskAction(ctx: Pick<EditorContext, 'monitor' | 'toast'>, what: string, fn: () => Promise<void>, failed?: () => void): void {
+  fn()
+    .then(() => ctx.monitor.changed())
+    .catch((e: unknown) => {
+      ctx.toast(`${what} : ${errorMessage(e)}`);
+      failed?.();
+    });
+}
+
+/** État d'une tâche en deux morceaux de phrase (minuscules) : prochaine exécution, dernier run. */
+export function taskState(view: TaskView): { when: string; last: string } {
+  const { task, running, next } = view;
+  // tâche manuelle : pas de prochaine exécution à afficher
+  const when = running ? 'run en cours' : isManual(task) ? '' : task.enabled ? (next === null ? 'pas de prochaine exécution' : `prochaine exécution : ${fmtStamp(next)}`) : 'désactivée';
+  const last = view.last === null ? 'jamais lancée' : `dernier run : ${STATUS[view.last.status].label.toLowerCase()} ${fmtRelative(view.last.start)}`;
+  return { when, last };
+}
+
+/** Icône d'état : spinner pendant un run, sinon alarme (ou icône du dernier statut) colorée. */
+export function taskIcon(view: TaskView, style: 'alarm' | 'status' = 'alarm'): Gtk.Widget {
+  if (view.running) return new Adw.Spinner({ tooltipText: 'Run en cours', valign: Gtk.Align.CENTER });
+  const s = view.last === null ? null : STATUS[view.last.status];
+  const quiet = s === null || (style === 'alarm' && view.last?.status === 'success');
+  return new Gtk.Image({
+    iconName: style === 'status' ? (s?.icon ?? 'alarm-symbolic') : 'alarm-symbolic',
+    cssClasses: quiet || s === null ? ['dim-label'] : [s.css],
+    tooltipText: s?.label ?? 'Jamais lancée',
+    valign: Gtk.Align.CENTER,
+  });
+}
+
+/** Bouton ▶ / ■ : lance ou interrompt un run. */
+export function taskRunButton(view: TaskView, ctx: TaskRowContext, cssClasses: string[] = ['flat']): Gtk.Button {
+  const { task, running } = view;
+  const button = new Gtk.Button({
+    iconName: running ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic',
+    tooltipText: running ? 'Interrompre le run' : 'Lancer maintenant',
+    valign: Gtk.Align.CENTER,
+    cssClasses,
+  });
+  button.connect('clicked', () => taskAction(ctx.editor, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task))));
+  return button;
+}
+
+/** Interrupteur activée / désactivée (restauré si l'enregistrement échoue). */
+export function taskSwitch(view: TaskView, ctx: TaskRowContext): Gtk.Switch {
+  const { task } = view;
+  // tâche manuelle : rien à activer (pas de planification)
+  const sw = new Gtk.Switch({ active: task.enabled, valign: Gtk.Align.CENTER, tooltipText: task.enabled ? 'Désactiver' : 'Activer', visible: !isManual(task) });
+  sw.connect('notify::active', () => {
+    if (sw.active === task.enabled) return;
+    taskAction(ctx.editor, 'Modification impossible', () => saveTask({ ...task, enabled: sw.active }), () => {
+      sw.active = task.enabled;
+    });
+  });
+  return sw;
+}
+
+/** Menu d'une tâche : lancer / interrompre, dernière session, historique, modifier, activer, supprimer. */
+export function taskMenu(view: TaskView, anchor: Gtk.Widget, ctx: TaskRowContext): readonly (readonly { label: string; activate: () => void }[])[] {
+  const { task, running } = view;
+  const session = view.last?.session;
+  return [
+    [
+      { label: running ? 'Interrompre le run' : 'Lancer maintenant', activate: () => taskAction(ctx.editor, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task))) },
+      ...(session === undefined ? [] : [{ label: 'Ouvrir la dernière session', activate: () => ctx.openSession(session) }]),
+      { label: 'Historique…', activate: () => ctx.openTasksWindow('history') },
+    ],
+    [
+      { label: 'Modifier…', activate: () => openEditor(anchor, ctx.editor, task) },
+      ...(isManual(task) ? [] : [{ label: task.enabled ? 'Désactiver' : 'Activer', activate: () => taskAction(ctx.editor, 'Modification impossible', () => saveTask({ ...task, enabled: !task.enabled })) }]),
+    ],
+    [{ label: 'Supprimer…', activate: () => confirmDelete(anchor, task, () => taskAction(ctx.editor, 'Suppression impossible', () => removeTask(task.id))) }],
+  ];
+}
 
 // ------------------------------------------------------------------ suivi des fichiers
 
@@ -508,15 +595,13 @@ export function openTasksWindow(o: TasksWindowOptions): void {
   const overlay = new Adw.ToastOverlay();
   const toast = (m: string): void => overlay.add_toast(new Adw.Toast({ title: esc(m), timeout: 4 }));
   const ctx: EditorContext = { store, monitor, toast };
-  const act = (what: string, fn: () => Promise<void>, failed?: () => void): void => {
-    fn()
-      .then(() => monitor.changed())
-      .catch((e: unknown) => {
-        toast(`${what} : ${errorMessage(e)}`);
-        failed?.();
-      });
+  const rowCtx: TaskRowContext = {
+    editor: ctx,
+    openSession: (id) => app.activate_action('open-session', new GLib.Variant('s', id)),
+    openTasksWindow: (page) => {
+      stack.visibleChildName = page;
+    },
   };
-
   // ---- tâches
   const tasksGroup = new Adw.PreferencesGroup({ title: 'Tâches', description: 'Prompts lancés selon leur horaire (même quand l’application est fermée) ou à la main (▶).' });
   const addButton = new Gtk.Button({ iconName: 'list-add-symbolic', tooltipText: 'Nouvelle tâche', cssClasses: ['flat'] });
@@ -564,43 +649,22 @@ export function openTasksWindow(o: TasksWindowOptions): void {
     tasksStack.visibleChildName = views.length === 0 ? 'empty' : 'list';
     for (const v of views) {
       const t = v.task;
-      const st = { next: v.next, active: v.running };
-      const last = v.last ?? undefined;
-      const state = st.active ? 'en cours…' : isManual(t) ? '' : t.enabled ? (st.next === null ? 'pas de prochaine exécution' : `prochaine : ${fmtStamp(st.next)}`) : 'désactivée';
-      const lastText = last === undefined ? 'jamais lancée' : `dernier run : ${STATUS[last.status].label.toLowerCase()} ${fmtRelative(last.start)}`;
+      const state = taskState(v);
       const row = new Adw.ActionRow({
         title: esc(t.name),
-        subtitle: esc(`${[describeSchedule(t.schedule), state].filter((x) => x !== '').join(' · ')}\n${lastText} · ${prettyPath(t.directory)}`),
+        subtitle: esc(`${[describeSchedule(t.schedule), state.when].filter((x) => x !== '').join(' · ')}\n${state.last} · ${prettyPath(t.directory)}`),
         subtitleLines: 2,
         activatable: true,
         tooltipText: t.prompt.slice(0, 400),
       });
       if (!t.enabled) row.add_css_class('dim-label');
-      if (st.active) row.add_prefix(new Adw.Spinner());
-      else {
-        const s = last === undefined ? null : STATUS[last.status];
-        row.add_prefix(new Gtk.Image({ iconName: s?.icon ?? 'alarm-symbolic', cssClasses: s === null ? ['dim-label'] : [s.css], tooltipText: s?.label ?? 'Jamais lancée' }));
-      }
-      const runBtn = new Gtk.Button({
-        iconName: st.active ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic',
-        tooltipText: st.active ? 'Interrompre le run' : 'Lancer maintenant',
-        valign: Gtk.Align.CENTER,
-        cssClasses: ['flat'],
-      });
-      runBtn.connect('clicked', () => act(st.active ? 'Arrêt impossible' : 'Lancement impossible', () => (st.active ? stopRun(t) : startRun(t))));
-      // tâche manuelle : rien à activer (pas de planification)
-      const sw = new Gtk.Switch({ active: t.enabled, valign: Gtk.Align.CENTER, tooltipText: t.enabled ? 'Désactiver' : 'Activer', visible: !isManual(t) });
-      sw.connect('notify::active', () => {
-        if (sw.active !== t.enabled)
-          act('Modification impossible', () => saveTask({ ...t, enabled: sw.active }), () => {
-            sw.active = t.enabled;
-          });
-      });
+      row.add_prefix(taskIcon(v, 'status'));
       const del = new Gtk.Button({ iconName: 'user-trash-symbolic', tooltipText: 'Supprimer', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
-      del.connect('clicked', () => confirmDelete(win, t, () => act('Suppression impossible', () => removeTask(t.id))));
-      row.add_suffix(runBtn);
-      row.add_suffix(sw);
+      del.connect('clicked', () => confirmDelete(win, t, () => taskAction(ctx, 'Suppression impossible', () => removeTask(t.id))));
+      row.add_suffix(taskRunButton(v, rowCtx));
+      row.add_suffix(taskSwitch(v, rowCtx));
       row.add_suffix(del);
+      attachContextMenu(row, () => taskMenu(v, row, rowCtx));
       row.connect('activated', () => openEditor(win, ctx, t));
       tasksGroup.add(row);
       rows.push(row);
