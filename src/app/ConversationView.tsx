@@ -492,6 +492,38 @@ function copyText(widget: Gtk.Widget, value: string): void {
 }
 
 /**
+ * Texte en cours de génération : le rendu markdown complet est refait à chaque mise à jour, donc
+ * espacé selon la longueur (≈ 1 ms par 10 caractères, de 80 ms à 1 s) ; la dernière valeur est
+ * toujours affichée (#75).
+ */
+function throttled(source: Accessor<string>): Accessor<string> {
+  const [shown, setShown] = createState(source.peek());
+  let timer = 0;
+  let last = 0;
+  const apply = (): void => {
+    timer = 0;
+    last = GLib.get_monotonic_time() / 1000;
+    setShown(source.peek());
+  };
+  const unsubscribe = source.subscribe(() => {
+    if (timer !== 0) return;
+    const delay = Math.min(1000, Math.max(80, source.peek().length / 10));
+    const wait = Math.max(0, last + delay - GLib.get_monotonic_time() / 1000);
+    if (wait === 0) apply();
+    else
+      timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.ceil(wait), () => {
+        apply();
+        return GLib.SOURCE_REMOVE;
+      });
+  });
+  onCleanup(() => {
+    unsubscribe();
+    if (timer !== 0) GLib.source_remove(timer);
+  });
+  return shown;
+}
+
+/**
  * Message en markdown, sélectionnable d'un bloc (un seul TextView), avec un bouton « Copier »
  * (markdown source) qui apparaît au survol.
  */
@@ -511,7 +543,7 @@ function Copyable({ text: source, css, onFork }: { text: Accessor<string>; css: 
         />
       )}
       <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
-        <With value={source}>{(t: string) => MarkdownView({ text: t })}</With>
+        <With value={throttled(source)}>{(t: string) => MarkdownView({ text: t })}</With>
       </Gtk.Box>
       <Gtk.Button
         $type="overlay"
@@ -565,7 +597,7 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
       widget = (
         <Gtk.Expander label={block.part(reasoningLabel)} cssClasses={['reasoning']}>
           <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
-            <With value={text(block.part)}>{(t: string) => MarkdownView({ text: t })}</With>
+            <With value={throttled(text(block.part))}>{(t: string) => MarkdownView({ text: t })}</With>
           </Gtk.Box>
         </Gtk.Expander>
       );
