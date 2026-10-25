@@ -48,6 +48,8 @@ const Scenario = z.object({
   providers: z.optional(z.looseObject({})),
   commands: z.optional(z.array(z.looseObject({ name: z.string() }))),
   skills: z.optional(z.array(z.looseObject({ name: z.string() }))),
+  /** fichiers modifiés de l'arbre de travail (`GET /vcs/diff`) : `{ file, status, additions, deletions, patch }` */
+  vcsDiff: z.optional(z.array(z.looseObject({ file: z.string() }))),
   /** fichiers du projet pour la complétion `@` (`GET /find/file`) ; un dossier finit par `/` */
   files: z.optional(z.array(z.string())),
   /** liste de tâches par session (`GET /session/:id/todo`) */
@@ -282,7 +284,7 @@ function simpleRoute(p: string, query: Record<string, string>): unknown {
     case '/vcs':
       return { branch: 'main' };
     case '/vcs/diff':
-      return [];
+      return s.vcsDiff ?? [];
     case '/find/file': {
       // comme opencode : correspondance approximative sur le chemin, dossiers avec `type=directory`
       const q = (query['query'] ?? '').toLowerCase();
