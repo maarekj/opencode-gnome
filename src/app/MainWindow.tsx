@@ -462,7 +462,7 @@ function Sidebar({
         <Adw.Banner
           $type="top"
           revealed={conn((c) => c.state === 'error')}
-          title={conn((c) => (c.state === 'error' ? `Serveur opencode injoignable : ${c.message}` : ''))}
+          title={conn((c) => (c.state === 'error' ? esc(`Serveur opencode injoignable : ${c.message}`) : ''))}
           buttonLabel="Démarrer"
           onButtonClicked={startServer}
         />
