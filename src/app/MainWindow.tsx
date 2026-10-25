@@ -615,10 +615,13 @@ interface ProjectTasksContext {
   readonly toast: (message: string) => void;
 }
 
-function runTaskAction(ctx: ProjectTasksContext, what: string, fn: () => Promise<void>): void {
+function runTaskAction(ctx: ProjectTasksContext, what: string, fn: () => Promise<void>, failed?: () => void): void {
   fn()
     .then(() => ctx.editor.monitor.changed())
-    .catch((e: unknown) => ctx.toast(`${what} : ${errorMessage(e)}`));
+    .catch((e: unknown) => {
+      ctx.toast(`${what} : ${errorMessage(e)}`);
+      failed?.();
+    });
 }
 
 /** Ligne d'une tâche sur la page du projet : état, horaire, prochaine exécution, actions. */
@@ -644,7 +647,10 @@ function ProjectTaskRow({ view, ctx }: { view: TaskView; ctx: ProjectTasksContex
   runBtn.connect('clicked', () => runTaskAction(ctx, running ? 'Arrêt impossible' : 'Lancement impossible', () => (running ? stopRun(task) : startRun(task))));
   const sw = new Gtk.Switch({ active: task.enabled, valign: Gtk.Align.CENTER, tooltipText: task.enabled ? 'Désactiver' : 'Activer' });
   sw.connect('notify::active', () => {
-    if (sw.active !== task.enabled) runTaskAction(ctx, 'Modification impossible', () => saveTask({ ...task, enabled: sw.active }));
+    // échec : l'interrupteur revient à l'état réel de la tâche (#81)
+    if (sw.active !== task.enabled) runTaskAction(ctx, 'Modification impossible', () => saveTask({ ...task, enabled: sw.active }), () => {
+        sw.active = task.enabled;
+      });
   });
   const more = new Gtk.Button({ iconName: 'view-more-symbolic', tooltipText: 'Plus d’actions', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
   const menu = (): readonly (readonly { label: string; activate: () => void }[])[] => [
@@ -1148,11 +1154,15 @@ export function MainWindow({
     overlay?.add_toast(new Adw.Toast({ title: esc(title), timeout: 4 }));
   };
   /** Exécute une action serveur ; en cas d'échec, affiche l'erreur. */
-  const run = (what: string, fn: () => Promise<void>): void => {
-    fn().catch((e: unknown) => {
-      toast(`${what} : ${errorMessage(e)}`);
-    });
-  };
+  /** Exécute une action serveur ; en cas d'échec, affiche l'erreur. Résolue à false si échec. */
+  const run = (what: string, fn: () => Promise<void>): Promise<boolean> =>
+    fn().then(
+      () => true,
+      (e: unknown) => {
+        toast(`${what} : ${errorMessage(e)}`);
+        return false;
+      },
+    );
 
   const externalAttach = (directory: string, sessionID?: string): void => {
     try {
@@ -1228,11 +1238,11 @@ export function MainWindow({
       open: () => actions.openSession(session.id),
       openInTerminal: () => actions.attach(session.directory, session.id),
       rename: (title) =>
-        run('Renommage impossible', async () => {
+        void run('Renommage impossible', async () => {
           store.upsertSession(await store.client.renameSession(session.id, session.directory, title));
         }),
       fork: () =>
-        run('Fork impossible', async () => {
+        void run('Fork impossible', async () => {
           const copy = await store.client.forkSession(session.id, session.directory);
           store.upsertSession(copy);
           actions.openSession(copy.id);

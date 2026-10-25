@@ -10,7 +10,8 @@ export interface SessionActions {
   openInTerminal: () => void;
   rename: (title: string) => void;
   fork: () => void;
-  delete: () => void;
+  /** résolue à false si la suppression a échoué (erreur déjà affichée) */
+  delete: () => Promise<boolean>;
 }
 
 /** Demande un nouveau titre. */
@@ -30,7 +31,7 @@ export function askRename(parent: Gtk.Widget, current: string, rename: (title: s
 }
 
 /** Confirme la suppression. */
-export function askDelete(parent: Gtk.Widget, title: string, remove: () => void): void {
+export function askDelete(parent: Gtk.Widget, title: string, remove: () => Promise<boolean>): void {
   const dialog = new Adw.AlertDialog({
     heading: 'Supprimer la session ?',
     body: `« ${title} » et tout son historique seront supprimés définitivement.`,
@@ -41,7 +42,7 @@ export function askDelete(parent: Gtk.Widget, title: string, remove: () => void)
   dialog.add_response('delete', 'Supprimer');
   dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE);
   dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
-    if (response === 'delete') remove();
+    if (response === 'delete') void remove();
   });
   dialog.present(parent);
 }
@@ -53,7 +54,7 @@ const CONFIRM_DELAY = 4000;
  * supprime. Sans second clic, il revient à son état normal après quelques secondes ou quand le
  * pointeur quitte le bouton.
  */
-export function deleteButton(remove: () => void): Gtk.Button {
+export function deleteButton(remove: () => Promise<boolean>): Gtk.Button {
   const button = new Gtk.Button({ iconName: 'user-trash-symbolic', tooltipText: 'Supprimer', cssClasses: ['flat', 'delete-button'] });
   let armed = false;
   let timer = 0;
@@ -70,7 +71,11 @@ export function deleteButton(remove: () => void): Gtk.Button {
     if (armed) {
       reset();
       button.sensitive = false;
-      remove();
+      // échec (erreur affichée) : le bouton redevient utilisable (#81)
+      void remove().then((ok) => {
+        button.sensitive = !ok;
+        return ok;
+      });
       return;
     }
     armed = true;
