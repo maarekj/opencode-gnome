@@ -778,9 +778,17 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
       return GLib.SOURCE_REMOVE;
     });
   });
-  // retour sur la fenêtre : un commit a pu avoir lieu ailleurs
+  // retour sur la fenêtre : un commit a pu avoir lieu ailleurs. Au plus toutes les 5 s (Alt-Tab
+  // répétés), et pas pour Comparer (deux journaux complets) : rechargé à la demande (#79)
+  let lastActive = 0;
   dialog.connect('notify::is-active', () => {
-    if (dialog.isActive && loaded.size > 0) reloadAll();
+    if (!dialog.isActive || loaded.size === 0) return;
+    const now = GLib.get_monotonic_time();
+    if (now - lastActive < 5_000_000) return;
+    lastActive = now;
+    loaded.clear();
+    if (stack.visibleChildName === 'compare') loaded.add('compare');
+    else loadVisible(true);
   });
   dialog.connect('close-request', () => {
     unsubscribe?.();
