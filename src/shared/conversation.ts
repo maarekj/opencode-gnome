@@ -423,6 +423,9 @@ export class Conversation {
       this.#structureChanged = true;
     } else {
       if ((m.info.error === undefined) !== (info.error === undefined)) this.#structureChanged = true;
+      // message provisoire (partie reçue avant lui) : rôle et heure réels connus maintenant (#98)
+      // (#pushParts recrée alors les blocs dont le type change)
+      if (m.info.role !== info.role || m.info.time.created !== info.time.created) this.#structureChanged = true;
       m.info = info;
     }
     const err = errorPart(info);
@@ -539,8 +542,8 @@ export class Conversation {
       if (entry === undefined) continue;
       const kind = entry.value.type === 'error' ? 'error' : kindOf(m.info.role, entry.value);
       if (kind === null) continue;
-      // le type visible peut avoir changé : nouveau bloc
-      if (kind !== entry.block.kind) {
+      // le type visible ou l'heure (message provisoire) peut avoir changé : nouveau bloc
+      if (kind !== entry.block.kind || entry.block.created !== m.info.time.created) {
         const [accessor, set] = createState<Part>(entry.value);
         this.#parts.set(partID, { block: { id: partID, kind, part: accessor, created: m.info.time.created }, set, value: entry.value, dirty: false });
       }
