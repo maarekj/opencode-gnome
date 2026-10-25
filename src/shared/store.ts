@@ -10,6 +10,8 @@ export type Activity = 'idle' | 'busy' | 'retry' | 'question' | 'permission';
 export interface SessionView {
   readonly session: Session;
   readonly activity: Activity;
+  /** l'agent a fini de répondre et la session n'a pas été ouverte depuis */
+  readonly unread: boolean;
 }
 
 /**
@@ -26,6 +28,8 @@ export interface ProjectView {
   readonly working: number;
   /** sessions qui attendent une réponse de l'utilisateur (question / permission) */
   readonly waiting: number;
+  /** sessions non lues (réponse de l'agent pas encore vue) */
+  readonly unread: number;
   readonly updated: number;
 }
 
@@ -87,6 +91,8 @@ export class Store {
   readonly #reconnectListeners = new Set<() => void>();
   #connectedOnce = false;
   #childrenSignature = '';
+  /** sessions non lues (tenu par l'app, persistant dans ses réglages) */
+  #unread: ReadonlySet<string> = new Set();
   /** numéro du dernier rechargement (les réponses des précédents sont ignorées) */
   #reloadGen = 0;
   /** sessions changées par un événement pendant le rechargement en cours */
@@ -215,6 +221,13 @@ export class Store {
   }
 
   /** S'abonne aux événements de messages d'une session. Retourne la fonction de désabonnement. */
+  /** Sessions non lues (affichage). */
+  setUnread(ids: ReadonlySet<string>): void {
+    if (ids.size === this.#unread.size && [...ids].every((id) => this.#unread.has(id))) return;
+    this.#unread = ids;
+    this.#publish();
+  }
+
   /** Appelé à chaque reconnexion au flux d'événements (pas à la première connexion). */
   onReconnect(fn: () => void): () => void {
     this.#reconnectListeners.add(fn);
@@ -399,7 +412,7 @@ export class Store {
     const signature = [...[...this.#children.values()].map((c) => `${c.id}:${c.time.updated ?? ''}:${c.title}:${this.activity(c.id)}`), ...active].join('|');
     if (signature === this.#childrenSignature) return;
     this.#childrenSignature = signature;
-    this.#setChildren(new Map([...this.#children.values()].map((c) => [c.id, { session: c, activity: this.activity(c.id) }])));
+    this.#setChildren(new Map([...this.#children.values()].map((c) => [c.id, { session: c, activity: this.activity(c.id), unread: false }])));
   }
 
   #publish(): void {
@@ -411,7 +424,7 @@ export class Store {
         g = { path: p.path, vcs: p.vcs, name: p.name ?? GLib.path_get_basename(p.path), sessions: [] };
         groups.set(p.key, g);
       }
-      g.sessions.push({ session: s, activity: this.activity(s.id) });
+      g.sessions.push({ session: s, activity: this.activity(s.id), unread: this.#unread.has(s.id) });
     }
     // projets git connus sans session (le serveur les a vus mais tout a été supprimé)
     for (const p of this.#projects.values()) {
@@ -430,6 +443,7 @@ export class Store {
         sessions,
         working: sessions.filter((s) => isWorking(s.activity)).length,
         waiting: sessions.filter((s) => isWaiting(s.activity)).length,
+        unread: sessions.filter((s) => s.unread).length,
         updated: first === undefined ? (this.#projects.get(key)?.time?.updated ?? 0) : (first.time.updated ?? first.time.created),
       };
     });

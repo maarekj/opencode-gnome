@@ -49,7 +49,7 @@ function activityIcon(view: SessionView): JSX.Element | null {
     case 'permission':
       return <Gtk.Image $type="prefix" iconName="dialog-warning-symbolic" cssClasses={['warning']} tooltipText="Permission demandée" />;
     case 'idle':
-      return null;
+      return view.unread ? <Gtk.Box $type="prefix" cssClasses={['unread-dot']} valign={Gtk.Align.CENTER} tooltipText="Réponse non lue" /> : null;
     default:
       return null;
   }
@@ -66,6 +66,7 @@ function SessionRow({ view, actions }: { view: SessionView; actions: Actions }):
       subtitle={esc(meta)}
       activatable
       onActivated={act.open}
+      cssClasses={view.unread ? ['unread'] : []}
       $={(self: Adw.ActionRow) => {
         attachSessionMenu(self, () => title, act);
       }}
@@ -168,7 +169,7 @@ function SessionList({ sessions, actions, header }: { sessions: Accessor<readonl
               keyedListBox(
                 self,
                 sessions,
-                (v) => `${v.session.id}|${updatedAt(v)}|${v.activity}|${v.session.title}`,
+                (v) => `${v.session.id}|${updatedAt(v)}|${v.activity}|${v.unread}|${v.session.title}`,
                 (v) => asWidget(SessionRow({ view: v, actions })),
               ),
             );

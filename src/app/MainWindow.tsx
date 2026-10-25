@@ -175,7 +175,7 @@ export function MainWindow({
     const missing = settings
       .data()
       .favorites.filter((path) => !known.has(path))
-      .map((path): ProjectView => ({ key: `dir:${path}`, name: GLib.path_get_basename(path), path, vcs: false, sessions: [], working: 0, waiting: 0, updated: 0 }));
+      .map((path): ProjectView => ({ key: `dir:${path}`, name: GLib.path_get_basename(path), path, vcs: false, sessions: [], working: 0, waiting: 0, unread: 0, updated: 0 }));
     return [...projects, ...missing];
   });
   /** Projets affichés dans la barre latérale selon le mode. */
@@ -483,6 +483,42 @@ export function MainWindow({
   nav.connect('notify::visible-page', updateShown);
   onCleanup(current.subscribe(updateShown));
 
+  // Lu / non lu : une session dont l'agent vient de finir de répondre est « non lue » tant
+  // qu'elle n'a pas été affichée dans la fenêtre active (persistant dans les réglages).
+  let win: Gtk.Window | null = null;
+  /** session affichée et vue (fenêtre active) */
+  const seen = (): string | null => (win?.isActive === true ? shownSession() : null);
+  const markSeen = (): void => {
+    const id = seen();
+    if (id !== null) settings.setUnread(id, false);
+  };
+  nav.connect('notify::visible-page', markSeen);
+  const syncUnread = (): void => store.setUnread(new Set(settings.data.peek().unread));
+  syncUnread();
+  onCleanup(settings.data.subscribe(syncUnread));
+  let previous: Map<string, string> | null = null;
+  onCleanup(
+    store.projects.subscribe(() => {
+      if (store.connection.peek().state !== 'connected') return;
+      const now = new Map(store.projects.peek().flatMap((p) => p.sessions.map((v) => [v.session.id, v.activity] as const)));
+      const before = previous;
+      previous = now;
+      // premier chargement : état de référence (les non-lues persistantes restent)
+      if (before === null) return;
+      for (const [id, activity] of now) {
+        const was = before.get(id) ?? 'idle';
+        if (was === activity) continue;
+        // fin d'un tour de l'agent : non lue, sauf si elle est sous les yeux
+        if (activity === 'idle' && (was === 'busy' || was === 'retry')) settings.setUnread(id, seen() !== id);
+        // nouveau tour (message envoyé d'ici ou de la console) : la réponse précédente a été lue
+        else if (activity === 'busy') settings.setUnread(id, false);
+      }
+      // sessions supprimées : retirées
+      const gone = settings.data.peek().unread.filter((id) => !now.has(id) && before.has(id));
+      for (const id of gone) settings.setUnread(id, false);
+    }),
+  );
+
   // fenêtre fermée : pages des sessions (abonnements au store), relecture des terminaux
   // persistants et terminaux intégrés libérés (#77)
   onCleanup(() => {
@@ -533,6 +569,9 @@ export function MainWindow({
       $={(self: Adw.ApplicationWindow) => {
         // connecté avant le gestionnaire de main.tsx : renvoyer true suspend la fermeture
         self.connect('close-request', () => confirmClose(self, settings, terminals.manager, dock));
+        // retour sur la fenêtre : la session affichée est vue
+        win = self;
+        self.connect('notify::is-active', markSeen);
         // Ctrl+Maj+J : terminaux intégrés (capturé avant le terminal ; Ctrl+J reste un saut de ligne pour lui)
         const keys = new Gtk.ShortcutController({ scope: Gtk.ShortcutScope.GLOBAL, propagationPhase: Gtk.PropagationPhase.CAPTURE });
         keys.add_shortcut(

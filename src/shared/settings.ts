@@ -61,6 +61,8 @@ export const SettingsData = z.object({
   sidebarMode: z.prefault(SidebarMode, 'all'),
   /** sessions ouvertes (onglets de la barre latérale), dans l'ordre d'ouverture */
   openSessions: z.prefault(z.array(z.string()), []),
+  /** sessions non lues : l'agent a fini de répondre, session pas encore ouverte */
+  unread: z.prefault(z.array(z.string()), []),
   /** projets repliés dans la barre latérale (clés de projet) */
   collapsed: z.prefault(z.array(z.string()), []),
   /** largeur de la barre latérale en px (0 = automatique) */
@@ -95,7 +97,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -252,6 +254,12 @@ export class Settings {
   }
 
   /** Ajoute une session aux sessions ouvertes (à la fin), si elle n'y est pas. */
+  /** Marque une session non lue (true) ou lue (false). */
+  setUnread(id: string, unread: boolean): void {
+    if (this.data.peek().unread.includes(id) === unread) return;
+    this.update((d) => ({ ...d, unread: unread ? [...d.unread, id] : d.unread.filter((x) => x !== id) }));
+  }
+
   openSession(id: string): void {
     if (!this.data.peek().openSessions.includes(id)) this.update((d) => ({ ...d, openSessions: [...d.openSessions, id] }));
   }

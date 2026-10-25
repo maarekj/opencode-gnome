@@ -66,10 +66,13 @@ function ProjectRow({
   open,
   sessions,
   expanded,
+  unread,
   actions,
 }: {
   project: ProjectView;
   favorite: boolean;
+  /** sessions non lues qui ne sont pas visibles dessous (projet replié ou sessions non ouvertes) */
+  unread: number;
   /** nombre de sessions ouvertes du projet */
   sessions: number;
   /** nombre de lignes enfants : sessions ouvertes et terminaux en cours */
@@ -133,6 +136,15 @@ function ProjectRow({
           tooltipText={plural(project.waiting, 'session attend ta réponse', 'sessions attendent ta réponse')}
         />
       ) : null}
+      {unread > 0 ? (
+        <Gtk.Label
+          $type="suffix"
+          label={String(unread)}
+          valign={Gtk.Align.CENTER}
+          cssClasses={['unread-badge']}
+          tooltipText={plural(unread, 'réponse non lue', 'réponses non lues')}
+        />
+      ) : null}
       <Gtk.Button
         $type="suffix"
         iconName={favorite ? 'starred-symbolic' : 'non-starred-symbolic'}
@@ -153,8 +165,8 @@ function SessionTreeRow({ view, last, actions }: { view: SessionView; last: bool
   return (
     <Gtk.ListBoxRow
       name={`s:${s.id}`}
-      cssClasses={last ? ['session-tree-row', 'last'] : ['session-tree-row']}
-      tooltipText={title}
+      cssClasses={[...(last ? ['session-tree-row', 'last'] : ['session-tree-row']), ...(view.unread ? ['unread'] : [])]}
+      tooltipText={view.unread ? `${title}\nRéponse non lue` : title}
       $={(self: Gtk.ListBoxRow) => {
         attachContextMenu(self, () => [
           [
@@ -242,7 +254,11 @@ function treeActivity(view: SessionView): JSX.Element {
     case 'permission':
       return <Gtk.Image iconName="dialog-warning-symbolic" cssClasses={['warning']} tooltipText="Permission demandée" />;
     case 'idle':
-      return <Gtk.Image iconName="chat-message-new-symbolic" cssClasses={['dim-label']} />;
+      return view.unread ? (
+        <Gtk.Box cssClasses={['unread-dot']} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER} tooltipText="Réponse non lue" />
+      ) : (
+        <Gtk.Image iconName="chat-message-new-symbolic" cssClasses={['dim-label']} />
+      );
     default:
       return <Gtk.Box />;
   }
@@ -335,16 +351,16 @@ function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor
 
 /** Élément de l'arbre aplati : un projet, ou une de ses sessions ouvertes. */
 type TreeItem =
-  | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly sessions: number; readonly expanded: boolean }
+  | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly sessions: number; readonly expanded: boolean; readonly unread: number }
   | { readonly kind: 'session'; readonly view: SessionView; readonly last: boolean }
   | { readonly kind: 'terminal'; readonly t: ProjectTerminal; readonly project: string; readonly last: boolean }
   | { readonly kind: 'task'; readonly view: TaskView; readonly last: boolean };
 
 const treeKey = (i: TreeItem): string =>
   i.kind === 'project'
-    ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}`
+    ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.unread}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}`
     : i.kind === 'session'
-      ? `s|${i.view.session.id}|${i.view.activity}|${i.view.session.title}|${i.last}`
+      ? `s|${i.view.session.id}|${i.view.activity}|${i.view.unread}|${i.view.session.title}|${i.last}`
       : i.kind === 'terminal'
         ? `t|${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.last}`
         : `k|${i.view.task.id}|${i.view.task.name}|${i.view.task.enabled}|${i.view.running}|${i.view.last?.run ?? ''}|${i.view.last?.status ?? ''}|${i.view.next ?? ''}|${i.last}`;
@@ -543,7 +559,10 @@ export function Sidebar({
                     const own = allTasks.filter((t) => t.task.directory === p.path);
                     const children = open.length + terms.length + own.length;
                     const expanded = !collapsed.includes(p.key);
-                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children, sessions: open.length, expanded });
+                    // non lues : celles qui n'apparaissent pas dessous (repliées ou non ouvertes)
+                    const shownBelow = new Set(expanded ? open.map((v) => v.session.id) : []);
+                    const unread = p.sessions.filter((v) => v.unread && !shownBelow.has(v.session.id)).length;
+                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children, sessions: open.length, expanded, unread });
                     if (!expanded) continue;
                     // sessions ouvertes, terminaux en cours, puis tâches planifiées du projet
                     for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1 });
@@ -558,7 +577,7 @@ export function Sidebar({
                       ? TerminalTreeRow({ t: i.t, project: i.project, last: i.last, ctx: terminals })
                       : asWidget(
                           i.kind === 'project'
-                            ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, actions })
+                            ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, unread: i.unread, actions })
                             : i.kind === 'session'
                               ? SessionTreeRow({ view: i.view, last: i.last, actions })
                               : TaskTreeRow({ view: i.view, last: i.last, actions }),

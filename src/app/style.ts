@@ -257,6 +257,26 @@ export const STYLESHEET = `
   min-width: 7px;
   min-height: 7px;
 }
+/* session non lue : point d'accent, titre en gras ; nombre de non lues sur le projet */
+.unread-dot {
+  background: var(--accent-bg-color);
+  border-radius: 999px;
+  min-width: 9px;
+  min-height: 9px;
+}
+.unread .session-title,
+row.unread .title {
+  font-weight: bold;
+}
+.unread-badge {
+  background: var(--accent-bg-color);
+  color: var(--accent-fg-color);
+  border-radius: 999px;
+  min-width: 20px;
+  padding: 0 6px;
+  font-weight: bold;
+  font-size: 0.85em;
+}
 .terminal-add {
   min-width: 26px;
   min-height: 26px;
