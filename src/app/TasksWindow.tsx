@@ -224,7 +224,10 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
   const known = store.projects.peek();
   // nom seul, chemin ajouté seulement si deux projets ont le même nom
   const projects: Choice[] = known.map((p) => ({ label: known.filter((q) => q.name === p.name).length > 1 ? `${p.name} (${prettyPath(p.path)})` : p.name, value: p.path }));
-  if (task !== undefined && !projects.some((p) => p.value === task.directory)) projects.unshift({ label: prettyPath(task.directory), value: task.directory });
+  // dossier de la tâche ou dossier de départ (favori sans session…) absent de la liste : ajouté
+  // en tête, sinon le premier projet serait choisi à sa place (#68)
+  const wanted = task?.directory ?? initialDir;
+  if (wanted !== undefined && !projects.some((p) => p.value === wanted)) projects.unshift({ label: prettyPath(wanted), value: wanted });
   const project = comboRow('Projet', projects, task?.directory ?? initialDir);
   project.row.enableSearch = true;
   project.row.searchMatchMode = Gtk.StringFilterMatchMode.SUBSTRING;
