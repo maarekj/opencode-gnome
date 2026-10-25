@@ -26,6 +26,9 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   pilotée par l'accessibilité (rôle et nom : texte ou infobulle) sur un écran virtuel, bus D-Bus,
   bus d'accessibilité, GSettings et dossier d'exécution privés. Un seul : `pnpm e2e -k permission`.
   Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
+  **La suite complète est lancée par l'orchestre** (≈ 6 min), pas avant chaque fusion d'agent : un
+  agent n'exécute que les scénarios de ce qu'il touche (`pnpm e2e -k …`) et ajoute ceux de sa
+  fonctionnalité dans `e2e/`.
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `pnpm screenshot [sortie.png] [-- --session ID]` : lance l'app sur un écran virtuel (Xvfb)
   et en fait une capture. Toujours valider un changement d'interface ainsi, jamais en ouvrant
@@ -56,7 +59,8 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
 - **`opencode-gnome` (dépôt principal) est l'orchestre** : toujours sur `main`, propre (aucune
   modification non commitée), **jamais de développement**. On y crée et répartit les issues, on y
   suit l'avancement, et on y installe la version de référence (serveur partagé, `oc`, `ocg`,
-  plugin opencode, application « opencode »).
+  plugin opencode, application « opencode »). C'est aussi l'orchestre qui lance la suite e2e
+  complète (`pnpm e2e`) sur `main` après les fusions, et crée une issue pour chaque régression.
 - **Tout le développement se fait dans les worktrees**, un agent par dossier :
 
   | Dossier | Rôle / branche | Port du serveur de test | Application installée |
