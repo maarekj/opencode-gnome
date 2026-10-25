@@ -171,6 +171,10 @@ export const McpConfig = z.looseObject({
   command: z.optional(z.array(z.string())),
   url: z.optional(z.string()),
   enabled: z.optional(z.boolean()),
+  /** local : variables d'environnement */
+  environment: z.optional(z.record(z.string(), z.string())),
+  /** distant : en-têtes HTTP (clé d'API…) */
+  headers: z.optional(z.record(z.string(), z.string())),
 });
 export type McpConfig = z.output<typeof McpConfig>;
 /** Configuration réduite aux serveurs MCP. */

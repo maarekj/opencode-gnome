@@ -6,6 +6,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import type { OpencodeClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { McpConfig, McpStatus, Skill } from '../shared/schemas.ts';
+import { listMcpTools, toolParams, type McpTool } from '../shared/mcp.ts';
 import { prettyPath } from '../shared/store.ts';
 import { openFile } from './OpenFolder.ts';
 
@@ -94,7 +95,7 @@ function pluginRow(p: PluginInfo, scope: string): Adw.ActionRow {
 }
 
 /** Ligne d'un serveur MCP : état, portée, type ; détails (commande / URL, erreur) dépliables. */
-function mcpRow(name: string, cfg: McpConfig | undefined, status: McpStatus | undefined, scope: string, onToggle: (connect: boolean) => void): Adw.ExpanderRow {
+function mcpRow(name: string, cfg: McpConfig | undefined, status: McpStatus | undefined, scope: string, onToggle: (connect: boolean) => void, onTools: () => void): Adw.ExpanderRow {
   const info = statusInfo(status);
   const kind = cfg?.type === 'remote' ? 'distant' : cfg?.type === 'local' ? 'local' : '';
   const row = new Adw.ExpanderRow({ title: esc(name), subtitle: esc([scope, kind].filter((x) => x !== '').join(' · ')) });
@@ -117,7 +118,69 @@ function mcpRow(name: string, cfg: McpConfig | undefined, status: McpStatus | un
   if (cfg?.command !== undefined) detail('Commande', cfg.command.join(' '));
   if (cfg?.enabled === false) detail('Configuration', 'désactivé (enabled: false)');
   if (status?.error !== undefined && status.error !== '') detail('Erreur', status.error, ['mcp-error']);
+  if (cfg !== undefined && (cfg.command !== undefined || cfg.url !== undefined)) {
+    const tools = new Adw.ActionRow({
+      title: 'Outils',
+      subtitle: cfg.type === 'remote' ? 'Interroge le serveur MCP directement' : 'Lance brièvement le serveur MCP pour lui demander ses outils',
+      activatable: true,
+    });
+    const show = new Gtk.Button({ label: 'Voir les outils', valign: Gtk.Align.CENTER });
+    show.connect('clicked', onTools);
+    tools.add_suffix(show);
+    tools.activatableWidget = show;
+    row.add_row(tools);
+  }
   return row;
+}
+
+/** Ligne d'un outil MCP : nom, description ; paramètres dépliables. */
+function toolRow(tool: McpTool): Adw.PreferencesRow {
+  const params = toolParams(tool);
+  const description = (tool.description ?? '').trim();
+  const firstLine = description.split('\n')[0] ?? '';
+  const row = new Adw.ExpanderRow({
+    title: esc(tool.title !== undefined && tool.title !== tool.name ? `${tool.name} — ${tool.title}` : tool.name),
+    subtitle: esc(params.length === 0 ? firstLine : `${firstLine}${firstLine === '' ? '' : '\n'}${params.length} paramètre${params.length > 1 ? 's' : ''} : ${params.map((p) => p.name).join(', ')}`),
+    subtitleLines: 3,
+    cssClasses: ['mcp-tool'],
+  });
+  if (description !== '') {
+    const label = new Gtk.Label({ label: description, xalign: 0, wrap: true, selectable: true, marginTop: 10, marginBottom: 10, marginStart: 12, marginEnd: 12 });
+    row.add_row(label);
+  }
+  if (params.length === 0) {
+    row.add_row(new Adw.ActionRow({ title: 'Aucun paramètre', cssClasses: ['dim-label'] }));
+    return row;
+  }
+  for (const p of params) {
+    const title = `<tt>${esc(p.name)}</tt>${p.type === '' ? '' : `  <span alpha="65%">${esc(p.type)}</span>`}${p.required ? '  <span foreground="#c01c28">requis</span>' : '  <span alpha="65%">facultatif</span>'}`;
+    row.add_row(new Adw.ActionRow({ title, useMarkup: true, subtitle: esc(p.description), subtitleSelectable: true }));
+  }
+  return row;
+}
+
+/** Sous-page « outils d'un MCP » : chargement à la demande, liste filtrable par la recherche du dialogue. */
+function toolsPage(name: string, cfg: McpConfig, directory: string): Adw.NavigationPage {
+  const group = new Adw.PreferencesGroup({ title: 'Outils', description: 'Chargement…' });
+  const spinner = new Adw.Spinner({ widthRequest: 32, heightRequest: 32, marginTop: 24 });
+  group.add(spinner);
+  const page = new Adw.PreferencesPage();
+  page.add(group);
+  const view = new Adw.ToolbarView({ content: page });
+  view.add_top_bar(new Adw.HeaderBar({ titleWidget: new Adw.WindowTitle({ title: name, subtitle: 'Outils du serveur MCP' }) }));
+  listMcpTools(cfg, directory)
+    .then((tools) => {
+      group.remove(spinner);
+      group.description = tools.length === 0 ? 'Ce serveur MCP ne déclare aucun outil.' : `${tools.length} outil${tools.length > 1 ? 's' : ''} · clic : description complète et paramètres`;
+      for (const t of tools.toSorted((a, b) => a.name.localeCompare(b.name))) group.add(toolRow(t));
+      return tools;
+    })
+    .catch((e: unknown) => {
+      group.remove(spinner);
+      group.description = '';
+      group.add(new Adw.ActionRow({ title: 'Impossible de lister les outils', subtitle: esc(errorMessage(e)), subtitleSelectable: true, cssClasses: ['mcp-error'] }));
+    });
+  return new Adw.NavigationPage({ title: `Outils de ${name}`, child: view });
 }
 
 /**
@@ -161,6 +224,9 @@ export function openExtensions(parent: Gtk.Widget, client: OpencodeClient, proje
               .mcpConnect(name, directory, connect)
               .catch((e: unknown) => dialog.add_toast(new Adw.Toast({ title: esc(`${name} : ${errorMessage(e)}`), timeout: 5 })))
               .finally(() => void loadMcp());
+          }, () => {
+            const cfg = merged[name];
+            if (cfg !== undefined) dialog.push_subpage(toolsPage(name, cfg, directory));
           }),
         ),
       );
