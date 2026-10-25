@@ -484,7 +484,8 @@ export function confirmDelete(parent: Gtk.Widget, task: ScheduledTask, remove: (
 
 const durationOf = (r: RunRecord): string => (r.end === undefined ? '' : fmtDuration(r.end - r.start));
 
-let current: Adw.Window | null = null;
+/** fenêtre ouverte et sa pile d'onglets (page demandée appliquée à une fenêtre déjà ouverte : #95) */
+let current: { window: Adw.Window; stack: Adw.ViewStack } | null = null;
 
 export interface TasksWindowOptions {
   readonly app: Adw.Application;
@@ -498,12 +499,12 @@ export interface TasksWindowOptions {
 
 export function openTasksWindow(o: TasksWindowOptions): void {
   if (current !== null) {
-    current.present();
+    if (o.page !== undefined) current.stack.visibleChildName = o.page;
+    current.window.present();
     return;
   }
   const { app, store, monitor } = o;
   const win = new Adw.Window({ application: app, title: 'Tâches planifiées', defaultWidth: 1000, defaultHeight: 820, resizable: true });
-  current = win;
   const overlay = new Adw.ToastOverlay();
   const toast = (m: string): void => overlay.add_toast(new Adw.Toast({ title: esc(m), timeout: 4 }));
   const ctx: EditorContext = { store, monitor, toast };
@@ -541,6 +542,7 @@ export function openTasksWindow(o: TasksWindowOptions): void {
   historyPage.add(runsGroup);
 
   const stack = new Adw.ViewStack();
+  current = { window: win, stack };
   stack.add_titled_with_icon(tasksStack, 'tasks', 'Tâches', 'alarm-symbolic');
   const historyTab = stack.add_titled_with_icon(historyPage, 'history', 'Historique', 'document-open-recent-symbolic');
   const header = new Adw.HeaderBar({ titleWidget: new Adw.ViewSwitcher({ stack, policy: Adw.ViewSwitcherPolicy.WIDE }) });
