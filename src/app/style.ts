@@ -207,6 +207,15 @@ export const STYLESHEET = `
   color: var(--accent-color);
 }
 
+.link-bar {
+  padding: 4px 12px 6px 0;
+}
+.link-pill {
+  background: alpha(var(--accent-bg-color), 0.10);
+}
+.link-browser {
+  min-height: 26px;
+}
 .terminal-bar {
   padding: 4px 12px 6px 12px;
 }

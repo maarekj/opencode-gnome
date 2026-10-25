@@ -34,7 +34,19 @@ export const MarkdownStyle = z.object({
 export type MarkdownStyle = z.output<typeof MarkdownStyle>;
 export const DEFAULT_MARKDOWN_STYLE: MarkdownStyle = { font: 'system', lineSpacing: 2, paragraphSpacing: 8, colors: 'sober' };
 
+/** Lien web épinglé d'un projet ; l'adresse peut contenir des variables ($PORT_WEB…). */
+export const ProjectLink = z.object({
+  id: z.string(),
+  name: z.string(),
+  url: z.string(),
+});
+export type ProjectLink = z.output<typeof ProjectLink>;
+
 export const SettingsData = z.object({
+  /** liens épinglés : chemin du projet -> liens */
+  links: z.prefault(z.record(z.string(), z.array(ProjectLink)), {}),
+  /** navigateur de chaque projet (identifiant .desktop) ; absent = navigateur par défaut */
+  browsers: z.prefault(z.record(z.string(), z.string()), {}),
   /** IDE de chaque projet : chemin du projet -> identifiant .desktop */
   ides: z.prefault(z.record(z.string(), z.string()), {}),
   /** IDE par défaut (projets sans réglage) ; absent = premier détecté */
@@ -83,7 +95,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -177,6 +189,31 @@ export class Settings {
     this.update((d) => {
       const { [key]: _old, ...rest } = d;
       return value === undefined ? rest : { ...rest, [key]: value };
+    });
+  }
+
+  /** Ajoute ou remplace (même id) un lien du projet. */
+  saveLink(project: string, link: ProjectLink): void {
+    this.update((d) => {
+      const list = d.links[project] ?? [];
+      const next = list.some((l) => l.id === link.id) ? list.map((l) => (l.id === link.id ? link : l)) : [...list, link];
+      return { ...d, links: { ...d.links, [project]: next } };
+    });
+  }
+
+  removeLink(project: string, id: string): void {
+    this.update((d) => {
+      const { [project]: list = [], ...others } = d.links;
+      const next = list.filter((l) => l.id !== id);
+      return { ...d, links: next.length === 0 ? others : { ...others, [project]: next } };
+    });
+  }
+
+  /** Navigateur du projet (`undefined` : navigateur par défaut du système). */
+  setProjectBrowser(project: string, id: string | undefined): void {
+    this.update((d) => {
+      const { [project]: _old, ...rest } = d.browsers;
+      return { ...d, browsers: id === undefined ? rest : { ...rest, [project]: id } };
     });
   }
 

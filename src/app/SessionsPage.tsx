@@ -16,6 +16,7 @@ import { reloadProjectConfig } from './ReloadConfig.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { openEditor, taskIcon, taskMenu, taskRunButton, taskState, taskSwitch, type EditorContext, type TaskView } from './TasksWindow.tsx';
 import { describeSchedule } from '../shared/tasks.ts';
+import { LinkBar } from './LinkBar.tsx';
 import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
 import { attachSessionMenu, deleteButton, type SessionActions } from './SessionMenu.ts';
 import { asWidget, normalize } from './Sidebar.tsx';
@@ -317,6 +318,7 @@ export function SessionsPage({
         />
         <Gtk.Box $type="top">
           <TerminalBar project={current((p) => p?.path ?? null)} ctx={terminals} />
+          <LinkBar project={current((p) => p?.path ?? null)} ctx={{ settings: terminals.settings, toast: terminals.toast }} />
         </Gtk.Box>
         <With value={createMemo(() => `${key() ?? ''}|${String(empty())}|${String(noMatch())}|${store.connection().state}`)}>
           {() => {

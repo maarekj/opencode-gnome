@@ -12,6 +12,7 @@ import type { Session } from '../shared/schemas.ts';
 import { builtinCommands } from './Builtins.ts';
 import { Composer } from './Composer.tsx';
 import { IdeButton } from './Ide.ts';
+import { LinkBar } from './LinkBar.tsx';
 import { openFolder } from './OpenFolder.ts';
 import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
@@ -293,6 +294,7 @@ export function createConversationPage(opts: {
           </Adw.HeaderBar>
           <Gtk.Box $type="top" visible={!child}>
             <TerminalBar project={projectPath} ctx={terminals} />
+            <LinkBar project={projectPath} ctx={{ settings, toast }} directory={dir} />
           </Gtk.Box>
           <ConversationView
             conversation={conversation}
