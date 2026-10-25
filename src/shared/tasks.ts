@@ -131,20 +131,69 @@ export function newTaskId(name: string): string {
   return id;
 }
 
-/** Enregistre la tâche (ajout ou remplacement) et met ses unités systemd à jour. */
+/**
+ * Lecture-modification-écriture de tasks.json sous verrou : l'app, `ogt` et les runs (`ogt exec`)
+ * écrivent le même fichier (#70). Verrou par fichier `.lock` créé en exclusif ; un verrou de plus
+ * de 10 s (processus tué) est ignoré.
+ */
+function updateTasks(fn: (tasks: ScheduledTask[]) => ScheduledTask[]): void {
+  const lock = Gio.File.new_for_path(`${tasksPath()}.lock`);
+  GLib.mkdir_with_parents(GLib.path_get_dirname(tasksPath()), 0o700);
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    try {
+      lock.create(Gio.FileCreateFlags.NONE, null).close(null);
+      break;
+    } catch {
+      let age = 0;
+      try {
+        age = Date.now() / 1000 - (lock.query_info('time::modified', Gio.FileQueryInfoFlags.NONE, null).get_modification_date_time()?.to_unix() ?? 0);
+      } catch {
+        continue; // verrou retiré entre-temps : nouvel essai
+      }
+      if (age > 10 || Date.now() > deadline) {
+        try {
+          lock.delete(null);
+        } catch {
+          // retiré par un autre processus
+        }
+        continue;
+      }
+      GLib.usleep(20_000);
+    }
+  }
+  try {
+    saveTasks(fn(loadTasks()));
+  } finally {
+    try {
+      lock.delete(null);
+    } catch {
+      // déjà retiré
+    }
+  }
+}
+
+/**
+ * Enregistre la tâche (ajout ou remplacement) et met ses unités systemd à jour. Session réutilisée
+ * non épinglée : son identifiant est un état d'exécution (écrit par `ogt exec`), repris du fichier
+ * plutôt que de la copie de l'appelant, peut-être antérieure au run qui l'a créée.
+ */
 export async function saveTask(task: ScheduledTask): Promise<void> {
-  const tasks = loadTasks();
-  const next = tasks.some((t) => t.id === task.id) ? tasks.map((t) => (t.id === task.id ? task : t)) : [...tasks, task];
-  saveTasks(next);
-  await installUnits(task);
+  let saved = task;
+  updateTasks((tasks) => {
+    const current = tasks.find((t) => t.id === task.id);
+    if (current !== undefined && task.session.mode === 'reuse' && task.session.pinned !== true && current.session.mode === 'reuse' && current.session.pinned !== true) {
+      const { id: _stale, ...rest } = task.session;
+      saved = { ...task, session: current.session.id === undefined ? rest : { ...rest, id: current.session.id } };
+    }
+    return current === undefined ? [...tasks, saved] : tasks.map((t) => (t.id === task.id ? saved : t));
+  });
+  await installUnits(saved);
 }
 
 /** Mise à jour partielle sans toucher aux unités (ex. session créée au premier run). */
 export function patchTask(id: string, patch: Partial<ScheduledTask>): void {
-  const tasks = loadTasks();
-  const task = tasks.find((t) => t.id === id);
-  if (task !== undefined) Object.assign(task, patch);
-  saveTasks(tasks);
+  updateTasks((tasks) => tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
 }
 
 export async function removeTask(id: string): Promise<void> {
@@ -157,7 +206,7 @@ export async function removeTask(id: string): Promise<void> {
       // déjà absente
     }
   }
-  saveTasks(loadTasks().filter((t) => t.id !== id));
+  updateTasks((tasks) => tasks.filter((t) => t.id !== id));
   await systemctl(['daemon-reload']);
 }
 
