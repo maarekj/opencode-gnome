@@ -142,6 +142,7 @@ export class Conversation {
   #signature = '';
   #unsubscribe: (() => void) | null = null;
   #unreconnect: (() => void) | null = null;
+  #requestsGeneration = 0;
   /** chargements de l'historique en cours */
   #reloading = 0;
   /** deltas reçus pendant un chargement pour des parties encore inconnues */
@@ -176,9 +177,11 @@ export class Conversation {
   async reloadRequests(): Promise<void> {
     const dir = this.directory;
     if (dir === null) return;
+    // relancé à chaque événement de demande : seule la réponse la plus récente compte (#92)
+    const gen = ++this.#requestsGeneration;
     try {
       const [permissions, questions] = await Promise.all([this.#store.client.permissions(dir), this.#store.client.questions(dir)]);
-      if (this.#disposed) return;
+      if (this.#disposed || gen !== this.#requestsGeneration) return;
       this.#setPermissions(permissions.filter((p) => p.sessionID === this.sessionID));
       this.#setQuestions(questions.filter((q) => q.sessionID === this.sessionID));
     } catch {

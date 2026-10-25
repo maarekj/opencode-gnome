@@ -350,8 +350,11 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
   updateSession();
 
   /** Choix dépendant du dossier : modèles, agents, sessions. */
+  /** numéro du dernier chargement : changer vite de projet n'affiche pas les choix de l'ancien (#92) */
+  let choicesGeneration = 0;
   const loadChoices = async (): Promise<void> => {
     if (directory === '') return;
+    const gen = ++choicesGeneration;
     const sessions = store.projects
       .peek()
       .flatMap((p) => p.sessions)
@@ -367,6 +370,7 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
     );
     try {
       const [providers, agents] = await Promise.all([store.client.providers(directory), store.client.agents(directory)]);
+      if (gen !== choicesGeneration) return;
       const models = providers.providers.flatMap((p) => Object.values(p.models).map((m) => ({ label: `${m.name ?? m.id} — ${p.name ?? p.id} (${m.id})`, value: `${p.id}/${m.id}` })));
       variantsOf = new Map(providers.providers.flatMap((p) => Object.values(p.models).map((m) => [`${p.id}/${m.id}`, Object.keys(m.variants ?? {})] as const)));
       model.set([{ label: 'Par défaut', value: '' }, ...models.toSorted((a, b) => a.label.localeCompare(b.label))], model.get() || task?.model, true);
@@ -374,7 +378,7 @@ export function openEditor(parent: Gtk.Widget, ctx: EditorContext, task?: Schedu
       const primary = agents.filter((a) => a.mode !== 'subagent' && a.hidden !== true).map((a) => ({ label: a.name, value: a.name }));
       agent.set([{ label: 'Par défaut', value: '' }, ...primary], agent.get() || task?.agent, true);
     } catch (e) {
-      toast(`Modèles et agents indisponibles : ${errorMessage(e)}`);
+      if (gen === choicesGeneration) toast(`Modèles et agents indisponibles : ${errorMessage(e)}`);
     }
   };
 

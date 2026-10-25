@@ -208,10 +208,14 @@ export function openExtensions(parent: Gtk.Widget, client: OpencodeClient, proje
     for (const r of rows) mcpGroup.add(r);
   };
 
+  /** numéro du dernier chargement : les réponses des précédents sont ignorées (#92) */
+  let mcpGeneration = 0;
   const loadMcp = async (): Promise<void> => {
+    const gen = ++mcpGeneration;
     setMcpRows([placeholder('Chargement…')]);
     try {
       const [status, merged, global] = await Promise.all([client.mcpStatus(directory), client.mcpConfig(directory), client.mcpConfig(null)]);
+      if (gen !== mcpGeneration) return;
       const names = [...new Set([...Object.keys(merged), ...Object.keys(status)])].toSorted((a, b) => a.localeCompare(b));
       if (names.length === 0) {
         setMcpRows([placeholder('Aucun serveur MCP')]);
@@ -231,7 +235,7 @@ export function openExtensions(parent: Gtk.Widget, client: OpencodeClient, proje
         ),
       );
     } catch (e) {
-      setMcpRows([placeholder(`Chargement impossible : ${errorMessage(e)}`)]);
+      if (gen === mcpGeneration) setMcpRows([placeholder(`Chargement impossible : ${errorMessage(e)}`)]);
     }
   };
   reload.connect('clicked', () => void loadMcp());
