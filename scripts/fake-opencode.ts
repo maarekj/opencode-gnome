@@ -42,8 +42,10 @@ const Scenario = z.object({
   questions: z.optional(z.array(Entity)),
   /** `{ nom: { status } }` */
   mcp: z.optional(z.record(z.string(), z.looseObject({ status: z.string() }))),
-  /** configuration (`GET /config`, `GET /global/config`) */
+  /** configuration (`GET /config`, fusion projet + global) */
   config: z.optional(z.looseObject({})),
+  /** configuration globale seule (`GET /global/config`) ; défaut : `config` */
+  globalConfig: z.optional(z.looseObject({})),
   agents: z.optional(z.array(z.looseObject({ name: z.string() }))),
   providers: z.optional(z.looseObject({})),
   commands: z.optional(z.array(z.looseObject({ name: z.string() }))),
@@ -273,8 +275,9 @@ function simpleRoute(p: string, query: Record<string, string>): unknown {
     case '/config/providers':
       return s.providers ?? DEFAULT_PROVIDERS;
     case '/config':
-    case '/global/config':
       return s.config ?? {};
+    case '/global/config':
+      return s.globalConfig ?? s.config ?? {};
     case '/command':
       return s.commands ?? [];
     case '/skill':

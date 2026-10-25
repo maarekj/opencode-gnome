@@ -1,0 +1,84 @@
+{
+ "projects": [
+  {
+   "id": "prj_x",
+   "worktree": "/tmp/opencode-fake/ext",
+   "name": "ext"
+  }
+ ],
+ "sessions": [
+  {
+   "id": "ses_x",
+   "projectID": "prj_x",
+   "directory": "/tmp/opencode-fake/ext",
+   "title": "Extensions",
+   "time": {
+    "created": 1,
+    "updated": 2
+   }
+  }
+ ],
+ "messages": {
+  "ses_x": []
+ },
+ "config": {
+  "mcp": {
+   "notes": {
+    "type": "local",
+    "command": [
+     "node",
+     "__E2E__/fake_mcp.mjs"
+    ]
+   },
+   "casse": {
+    "type": "local",
+    "command": [
+     "/nexistepas/mcp"
+    ]
+   },
+   "globale": {
+    "type": "remote",
+    "url": "http://127.0.0.1:9/mcp"
+   }
+  },
+  "plugin": [
+   "file:///tmp/opencode-fake/ext/.opencode/plugin/local.ts",
+   "opencode-wakatime@1.2.0"
+  ]
+ },
+ "globalConfig": {
+  "mcp": {
+   "globale": {
+    "type": "remote",
+    "url": "http://127.0.0.1:9/mcp"
+   }
+  },
+  "plugin": [
+   "opencode-wakatime@1.2.0"
+  ]
+ },
+ "mcp": {
+  "notes": {
+   "status": "connected"
+  },
+  "casse": {
+   "status": "failed",
+   "error": "ENOENT: /nexistepas/mcp"
+  },
+  "globale": {
+   "status": "needs_auth"
+  }
+ },
+ "skills": [
+  {
+   "name": "pdf",
+   "description": "Lire des PDF",
+   "location": "/tmp/opencode-fake/ext/.opencode/skill/pdf/SKILL.md"
+  },
+  {
+   "name": "customize-opencode",
+   "description": "Configurer opencode",
+   "location": "<built-in>"
+  }
+ ]
+}

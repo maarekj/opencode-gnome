@@ -243,6 +243,17 @@ class App:
         time.sleep(0.2)
         return composer
 
+    def combo(self, row: str, option: str, *, within=None) -> None:
+        """Ligne à liste déroulante (Adw.ComboRow) : ouverture puis choix de `option`."""
+        self._point(self.find('combo box', row, within=within), 'b1c')
+        labels = wait_until(lambda: [n for n in self.all('label', option) if n.showing], 5, f'option « {option} »')
+        self._point(labels[-1], 'b1c')
+
+    def toggle(self, role: str, name: str, *, within=None) -> None:
+        """Interrupteur (Gtk.Switch) : le nœud qui porte l'action « toggle »."""
+        node = wait_until(lambda: [n for n in self.all(role, name) if 'toggle' in n.actions][:1], 5, f'{role} « {name} »')[0]
+        node.doActionNamed('toggle')
+
     def choose(self, label: str) -> None:
         """Clic sur un libellé affiché (option d'une liste déroulante, d'une complétion)."""
         self._point(self.find('label', label), 'b1c')
@@ -278,8 +289,23 @@ class App:
             lambda n: n.roleName == role and n.showing and (name is None or n.name == name) and (contains is None or contains in (n.name or '')),
         )
 
+    def scroll_into_view(self, node, height: int = 800) -> None:
+        """Fait défiler (molette sur le nœud) jusqu'à ce qu'il soit entièrement à l'écran."""
+        dx, dy = _OFFSET or (0, 0)
+        for _ in range(40):
+            e = node.get_extents(Atspi.CoordType.WINDOW)
+            top, bottom = e.y + dy, e.y + e.height + dy
+            if top >= 0 and bottom <= height:
+                return
+            # molette au centre de l'écran, dans la zone défilante qui contient le nœud
+            x = max(0, min(e.x + e.width // 2 + dx, 1279))
+            Atspi.generate_mouse_event(x, height // 2, 'b5c' if bottom > height else 'b4c')
+            time.sleep(0.05)
+        raise AssertionError('nœud impossible à faire défiler à l\'écran')
+
     def _point(self, node, button: str) -> None:
         # GTK 4 sous X11 : pas de coordonnées écran, coordonnées fenêtre décalées (cf. _calibrate)
+        self.scroll_into_view(node)
         e = node.get_extents(Atspi.CoordType.WINDOW)
         dx, dy = _OFFSET or (0, 0)
         Atspi.generate_mouse_event(e.x + e.width // 2 + dx, e.y + e.height // 2 + dy, button)
