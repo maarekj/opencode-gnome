@@ -1,6 +1,7 @@
 // Markdown -> Gtk widgets (blocks from src/shared/markdown.ts).
 import Adw from 'gi://Adw?version=1';
 import GLib from 'gi://GLib';
+import type GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 import Pango from 'gi://Pango';
 import { createState, onCleanup } from 'gnim';
@@ -541,18 +542,51 @@ function renderMarkdown(text: string, st: MarkdownStyle): Gtk.Widget {
 const baseTags = new WeakMap<Gtk.TextBuffer, Gtk.TextTag>();
 
 /**
+ * Appelle `check` à chaque image tant qu'il agit, puis s'arrête (3 images sans changement).
+ * Relancé à l'affichage et quand la largeur disponible change (zone de défilement, fenêtre).
+ * Pas de tick callback permanent : il ferait tourner l'horloge d'images en continu (#57).
+ */
+function watchWidth(widget: Gtk.Widget, check: () => boolean): void {
+  let ticking = false;
+  const kick = (): void => {
+    if (ticking) return;
+    ticking = true;
+    let still = 0;
+    widget.add_tick_callback(() => {
+      still = check() ? 0 : still + 1;
+      if (still < 3) return true;
+      ticking = false;
+      return false;
+    });
+  };
+  const handlers: [GObject.Object, number][] = [];
+  widget.connect('map', () => {
+    kick();
+    const sw = widget.get_ancestor(Gtk.ScrolledWindow.$gtype);
+    if (sw instanceof Gtk.ScrolledWindow) {
+      const adj = sw.get_hadjustment();
+      handlers.push([adj, adj.connect('changed', kick)]);
+    }
+    const root = widget.get_root();
+    if (root instanceof Gtk.Window) handlers.push([root, root.connect('notify::default-width', kick)]);
+  });
+  widget.connect('unmap', () => {
+    for (const [o, id] of handlers.splice(0)) o.disconnect(id);
+  });
+}
+
+/**
  * GtkTextView calcule sa hauteur pour une largeur donnée de manière asynchrone : construit hors
  * écran (largeur 0), sa première hauteur peut rester figée sur une ligne. À chaque changement
  * de largeur, on relance le calcul.
  */
 function fixHeight(view: Gtk.TextView): void {
   let width = -1;
-  view.add_tick_callback(() => {
+  watchWidth(view, () => {
     const w = view.get_width();
-    if (w !== width && w > 0) {
-      width = w;
-      relayout(view);
-    }
+    if (w === width || w <= 0) return false;
+    width = w;
+    relayout(view);
     return true;
   });
 }
@@ -566,7 +600,7 @@ function fitTable(table: Gtk.Widget): void {
   let outer = -1;
   let width = -1;
   let shrinking = false;
-  table.add_tick_callback(() => {
+  watchWidth(table, () => {
     const parent = table.get_parent();
     const sw = table.get_ancestor(Gtk.ScrolledWindow.$gtype)?.get_width() ?? 0;
     if (sw !== outer) {
@@ -576,11 +610,10 @@ function fitTable(table: Gtk.Widget): void {
       return true;
     }
     const w = parent?.get_width() ?? 0;
-    if ((w !== width || shrinking) && w > 0) {
-      width = w;
-      shrinking = false;
-      setTableWidth(table, w);
-    }
+    if ((w === width && !shrinking) || w <= 0) return false;
+    width = w;
+    shrinking = false;
+    setTableWidth(table, w);
     return true;
   });
 }
