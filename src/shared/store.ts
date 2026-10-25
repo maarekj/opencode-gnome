@@ -47,6 +47,17 @@ const GLOBAL = 'global';
 const home = GLib.get_home_dir();
 export const prettyPath = (p: string): string => (p === home ? '~' : p.startsWith(`${home}/`) ? `~${p.slice(home.length)}` : p);
 
+interface ReloadChanges {
+  readonly info: Set<string>;
+  readonly activity: Set<string>;
+}
+
+interface ActivitySnapshot {
+  readonly status: Map<string, 'busy' | 'retry'>;
+  readonly permissions: Map<string, Set<string>>;
+  readonly questions: Map<string, Set<string>>;
+}
+
 export class Store {
   readonly projects: Accessor<readonly ProjectView[]>;
   readonly connection: Accessor<Connection>;
@@ -72,6 +83,10 @@ export class Store {
   /** conversations ouvertes : rechargées à chaque reconnexion (événements manqués) */
   readonly #reconnectListeners = new Set<() => void>();
   #connectedOnce = false;
+  /** numéro du dernier rechargement (les réponses des précédents sont ignorées) */
+  #reloadGen = 0;
+  /** sessions changées par un événement pendant le rechargement en cours */
+  #changes: ReloadChanges | null = null;
   #stop: (() => void) | null = null;
   #refreshQueued = false;
 
@@ -106,25 +121,43 @@ export class Store {
     this.#stop = null;
   }
 
-  /** Recharge l'état complet (à la connexion, ou manuellement). */
+  /**
+   * Recharge l'état complet (à la connexion, ou manuellement). Les événements reçus pendant le
+   * chargement sont plus récents que l'instantané : les sessions qu'ils touchent gardent leur
+   * état courant. Un rechargement plus récent rend les précédents caducs (#63).
+   */
   async reload(): Promise<void> {
+    const gen = ++this.#reloadGen;
+    const changes: ReloadChanges = { info: new Set(), activity: new Set() };
+    this.#changes = changes;
     try {
       const [health, projects, sessions] = await Promise.all([this.client.health(), this.client.projects(), this.client.sessions()]);
+      if (gen !== this.#reloadGen) return;
       this.#projects.clear();
       for (const p of projects) this.#projects.set(p.id, p);
+      const next = new Map(sessions.map((s) => [s.id, s] as const));
+      for (const id of changes.info) {
+        const current = this.#sessions.get(id);
+        if (current === undefined) next.delete(id);
+        else next.set(id, current);
+      }
       this.#sessions.clear();
-      for (const s of sessions) this.#sessions.set(s.id, s);
+      for (const [id, s] of next) this.#sessions.set(id, s);
       this.#setConnection({ state: 'connected', version: health.version });
       this.#publish();
-      await this.#loadActivity(sessions);
+      const activity = await this.#loadActivity(sessions);
+      if (gen !== this.#reloadGen) return;
+      this.#applyActivity(activity, changes.activity);
       this.#publish();
     } catch (e) {
-      this.#setConnection({ state: 'error', message: errorMessage(e) });
+      if (gen === this.#reloadGen) this.#setConnection({ state: 'error', message: errorMessage(e) });
+    } finally {
+      if (gen === this.#reloadGen) this.#changes = null;
     }
   }
 
   /** Statut, permissions et questions en attente des répertoires récemment actifs. */
-  async #loadActivity(sessions: readonly Session[]): Promise<void> {
+  async #loadActivity(sessions: readonly Session[]): Promise<ActivitySnapshot> {
     const since = Date.now() - RECENT_MS;
     const dirs = [...new Set(sessions.filter((s) => (s.time.updated ?? s.time.created) >= since).map((s) => s.directory))];
     const results = await Promise.all(
@@ -137,16 +170,33 @@ export class Store {
         }
       }),
     );
-    this.#status.clear();
-    this.#permissions.clear();
-    this.#questions.clear();
+    const snapshot: ActivitySnapshot = { status: new Map(), permissions: new Map(), questions: new Map() };
     for (const r of results) {
       if (r === null) continue;
       for (const [id, st] of Object.entries(r.statuses)) {
-        if (st.type === 'busy' || st.type === 'retry') this.#status.set(id, st.type);
+        if (st.type === 'busy' || st.type === 'retry') snapshot.status.set(id, st.type);
       }
-      for (const p of r.permissions) this.#track(this.#permissions, p.sessionID, p.id, true);
-      for (const q of r.questions) this.#track(this.#questions, q.sessionID, q.id, true);
+      for (const p of r.permissions) this.#track(snapshot.permissions, p.sessionID, p.id, true);
+      for (const q of r.questions) this.#track(snapshot.questions, q.sessionID, q.id, true);
+    }
+    return snapshot;
+  }
+
+  /** Remplace l'activité par l'instantané, sauf pour les sessions changées depuis par un événement. */
+  #applyActivity(snapshot: ActivitySnapshot, keep: ReadonlySet<string>): void {
+    const pairs: [Map<string, unknown>, Map<string, unknown>][] = [
+      [this.#status, snapshot.status],
+      [this.#permissions, snapshot.permissions],
+      [this.#questions, snapshot.questions],
+    ];
+    for (const [current, next] of pairs) {
+      for (const id of keep) {
+        const value = current.get(id);
+        if (value === undefined) next.delete(id);
+        else next.set(id, value);
+      }
+      current.clear();
+      for (const [id, value] of next) current.set(id, value);
     }
   }
 
@@ -250,10 +300,13 @@ export class Store {
       }
       case 'session.created':
       case 'session.updated':
+        this.#changes?.info.add(event.properties.info.id);
         if (event.properties.info.parentID === undefined) this.#sessions.set(event.properties.info.id, event.properties.info);
         else this.#children.set(event.properties.info.id, event.properties.info);
         break;
       case 'session.deleted':
+        this.#changes?.info.add(event.properties.sessionID);
+        this.#changes?.activity.add(event.properties.sessionID);
         this.#sessions.delete(event.properties.sessionID);
         this.#children.delete(event.properties.sessionID);
         this.#status.delete(event.properties.sessionID);
@@ -262,11 +315,13 @@ export class Store {
         break;
       case 'session.status': {
         const { sessionID, status } = event.properties;
+        this.#changes?.activity.add(sessionID);
         if (status.type === 'busy' || status.type === 'retry') this.#status.set(sessionID, status.type);
         else this.#status.delete(sessionID);
         break;
       }
       case 'session.idle':
+        this.#changes?.activity.add(event.properties.sessionID);
         this.#status.delete(event.properties.sessionID);
         this.#permissions.delete(event.properties.sessionID);
         this.#questions.delete(event.properties.sessionID);
@@ -282,6 +337,7 @@ export class Store {
       case 'permission.replied':
       case 'permission.v2.replied': {
         this.#notify(event);
+        this.#changes?.activity.add(event.properties.sessionID);
         const asked = event.type.endsWith('asked');
         // demande : `id` ; réponse : `requestID`
         const raw: unknown = asked ? event.properties['id'] : event.properties['requestID'];
