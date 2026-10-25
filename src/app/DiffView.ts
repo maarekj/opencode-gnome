@@ -64,10 +64,13 @@ export function parsePatch(patch: string): DiffLine[] {
 const NumbersRenderer = GObject.registerClass(
   class NumbersRenderer extends GtkSource.GutterRendererText {
     diffLines: readonly DiffLine[] = [];
+    /** chiffres du plus grand numéro de ligne (calculé une fois : #76) */
+    digits = 1;
 
     setLines(lines: readonly DiffLine[]): void {
       this.diffLines = lines;
       const max = lines.reduce((m, l) => Math.max(m, l.old ?? 0, l.new ?? 0), 0);
+      this.digits = String(max).length;
       const sample = `${'0'.repeat(String(max).length)} ${'0'.repeat(String(max).length)} +`;
       // mesuré avec la police de la vue (celle du rendu de la marge)
       const [width] = this.get_view().create_pango_layout(sample).get_pixel_size();
@@ -81,7 +84,7 @@ const NumbersRenderer = GObject.registerClass(
         this.set_text('', -1);
         return;
       }
-      const w = String(this.diffLines.reduce((m, x) => Math.max(m, x.old ?? 0, x.new ?? 0), 0)).length;
+      const w = this.digits;
       const sign = l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' ';
       this.set_text(`${String(l.old ?? '').padStart(w)} ${String(l.new ?? '').padStart(w)} ${sign}`, -1);
     }
