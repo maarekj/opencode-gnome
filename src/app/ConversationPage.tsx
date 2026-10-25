@@ -167,58 +167,61 @@ export function createConversationPage(opts: {
     const dir = (): string => conversation.directory ?? view.peek()?.session.directory ?? GLib.get_home_dir();
 
 
-    const composer = Composer({
-      busy,
-      ...(opts.draft === undefined ? {} : { initialText: opts.draft }),
-      initial: () => {
-        const own = view.peek()?.session;
-        const s = own?.model === undefined && opts.draftFrom !== undefined ? { ...opts.draftFrom, ...(own?.agent === undefined ? {} : { agent: own.agent }) } : own;
-        // variante : celle de la session, sinon celle du dernier tour de l'assistant
-        const variant = s?.model?.variant ?? conversation.context.peek()?.variant;
-        return {
-          ...(s?.agent === undefined ? {} : { agent: s.agent }),
-          ...(s?.model === undefined ? {} : { model: { providerID: s.model.providerID, modelID: s.model.id } }),
-          ...(variant === undefined ? {} : { variant }),
-        };
-      },
-      loadChoices: async () => {
-        const [agents, providers, config] = await Promise.all([client.agents(dir()), client.providers(dir()), client.config(dir()).catch(() => null)]);
-        const { defaultModel, defaultVariant } = settings.data.peek();
-        // modèle d'une session sans modèle : préférence de l'app > config opencode > défaut des fournisseurs
-        const defaults = [defaultModel, config?.model ?? undefined].filter((m): m is string => m !== undefined && m !== '');
-        return { agents, providers, defaults, ...(defaultModel === undefined || defaultVariant === undefined ? {} : { defaultVariant }) };
-      },
-      send: (text, choice, payload) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { ...payload, ...choice })),
-      loadCommands: () => client.commands(dir()),
-      runCommand: (name, args, choice, payload) => attempt(toast, `/${name}`, () => client.command(sessionID, dir(), name, args, { ...payload, ...choice })),
-      builtins: builtinCommands({
-        client,
-        sessionID,
-        dir,
-        session: () => store.session(sessionID) ?? view.peek()?.session,
-        userMessages: () => conversation.userMessages(),
-        toast,
-        newSession: opts.newSession,
-        sessionActions: opts.sessionActions,
-        attach,
-        parent: () => {
-          if (!(page instanceof Gtk.Widget)) throw new TypeError('widget attendu');
-          return page;
-        },
-      }),
-      findFiles: async (query, cancellable) => {
-        // fichiers et dossiers : les dossiers permettent de descendre dans l'arborescence
-        const [files, dirs] = await Promise.all([
-          client.findFiles(dir(), query, { limit: 20, cancellable }),
-          client.findFiles(dir(), query, { type: 'directory', limit: 5, cancellable }),
-        ]);
-        return query.endsWith('/') ? [...dirs, ...files] : [...files.slice(0, 15), ...dirs, ...files.slice(15)];
-      },
-      history: () => conversation.userMessages().map((m) => m.text),
-      toast,
-      context: conversation.context,
-      abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),
-    });
+    // sous-agent : lecture seule, pas de compositeur (ni chargement des modèles et commandes : #86)
+    const composer = child
+      ? null
+      : Composer({
+          busy,
+          ...(opts.draft === undefined ? {} : { initialText: opts.draft }),
+          initial: () => {
+            const own = view.peek()?.session;
+            const s = own?.model === undefined && opts.draftFrom !== undefined ? { ...opts.draftFrom, ...(own?.agent === undefined ? {} : { agent: own.agent }) } : own;
+            // variante : celle de la session, sinon celle du dernier tour de l'assistant
+            const variant = s?.model?.variant ?? conversation.context.peek()?.variant;
+            return {
+              ...(s?.agent === undefined ? {} : { agent: s.agent }),
+              ...(s?.model === undefined ? {} : { model: { providerID: s.model.providerID, modelID: s.model.id } }),
+              ...(variant === undefined ? {} : { variant }),
+            };
+          },
+          loadChoices: async () => {
+            const [agents, providers, config] = await Promise.all([client.agents(dir()), client.providers(dir()), client.config(dir()).catch(() => null)]);
+            const { defaultModel, defaultVariant } = settings.data.peek();
+            // modèle d'une session sans modèle : préférence de l'app > config opencode > défaut des fournisseurs
+            const defaults = [defaultModel, config?.model ?? undefined].filter((m): m is string => m !== undefined && m !== '');
+            return { agents, providers, defaults, ...(defaultModel === undefined || defaultVariant === undefined ? {} : { defaultVariant }) };
+          },
+          send: (text, choice, payload) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { ...payload, ...choice })),
+          loadCommands: () => client.commands(dir()),
+          runCommand: (name, args, choice, payload) => attempt(toast, `/${name}`, () => client.command(sessionID, dir(), name, args, { ...payload, ...choice })),
+          builtins: builtinCommands({
+            client,
+            sessionID,
+            dir,
+            session: () => store.session(sessionID) ?? view.peek()?.session,
+            userMessages: () => conversation.userMessages(),
+            toast,
+            newSession: opts.newSession,
+            sessionActions: opts.sessionActions,
+            attach,
+            parent: () => {
+              if (!(page instanceof Gtk.Widget)) throw new TypeError('widget attendu');
+              return page;
+            },
+          }),
+          findFiles: async (query, cancellable) => {
+            // fichiers et dossiers : les dossiers permettent de descendre dans l'arborescence
+            const [files, dirs] = await Promise.all([
+              client.findFiles(dir(), query, { limit: 20, cancellable }),
+              client.findFiles(dir(), query, { type: 'directory', limit: 5, cancellable }),
+            ]);
+            return query.endsWith('/') ? [...dirs, ...files] : [...files.slice(0, 15), ...dirs, ...files.slice(15)];
+          },
+          history: () => conversation.userMessages().map((m) => m.text),
+          toast,
+          context: conversation.context,
+          abort: () => void attempt(toast, 'Interruption impossible', () => client.abort(sessionID, dir())),
+        });
 
     /** réponse envoyée, puis demandes relues ; false si l'envoi a échoué */
     const answer = async (send: () => Promise<void>): Promise<boolean> => {
@@ -324,7 +327,7 @@ export function createConversationPage(opts: {
           />
           <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
             <TodoPanel todos={conversation.todos} />
-            {child ? null : composer}
+            {composer}
           </Gtk.Box>
         </Adw.ToolbarView>
       </Adw.NavigationPage>
