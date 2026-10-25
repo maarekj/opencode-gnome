@@ -11,7 +11,8 @@ interface Child {
 
 /** Opérations d'un conteneur ordonné : insérer à un index, retirer. */
 interface Container {
-  insert: (widget: Gtk.Widget, index: number) => void;
+  /** `after` : widget qui précède l'index (null : en tête) */
+  insert: (widget: Gtk.Widget, index: number, after: Gtk.Widget | null) => void;
   remove: (widget: Gtk.Widget) => void;
 }
 
@@ -19,6 +20,9 @@ function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (ite
   const children = new Map<string, Child>();
   /** ordre actuel des clés dans le conteneur */
   let order: string[] = [];
+
+  /** widget placé juste avant `index` (insertion en O(1), sans parcourir les enfants : #74) */
+  const previous = (index: number): Gtk.Widget | null => (index === 0 ? null : (children.get(order[index - 1] ?? '')?.widget ?? null));
 
   const sync = (): void => {
     const list = items.peek();
@@ -38,12 +42,12 @@ function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (ite
       if (c === undefined) {
         c = createRoot((dispose) => ({ widget: render(it), dispose }));
         children.set(k, c);
-        container.insert(c.widget, index);
+        container.insert(c.widget, index, previous(index));
         order.splice(index, 0, k);
       } else if (order[index] !== k) {
         container.remove(c.widget);
         order.splice(order.indexOf(k), 1);
-        container.insert(c.widget, index);
+        container.insert(c.widget, index, previous(index));
         order.splice(index, 0, k);
       }
     });
@@ -62,15 +66,7 @@ function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (ite
 export function keyedBox<T>(box: Gtk.Box, items: Accessor<readonly T[]>, key: (item: T) => string, render: (item: T) => Gtk.Widget): () => void {
   return keyed(
     {
-      insert: (w, index) => {
-        let prev: Gtk.Widget | null = null;
-        let c = box.get_first_child();
-        for (let i = 0; i < index && c !== null; i += 1) {
-          prev = c;
-          c = c.get_next_sibling();
-        }
-        box.insert_child_after(w, prev);
-      },
+      insert: (w, _index, after) => box.insert_child_after(w, after),
       remove: (w) => box.remove(w),
     },
     items,
