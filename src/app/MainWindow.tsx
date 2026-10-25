@@ -182,7 +182,13 @@ export function MainWindow({
   const visibleProjects = createComputed((): readonly ProjectView[] => {
     const { sidebarMode, favorites } = settings.data();
     const all = allProjects();
-    return sidebarMode === 'all' ? all : all.filter((p) => favorites.includes(p.path));
+    if (sidebarMode === 'all') return all;
+    // Favoris : ordre fixe, celui de la liste (changé seulement par glisser-déposer)
+    const byPath = new Map(all.map((p) => [p.path, p]));
+    return favorites.flatMap((path) => {
+      const p = byPath.get(path);
+      return p === undefined ? [] : [p];
+    });
   });
   const current = createComputed(() => {
     const key = selected();
@@ -368,7 +374,8 @@ export function MainWindow({
       settings.closeSessions([sessionID]);
       disposePage(sessionID);
       if (shownTag !== sessionTag(sessionID)) return;
-      // session affichée : une autre session ouverte du même projet, sinon la liste du projet
+      // session affichée : la dernière session ouverte du projet dans l'ordre de la barre latérale,
+      // sinon la liste du projet
       const project = store.projects.peek().find((p) => p.sessions.some((v) => v.session.id === sessionID));
       const ids = new Set(project?.sessions.map((v) => v.session.id) ?? []);
       const next = settings.data.peek().openSessions.findLast((id) => ids.has(id));

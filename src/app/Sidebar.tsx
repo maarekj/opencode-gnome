@@ -1,8 +1,10 @@
 // Barre latérale : projets (favoris ou tous), sessions ouvertes, terminaux et tâches dessous.
 import Adw from 'gi://Adw?version=1';
+import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createState, onCleanup, type Accessor } from 'gnim';
@@ -249,6 +251,88 @@ function treeActivity(view: SessionView): JSX.Element {
 /** Texte comparable : minuscules, sans accents. */
 export const normalize = (s: string): string => s.normalize('NFD').replaceAll(/\p{Diacritic}/gu, '').toLowerCase();
 
+/** Projet de la ligne (la ligne elle-même, ou la ligne de projet qui la précède). */
+function projectRowOf(list: Gtk.ListBox, row: Gtk.ListBoxRow): Gtk.ListBoxRow | null {
+  for (let i = row.get_index(); i >= 0; i -= 1) {
+    const r = list.get_row_at_index(i);
+    if (r?.name.startsWith('p:') === true) return r;
+  }
+  return null;
+}
+
+function rowNamed(list: Gtk.ListBox, name: string): Gtk.ListBoxRow | null {
+  for (let i = 0, r = list.get_row_at_index(0); r !== null; i += 1, r = list.get_row_at_index(i)) if (r.name === name) return r;
+  return null;
+}
+
+/** Ligne de projet suivante (après ses enfants), ou null. */
+function nextProjectRow(list: Gtk.ListBox, row: Gtk.ListBoxRow): Gtk.ListBoxRow | null {
+  for (let i = row.get_index() + 1, r = list.get_row_at_index(i); r !== null; i += 1, r = list.get_row_at_index(i)) {
+    if (r.name.startsWith('p:')) return r;
+  }
+  return null;
+}
+
+/**
+ * Glisser-déposer dans l'arbre : un projet favori (mode Favoris) réordonne les favoris, une
+ * session ouverte se place parmi les sessions de son projet. Rien d'autre ne change l'ordre.
+ */
+function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor<readonly ProjectView[]>): void {
+  const pathOf = (row: Gtk.ListBoxRow | null): string | null => {
+    const key = row?.name.slice(2);
+    return projects.peek().find((p) => p.key === key)?.path ?? null;
+  };
+  const source = new Gtk.DragSource({ actions: Gdk.DragAction.MOVE });
+  source.connect('prepare', (_s: Gtk.DragSource, _x: number, y: number) => {
+    const row = list.get_row_at_y(Math.round(y));
+    if (row === null) return null;
+    const movable = row.name.startsWith('s:') || (row.name.startsWith('p:') && settings.data.peek().sidebarMode === 'favorites');
+    if (!movable) return null;
+    source.set_icon(Gtk.WidgetPaintable.new(row), 20, 10);
+    return Gdk.ContentProvider.new_for_value(row.name);
+  });
+  list.add_controller(source);
+
+  const target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE);
+  target.connect('drop', (_t: Gtk.DropTarget, value: unknown, _x: number, y: number) => {
+    if (typeof value !== 'string') return false;
+    const over = list.get_row_at_y(Math.round(y));
+    if (over === null) return false;
+    const [ok, origin] = over.compute_point(list, new Graphene.Point({ x: 0, y: 0 }));
+    const upper = y - (ok ? origin.y : 0) < over.get_height() / 2;
+    if (value.startsWith('p:')) {
+      const moved = projects.peek().find((p) => `p:${p.key}` === value)?.path;
+      const proj = projectRowOf(list, over);
+      if (moved === undefined || proj === null) return false;
+      // moitié haute d'une ligne de projet : avant lui ; sinon : avant le projet suivant
+      const before = over === proj && upper ? proj : nextProjectRow(list, proj);
+      settings.moveFavorite(moved, pathOf(before));
+      return true;
+    }
+    if (value.startsWith('s:')) {
+      const id = value.slice(2);
+      const { openSessions } = settings.data.peek();
+      // sessions du même projet uniquement
+      const from = rowNamed(list, value);
+      if (from === null || projectRowOf(list, from) !== projectRowOf(list, over)) return false;
+      if (over.name.startsWith('s:')) {
+        const onto = over.name.slice(2);
+        // moitié basse : après la session survolée (avant la suivante, hors celle déplacée)
+        const rest = openSessions.filter((x) => x !== id);
+        settings.moveOpenSession(id, upper ? onto : (rest[rest.indexOf(onto) + 1] ?? null));
+      } else if (over.name.startsWith('p:')) {
+        // sur le projet : en tête de ses sessions
+        const first = list.get_row_at_index(over.get_index() + 1);
+        if (first?.name.startsWith('s:') !== true) return false;
+        settings.moveOpenSession(id, first.name.slice(2));
+      } else return false; // terminal, tâche : refusé
+      return true;
+    }
+    return false;
+  });
+  list.add_controller(target);
+}
+
 /** Élément de l'arbre aplati : un projet, ou une de ses sessions ouvertes. */
 type TreeItem =
   | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly sessions: number; readonly expanded: boolean }
@@ -441,7 +525,7 @@ export function Sidebar({
               }}
               $={(self: Gtk.ListBox) => {
                 // arbre aplati : chaque projet, puis s'il est déplié ses sessions ouvertes (ordre
-                // d'ouverture) et ses terminaux en cours
+                // d'ouverture, puis celui choisi par glisser-déposer), ses terminaux en cours et ses tâches
                 terminals.manager.watch();
                 const items = createComputed((): TreeItem[] => {
                   const { openSessions, collapsed, terminals: configured } = settings.data();
@@ -481,6 +565,7 @@ export function Sidebar({
                         ),
                   ),
                 );
+                enableReorder(self, settings, projects);
                 // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)
                 const highlight = (): void => {
                   const name = shown.peek();

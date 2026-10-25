@@ -134,6 +134,14 @@ function read(path: string): SettingsData | null | undefined {
   }
 }
 
+/** `item` déplacé juste avant `before` (à la fin si null ou absent) ; liste inchangée si `item` est absent. */
+export function moveBefore(list: readonly string[], item: string, before: string | null): string[] {
+  if (!list.includes(item) || item === before) return [...list];
+  const rest = list.filter((x) => x !== item);
+  const at = before === null ? -1 : rest.indexOf(before);
+  return at < 0 ? [...rest, item] : [...rest.slice(0, at), item, ...rest.slice(at)];
+}
+
 export class Settings {
   readonly data: Accessor<SettingsData>;
   readonly #set: (v: SettingsData) => void;
@@ -177,6 +185,16 @@ export class Settings {
 
   isFavorite(path: string): boolean {
     return this.data.peek().favorites.includes(path);
+  }
+
+  /** Déplace un favori avant `before` (à la fin si null) : ordre de la barre latérale en mode Favoris. */
+  moveFavorite(path: string, before: string | null): void {
+    this.update((d) => ({ ...d, favorites: moveBefore(d.favorites, path, before) }));
+  }
+
+  /** Déplace une session ouverte avant `before` (à la fin si null). */
+  moveOpenSession(id: string, before: string | null): void {
+    this.update((d) => ({ ...d, openSessions: moveBefore(d.openSessions, id, before) }));
   }
 
   toggleFavorite(path: string): void {
