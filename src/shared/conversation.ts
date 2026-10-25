@@ -142,6 +142,10 @@ export class Conversation {
   #signature = '';
   #unsubscribe: (() => void) | null = null;
   #unreconnect: (() => void) | null = null;
+  /** chargements de l'historique en cours */
+  #reloading = 0;
+  /** deltas reçus pendant un chargement pour des parties encore inconnues */
+  readonly #early = new Map<string, { field: string; delta: string }[]>();
   #disposed = false;
   /** premier message annulé (masqué avec les suivants) */
   #revert: string | null = null;
@@ -208,10 +212,12 @@ export class Conversation {
 
   async reload(): Promise<void> {
     this.#setLoading(true);
+    this.#reloading += 1;
     try {
       const { messages, older } = await this.#store.client.messagePage(this.sessionID, PAGE);
       if (this.#disposed) return;
       this.#ingest(messages);
+      this.#replayEarly();
       if (!this.#olderLoaded) {
         this.#older = older;
         this.#setHasOlder(older !== null);
@@ -219,9 +225,43 @@ export class Conversation {
       this.#setError(null);
     } catch (e) {
       this.#setError(errorMessage(e));
+    } finally {
+      this.#reloading -= 1;
+      if (this.#reloading === 0) this.#early.clear();
     }
     this.#setLoading(false);
     this.#flush();
+  }
+
+  /**
+   * Deltas reçus pendant le chargement pour des parties encore inconnues : l'instantané en
+   * contient une partie (ceux arrivés avant sa création). Le texte de l'instantané se termine
+   * par les premiers deltas ; seuls les suivants sont appliqués (#72).
+   */
+  #replayEarly(): void {
+    for (const [partID, deltas] of this.#early) {
+      const entry = this.#parts.get(partID);
+      if (entry === undefined) continue;
+      this.#early.delete(partID);
+      const byField = new Map<string, string[]>();
+      for (const d of deltas) byField.set(d.field, [...(byField.get(d.field) ?? []), d.delta]);
+      for (const [field, list] of byField) {
+        const prev = entry.value[field];
+        const text = typeof prev === 'string' ? prev : '';
+        // plus grand k : le texte se termine par les k premiers deltas
+        let skip = 0;
+        for (let k = list.length; k > 0; k -= 1) {
+          if (text.endsWith(list.slice(0, k).join(''))) {
+            skip = k;
+            break;
+          }
+        }
+        const rest = list.slice(skip).join('');
+        if (rest === '') continue;
+        entry.value = { ...entry.value, [field]: text + rest };
+        entry.dirty = true;
+      }
+    }
   }
 
   /** Charge la page de messages précédant les plus anciens déjà chargés. */
@@ -249,7 +289,7 @@ export class Conversation {
       const path: unknown = info['path'];
       if (this.#directory === null && typeof path === 'object' && path !== null && 'cwd' in path && typeof path.cwd === 'string') this.#directory = path.cwd;
       this.#upsertMessage(info);
-      for (const part of parts) this.#upsertPart(part);
+      for (const part of parts) this.#upsertPart(part, true);
     }
   }
 
@@ -332,7 +372,12 @@ export class Conversation {
       case 'message.part.delta': {
         const { partID, field, delta } = e.properties;
         const entry = this.#parts.get(partID);
-        if (entry === undefined) return; // la partie arrivera via message.part.updated
+        if (entry === undefined) {
+          // chargement en cours : la partie arrivera avec l'instantané (rejoué ensuite) ;
+          // sinon elle arrivera via message.part.updated
+          if (this.#reloading > 0) this.#early.set(partID, [...(this.#early.get(partID) ?? []), { field, delta }]);
+          return;
+        }
         const prev = entry.value[field];
         entry.value = { ...entry.value, [field]: (typeof prev === 'string' ? prev : '') + delta };
         entry.dirty = true;
@@ -381,7 +426,8 @@ export class Conversation {
     if (err !== null) this.#upsertPart(err);
   }
 
-  #upsertPart(part: Part): void {
+  /** `snapshot` : partie lue par HTTP, peut-être plus ancienne que les deltas déjà appliqués. */
+  #upsertPart(part: Part, snapshot = false): void {
     let m = this.#message(part.messageID);
     if (m === undefined) {
       // partie reçue avant son message : message provisoire
@@ -390,6 +436,10 @@ export class Conversation {
     }
     const entry = this.#parts.get(part.id);
     if (entry !== undefined) {
+      // texte local plus long qui prolonge celui de l'instantané : l'instantané est en retard (#72)
+      const live = entry.value['text'];
+      const snap = part['text'];
+      if (snapshot && typeof live === 'string' && typeof snap === 'string' && live.length > snap.length && live.startsWith(snap)) return;
       entry.value = part;
       entry.dirty = true;
       // une partie peut devenir visible (reasoning vide -> rempli)
