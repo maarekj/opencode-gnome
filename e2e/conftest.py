@@ -71,6 +71,12 @@ class Fake:
         self.port = free_port()
         self.url = f'http://127.0.0.1:{self.port}'
         self.dir = Path(tempfile.mkdtemp(prefix='og-e2e-'))
+        self.scenario = scenario
+        self.start()
+
+    def start(self) -> None:
+        """(Re)démarre le serveur sur le même port, avec le scénario initial."""
+        scenario = self.scenario
         args = ['node', str(ROOT / 'scripts' / 'fake-opencode.ts'), '--port', str(self.port)]
         if scenario is not None:
             path = self.dir / 'scenario.json'
@@ -95,8 +101,9 @@ class Fake:
         return wait_until(lambda: (self.requests(method, path) or [None])[-1], timeout, f'requête {method} {path}')
 
     def stop(self) -> None:
-        self.proc.terminate()
-        self.proc.wait(5)
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            self.proc.wait(5)
 
 
 # Décalage entre les coordonnées « fenêtre » de l'accessibilité (GTK 4 sous X11) et l'écran :
@@ -131,7 +138,13 @@ class App:
             # tâches : unités générées dans le dossier du test, `systemctl` journalisé (bac à sable)
             OGT_UNIT_DIR=str(fake.dir / 'systemd'),
             OGT_BIN='/nonexistent/ogt-e2e',
+            # notifications et sons journalisés (`NOTIF …`, `SON …`)
+            OPENCODE_GNOME_TEST_NOTIFY='1',
+            # identifiant propre au test : actions D-Bus (boutons des notifications, --session)
+            OPENCODE_GNOME_APP_ID=f'io.github.maarekj.OpencodeGnome.E2e{fake.port}',
         )
+        self.app_id = env['OPENCODE_GNOME_APP_ID']
+        self.env = env
         env.update(extra_env or {})
         self._log = self.log_path.open('w')
         self.proc = subprocess.Popen(['gjs', '-m', str(ROOT / 'dist' / 'app' / 'main.js'), '--size', '1280x800', *args], env=env, stdout=self._log, stderr=subprocess.STDOUT)
@@ -348,6 +361,17 @@ class App:
         from dogtail import rawinput
 
         rawinput.typeText(text)
+
+    def action(self, name: str, parameter: str | None = None) -> None:
+        """Active une action de l'application par D-Bus (comme GNOME Shell pour un bouton de notification)."""
+        path = '/' + self.app_id.replace('.', '/')
+        # signature (sava{sv}) : le paramètre est un variant
+        params = f'[<{parameter}>]' if parameter is not None else '[]'
+        subprocess.run(['gdbus', 'call', '--session', '--dest', self.app_id, '--object-path', path, '--method', 'org.gtk.Actions.Activate', name, params, '{}'], check=True, capture_output=True, timeout=5)
+
+    def second_instance(self, *args: str) -> None:
+        """Relance l'application : la nouvelle instance transmet ses arguments à celle qui tourne."""
+        subprocess.run(['gjs', '-m', str(ROOT / 'dist' / 'app' / 'main.js'), *args], env=self.env, timeout=15, capture_output=True)
 
     def clipboard(self) -> str:
         """Contenu du presse-papier (écran virtuel)."""
