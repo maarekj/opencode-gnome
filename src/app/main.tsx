@@ -10,6 +10,8 @@ import { serverUrl } from '../shared/config.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { Settings } from '../shared/settings.ts';
 import { Store } from '../shared/store.ts';
+import { repoRoot } from '../shared/help.ts';
+import { openAbout, openGuide, openShortcuts } from './HelpWindows.tsx';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { Notifier } from './Notifier.ts';
 import { openExtensions } from './ExtensionsDialog.ts';
@@ -166,6 +168,26 @@ const closeSession = new Gio.SimpleAction({ name: 'close-session' });
 closeSession.connect('activate', () => api?.closeCurrent());
 app.add_action(closeSession);
 app.set_accels_for_action('app.close-session', ['<Control>w']);
+
+/** Menu Aide : guide d'utilisation (F1), raccourcis clavier (Ctrl+?), à propos */
+const helpRoot = repoRoot(import.meta.url);
+const guideAction = new Gio.SimpleAction({ name: 'guide' });
+guideAction.connect('activate', () => openGuide(app, helpRoot));
+app.add_action(guideAction);
+app.set_accels_for_action('app.guide', ['F1']);
+const shortcutsAction = new Gio.SimpleAction({ name: 'shortcuts' });
+shortcutsAction.connect('activate', () => {
+  const win = app.get_active_window();
+  if (win !== null) openShortcuts(win);
+});
+app.add_action(shortcutsAction);
+app.set_accels_for_action('app.shortcuts', ['<Control>question']);
+const aboutAction = new Gio.SimpleAction({ name: 'about' });
+aboutAction.connect('activate', () => {
+  const win = app.get_active_window();
+  if (win !== null) openAbout(win, helpRoot, store, APP_ID);
+});
+app.add_action(aboutAction);
 
 // ------------------------------------------------------------------ fenêtre
 

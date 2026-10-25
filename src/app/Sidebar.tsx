@@ -452,6 +452,11 @@ export function Sidebar({
                 menu.append('MCP, skills et plugins (global)', 'app.extensions');
                 menu.append('Serveur opencode', 'app.server');
                 menu.append('Préférences', 'app.preferences');
+                const help = new Gio.Menu();
+                help.append("Guide d'utilisation", 'app.guide');
+                help.append('Raccourcis clavier', 'app.shortcuts');
+                help.append('À propos', 'app.about');
+                menu.append_section(null, help);
                 // pastille : un run planifié a échoué
                 const icon = new Gtk.Overlay({ child: new Gtk.Image({ iconName: 'open-menu-symbolic' }) });
                 if (n > 0) icon.add_overlay(new Gtk.Box({ halign: Gtk.Align.END, valign: Gtk.Align.START, cssClasses: ['failure-dot'] }));

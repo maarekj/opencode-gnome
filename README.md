@@ -24,6 +24,8 @@ mêmes sessions, permet d'y répondre, et rouvre n'importe quelle session dans u
   retour sur la session.
 - **Préférences** (`Ctrl+,`) : terminal, modèle par défaut, taille du texte, largeur de la
   conversation, notifications.
+- **Aide** (menu principal) : guide d'utilisation (`F1`, [`docs/guide.md`](docs/guide.md), aussi
+  `ocg help guide`), raccourcis clavier (`Ctrl+?`), à propos (versions de l'app et d'opencode).
 
 ## Installation
 
