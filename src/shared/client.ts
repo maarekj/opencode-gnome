@@ -40,6 +40,15 @@ const mentionParts = (directory: string, mentions: readonly Mention[]): object[]
 /** Délai sans aucune donnée du flux d'événements avant reconnexion (heartbeat : 10 s). */
 const WATCHDOG_MS = 30_000;
 
+/** Chemin local d'une URI `file://` (hôte, `%` mal formé : URI laissée telle quelle, #97). */
+const filePath = (uri: string): string => {
+  try {
+    return GLib.filename_from_uri(uri)[0];
+  } catch {
+    return uri;
+  }
+};
+
 export class OpencodeClient {
   readonly url: string;
   // libsoup limite les connexions par hôte (2 par défaut) : relevé, et le flux SSE (connexion
@@ -168,7 +177,7 @@ export class OpencodeClient {
     // leur chemin, l'agent les ouvre avec ses outils.
     const direct = files.filter((f) => isModelReadable(f.mime) || !f.url.startsWith('file://'));
     const byPath = files.filter((f) => !direct.includes(f));
-    const paths = byPath.map((f) => `- ${decodeURIComponent(f.url.slice('file://'.length))}`);
+    const paths = byPath.map((f) => `- ${filePath(f.url)}`);
     const fullText = paths.length === 0 ? text : `${text}${text === '' ? '' : '\n\n'}Fichiers joints :\n${paths.join('\n')}`;
     const parts = [
       ...(fullText === '' ? [] : [{ type: 'text', text: fullText }]),
