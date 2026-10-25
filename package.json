@@ -13,7 +13,8 @@
     "start": "node scripts/build.ts && gjs -m dist/app/main.js",
     "install-local": "node scripts/install.ts",
     "screenshot": "node scripts/screenshot.ts",
-    "test": "node scripts/test.ts"
+    "test": "node scripts/test.ts",
+    "fake-opencode": "node scripts/fake-opencode.ts"
   },
   "dependencies": {
     "gnim": "^1.9.1",

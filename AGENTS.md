@@ -31,6 +31,9 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   Pour des clics dans la barre latérale, pointer l'app sur un serveur de test
   (`opencode serve --port 4799` + `OPENCODE_GNOME_URL=http://127.0.0.1:4799`) : sur le serveur
   partagé, la session de l'agent en cours fait bouger l'ordre des projets pendant le test.
+  Sans vrai serveur ni modèle : `pnpm fake-opencode --port 4790 --scenario e2e/scenarios/demo.json`
+  (faux opencode : sessions, messages, permissions du scénario ; un prompt reçoit « Réponse simulée : … » ;
+  `GET /__test/requests` liste les requêtes reçues, `POST /__test/emit` émet un événement).
   `OPENCODE_GNOME_TIMING=1` : temps de construction de la conversation dans les logs.
   `OPENCODE_GNOME_TEST_LINKS=1` : un clic sur un lien est journalisé (`LIEN url`) au lieu d'ouvrir le navigateur.
   Ne pas toucher aux réglages de l'utilisateur en test : `XDG_CONFIG_HOME=/tmp/...`.

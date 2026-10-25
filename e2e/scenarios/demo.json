@@ -1,0 +1,28 @@
+{
+  "projects": [
+    { "id": "prj_demo", "worktree": "/tmp/opencode-fake/demo", "name": "demo", "vcs": "git", "time": { "created": 1, "updated": 2 } }
+  ],
+  "sessions": [
+    { "id": "ses_a", "projectID": "prj_demo", "directory": "/tmp/opencode-fake/demo", "title": "Corriger le bug de connexion", "agent": "build", "model": { "id": "fake-model", "providerID": "fake" }, "time": { "created": 1792900000000, "updated": 1792900090000 } },
+    { "id": "ses_b", "projectID": "prj_demo", "directory": "/tmp/opencode-fake/demo", "title": "Permission en attente", "agent": "build", "time": { "created": 1792900000000, "updated": 1792900080000 } }
+  ],
+  "messages": {
+    "ses_a": [
+      { "info": { "id": "msg_001", "role": "user", "sessionID": "ses_a", "time": { "created": 1792900000000 } },
+        "parts": [{ "id": "prt_001", "type": "text", "messageID": "msg_001", "sessionID": "ses_a", "text": "La connexion échoue après une mise en veille." }] },
+      { "info": { "id": "msg_002", "role": "assistant", "sessionID": "ses_a", "parentID": "msg_001", "time": { "created": 1792900060000, "completed": 1792900090000 }, "providerID": "fake", "modelID": "fake-model" },
+        "parts": [{ "id": "prt_002", "type": "text", "messageID": "msg_002", "sessionID": "ses_a", "text": "Le **chien de garde** du flux SSE ne se réarme pas : je le corrige." }] }
+    ],
+    "ses_b": [
+      { "info": { "id": "msg_101", "role": "user", "sessionID": "ses_b", "time": { "created": 1792900000000 } },
+        "parts": [{ "id": "prt_101", "type": "text", "messageID": "msg_101", "sessionID": "ses_b", "text": "Lance les tests." }] },
+      { "info": { "id": "msg_102", "role": "assistant", "sessionID": "ses_b", "parentID": "msg_101", "time": { "created": 1792900060000 }, "providerID": "fake", "modelID": "fake-model" },
+        "parts": [{ "id": "prt_102", "type": "tool", "tool": "bash", "callID": "call_1", "messageID": "msg_102", "sessionID": "ses_b", "state": { "status": "running", "input": { "command": "pnpm test" } } }] }
+    ]
+  },
+  "statuses": { "ses_b": { "type": "busy" } },
+  "permissions": [
+    { "id": "per_1", "sessionID": "ses_b", "permission": "bash", "patterns": ["pnpm test"], "always": ["pnpm *"], "tool": { "messageID": "msg_102", "callID": "call_1" } }
+  ],
+  "mcp": { "notes": { "status": "connected" } }
+}
