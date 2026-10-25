@@ -173,3 +173,59 @@ def test_comparer_un_commit_du_journal(run_app, repo):
     app.find('label', 'Main 2')
     app.click('button', 'Comparer ce commit avec la branche actuelle')
     app.find('label', contains='→ HEAD')
+
+
+# ---------------------------------------------------------------- revue commentée (#125)
+
+PATCH2 = 'diff --git a/lib.txt b/lib.txt\n--- a/lib.txt\n+++ b/lib.txt\n@@ -3,1 +3,2 @@\n ligne trois\n+ajout dans lib\n'
+
+
+def review_data(repo: Path) -> dict:
+    data = data_for(repo)
+    data['vcsDiff'].append({'file': 'lib.txt', 'status': 'modified', 'additions': 1, 'deletions': 0, 'patch': PATCH2})
+    return data
+
+
+def comment_all(app, text: str) -> None:
+    """Sélectionne tout le diff affiché et le commente."""
+    view = app.find('text', None, within=app.find('frame', 'Git — depot'))
+    app._point(view, 'b1c')
+    app.key('<Control>a')
+    app.click('button', 'Commenter la sélection')
+    app.dialog()
+    app.type(text)
+    app.click('button', 'Enregistrer')
+
+
+def test_revue_commentee_envoyee_a_l_agent(run_app, repo):
+    fake, app = run_app(review_data(repo), '--session', 'ses_g')
+    app.click('button', 'Git : modifications, journal, branches')
+    app.find('list item', 'Modifié : app.txt')
+    comment_all(app, 'Pourquoi non commité ?')
+    app.click('list item', 'Modifié : lib.txt')
+    assert app.text_visible('ajout dans lib')
+    comment_all(app, 'Renommer cette ligne')
+    app.find('toggle button', 'Revue commentée')
+    assert app.text_visible('Revue · 2 commentaires')
+    app.click('button', 'Envoyer à l’agent')
+    body = fake.wait_request('POST', '/session/ses_g/prompt_async')['body']
+    text = body['parts'][0]['text']
+    assert '2 commentaires sur 2 fichiers' in text
+    assert 'app.txt — lignes 1–2 (modifications non commitées)' in text
+    assert '+non commité' in text and 'Pourquoi non commité ?' in text
+    assert 'lib.txt — lignes 3–4' in text and '+ajout dans lib' in text and 'Renommer cette ligne' in text
+    # revue conservée après l'envoi (vérification de ce que l'agent a fait)
+    assert app.text_visible('Revue · 2 commentaires')
+
+
+def test_revue_brouillon_conserve(run_app, repo):
+    _, app = run_app(review_data(repo), '--session', 'ses_g')
+    app.click('button', 'Git : modifications, journal, branches')
+    app.find('list item', 'Modifié : app.txt')
+    comment_all(app, 'À revoir')
+    app.key('Escape')
+    wait_until(lambda: not app.has('frame', 'Git — depot'), 5, 'fenêtre fermée')
+    app.click('button', 'Git : modifications, journal, branches')
+    # rouvert : brouillon retrouvé, panneau affiché
+    assert app.text_visible('Revue · 1 commentaire')
+    assert app.text_visible('À revoir')

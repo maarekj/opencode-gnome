@@ -3,73 +3,24 @@
 // séparateur discret à la place des en-têtes `@@`.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import GtkSource from 'gi://GtkSource?version=5';
-
-const MAX_PATCH = 200_000;
-
-type Kind = 'add' | 'del' | 'ctx' | 'hunk' | 'meta';
-
-interface DiffLine {
-  readonly kind: Kind;
-  readonly text: string;
-  readonly old?: number;
-  readonly new?: number;
-}
-
-/** Découpe un patch unifié en lignes (sans les entêtes `diff --git`, `index`, `---`, `+++`). */
-export function parsePatch(patch: string): DiffLine[] {
-  const text = patch.length > MAX_PATCH ? patch.slice(0, MAX_PATCH) : patch;
-  const out: DiffLine[] = [];
-  let oldNo = 0;
-  let newNo = 0;
-  let inHunk = false;
-  // bloc sans position (`@@ @@`, diff reconstitué) : ni séparateur ni numéros de ligne
-  let numbered = true;
-  for (const line of text.split('\n')) {
-    if (line === '@@ @@') {
-      inHunk = true;
-      numbered = false;
-      continue;
-    }
-    if (!numbered) {
-      if (line.startsWith('+')) out.push({ kind: 'add', text: line.slice(1) });
-      else if (line.startsWith('-')) out.push({ kind: 'del', text: line.slice(1) });
-      else if (line.startsWith(' ')) out.push({ kind: 'ctx', text: line.slice(1) });
-      continue;
-    }
-    const h = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/u.exec(line);
-    if (h !== null) {
-      oldNo = Number(h[1]);
-      newNo = Number(h[3]);
-      const count = Number(h[4] ?? '1');
-      const range = count <= 1 ? `ligne ${newNo}` : `lignes ${newNo}–${newNo + count - 1}`;
-      const context = (h[5] ?? '').trim();
-      out.push({ kind: 'hunk', text: context === '' ? range : `${range} · ${context}` });
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk) continue; // entêtes du fichier
-    if (line.startsWith('+')) out.push({ kind: 'add', text: line.slice(1), new: newNo++ });
-    else if (line.startsWith('-')) out.push({ kind: 'del', text: line.slice(1), old: oldNo++ });
-    else if (line.startsWith('\\')) out.push({ kind: 'meta', text: line.slice(2) });
-    else if (line.startsWith(' ')) out.push({ kind: 'ctx', text: line.slice(1), old: oldNo++, new: newNo++ });
-  }
-  if (patch.length > MAX_PATCH) out.push({ kind: 'meta', text: '… diff tronqué' });
-  return out;
-}
+import Pango from 'gi://Pango';
+import { atAnchor, parsePatch, selectionOf, type DiffAnchor, type DiffKind as Kind, type DiffLine, type DiffSelection } from '../shared/diff.ts';
 
 /** Marge : numéro ancien, numéro nouveau, signe. */
 const NumbersRenderer = GObject.registerClass(
   class NumbersRenderer extends GtkSource.GutterRendererText {
-    diffLines: readonly DiffLine[] = [];
+    diffLines: readonly (DiffLine | null)[] = [];
     /** chiffres du plus grand numéro de ligne (calculé une fois : #76) */
     digits = 1;
 
-    setLines(lines: readonly DiffLine[]): void {
+    setLines(lines: readonly (DiffLine | null)[]): void {
       this.diffLines = lines;
-      const max = lines.reduce((m, l) => Math.max(m, l.old ?? 0, l.new ?? 0), 0);
+      const max = lines.reduce((m, l) => Math.max(m, l?.old ?? 0, l?.new ?? 0), 0);
       this.digits = String(max).length;
       const sample = `${'0'.repeat(String(max).length)} ${'0'.repeat(String(max).length)} +`;
       // mesuré avec la police de la vue (celle du rendu de la marge)
@@ -80,7 +31,7 @@ const NumbersRenderer = GObject.registerClass(
 
     override vfunc_query_data(_lines: GtkSource.GutterLines, line: number): void {
       const l = this.diffLines[line];
-      if (l === undefined || l.kind === 'hunk' || l.kind === 'meta') {
+      if (l === undefined || l === null || l.kind === 'hunk' || l.kind === 'meta') {
         this.set_text('', -1);
         return;
       }
@@ -95,6 +46,27 @@ type NumbersRenderer = InstanceType<typeof NumbersRenderer>;
 export interface DiffView {
   readonly widget: Gtk.Widget;
   show: (filename: string, patch: string) => void;
+  /** lignes sélectionnées (ou ligne du curseur), null si rien de commentable */
+  readonly selection: () => DiffSelection | null;
+  /** appelé quand la sélection change (bouton « Commenter ») */
+  readonly onSelectionChanged: (fn: () => void) => void;
+  /** commentaires à afficher sous leurs lignes (fichier affiché) ; relu par `refresh()` */
+  readonly setAnnotations: (fn: (file: string) => readonly DiffAnnotation[]) => void;
+  /** réaffiche le diff courant (commentaires ajoutés ou modifiés) en gardant la position */
+  readonly refresh: () => void;
+  /** fait défiler jusqu'à une ligne (commentaire de la revue) */
+  readonly reveal: (anchor: DiffAnchor) => void;
+  /** entrée « Commenter la sélection » du menu contextuel */
+  readonly setCommentAction: (fn: (() => void) | null) => void;
+}
+
+const noAnnotations = (): readonly DiffAnnotation[] => [];
+
+/** Commentaire affiché sous une ligne du diff. */
+export interface DiffAnnotation {
+  readonly end: DiffAnchor;
+  readonly text: string;
+  readonly onClick?: () => void;
 }
 
 /**
@@ -158,13 +130,41 @@ export function createDiffView({ inline = false }: { inline?: boolean } = {}): D
   };
   buffer.connect('highlight-updated', raise);
 
-  const show = (filename: string, patch: string): void => {
-    const lines = parsePatch(patch);
+  let shownFile = '';
+  let shownPatch = '';
+  /** lignes affichées : lignes du diff, et une ligne par commentaire (null) sous la ligne commentée */
+  let shownLines: readonly (DiffLine | null)[] = [];
+  let annotationsOf: (file: string) => readonly DiffAnnotation[] = noAnnotations;
+  const show = (filename: string, patch: string, keepPosition = false): void => {
+    const diffLines = parsePatch(patch);
+    const notes = annotationsOf(filename);
+    const rows: (DiffLine | null)[] = [];
+    const rowNotes = new Map<number, DiffAnnotation[]>();
+    for (const l of diffLines) {
+      rows.push(l);
+      const here = notes.filter((n) => atAnchor(l, n.end));
+      if (here.length > 0) {
+        rows.push(null);
+        rowNotes.set(rows.length - 1, here);
+      }
+    }
+    const lines = rows;
+    const scroll = view.get_vadjustment()?.get_value() ?? 0;
+    shownFile = filename;
+    shownPatch = patch;
+    shownLines = lines;
     buffer.language = GtkSource.LanguageManager.get_default().guess_language(filename, null);
     buffer.highlightSyntax = buffer.language !== null;
-    buffer.set_text(lines.map((l) => l.text).join('\n'), -1);
+    buffer.set_text(lines.map((l) => l?.text ?? '').join('\n'), -1);
+    // commentaires : un widget ancré sur leur ligne (vide), sous la ligne commentée
+    for (const [i, list] of rowNotes) {
+      const [, at] = buffer.get_iter_at_line(i);
+      const anchor = buffer.create_child_anchor(at);
+      view.add_child_at_anchor(annotationWidget(list), anchor);
+    }
     buffer.remove_source_marks(buffer.get_start_iter(), buffer.get_end_iter(), null);
     for (const [i, l] of lines.entries()) {
+      if (l === null) continue;
       if (BACKGROUND[l.kind] !== undefined) buffer.create_source_mark(null, l.kind, buffer.get_iter_at_line(i)[1]);
       const t = tags[l.kind];
       if (t === null) continue;
@@ -178,8 +178,96 @@ export function createDiffView({ inline = false }: { inline?: boolean } = {}): D
     raise();
     numbers.setLines(lines);
     buffer.place_cursor(buffer.get_start_iter());
-    if (!inline) view.get_vadjustment()?.set_value(0);
+    if (inline) return;
+    const adj = view.get_vadjustment();
+    if (keepPosition) {
+      // après la mise en page : même position qu'avant
+      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        adj?.set_value(scroll);
+        return GLib.SOURCE_REMOVE;
+      });
+    } else adj?.set_value(0);
   };
 
-  return { widget: inline ? view : new Gtk.ScrolledWindow({ child: view, vexpand: true }), show };
+  /** Carte d'un ou plusieurs commentaires sous une ligne (clic : le commentaire dans la revue). */
+  const annotationWidget = (list: readonly DiffAnnotation[]): Gtk.Widget => {
+    const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4, cssClasses: ['diff-annotation'] });
+    for (const n of list) {
+      const row = new Gtk.Box({ spacing: 8 });
+      row.append(new Gtk.Image({ iconName: 'chat-message-new-symbolic', valign: Gtk.Align.START, cssClasses: ['accent'] }));
+      row.append(new Gtk.Label({ label: n.text, xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, hexpand: true, selectable: false }));
+      box.append(row);
+      if (n.onClick !== undefined) {
+        const click = new Gtk.GestureClick();
+        const fn = n.onClick;
+        click.connect('released', () => fn());
+        row.add_controller(click);
+        row.set_cursor_from_name('pointer');
+        row.tooltipText = 'Voir dans la revue';
+      }
+    }
+    // largeur : celle de la vue (moins la marge des numéros)
+    const fit = (): void => {
+      box.widthRequest = Math.max(200, view.get_width() - numbers.widthRequest - 60);
+    };
+    fit();
+    view.connect('notify::width', fit);
+    return box;
+  };
+
+  const reveal = (anchor: DiffAnchor): void => {
+    const i = shownLines.findIndex((l) => l !== null && atAnchor(l, anchor));
+    if (i < 0) return;
+    // après la mise en page du diff qui vient d'être affiché
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 60, () => {
+      const [, it] = buffer.get_iter_at_line(i);
+      buffer.place_cursor(it);
+      view.scroll_to_iter(it, 0, true, 0, 0.3);
+      return GLib.SOURCE_REMOVE;
+    });
+  };
+
+  // menu contextuel : « Commenter la sélection »
+  let commentAction: (() => void) | null = null;
+  const actions = new Gio.SimpleActionGroup();
+  const commentGAction = new Gio.SimpleAction({ name: 'comment', enabled: false });
+  commentGAction.connect('activate', () => commentAction?.());
+  actions.add_action(commentGAction);
+  view.insert_action_group('review', actions);
+  const extra = new Gio.Menu();
+  extra.append('Commenter la sélection…', 'review.comment');
+
+  const selection = (): DiffSelection | null => {
+    if (shownFile === '' || !buffer.get_has_selection()) return null;
+    const [, a, b] = buffer.get_selection_bounds();
+    // fin de sélection en début de ligne : la ligne n'est pas comprise
+    const end = b.get_line_offset() === 0 && b.get_line() > a.get_line() ? b.get_line() - 1 : b.get_line();
+    const picked = shownLines.slice(a.get_line(), end + 1).filter((l): l is DiffLine => l !== null);
+    return selectionOf(shownFile, picked, 0, picked.length - 1);
+  };
+  const listeners: (() => void)[] = [];
+  buffer.connect('notify::has-selection', () => {
+    commentGAction.enabled = commentAction !== null && selection() !== null;
+    for (const fn of listeners) fn();
+  });
+
+  return {
+    widget: inline ? view : new Gtk.ScrolledWindow({ child: view, vexpand: true }),
+    show,
+    selection,
+    onSelectionChanged: (fn) => {
+      listeners.push(fn);
+    },
+    setAnnotations: (fn) => {
+      annotationsOf = fn;
+    },
+    refresh: () => {
+      if (shownFile !== '') show(shownFile, shownPatch, true);
+    },
+    reveal,
+    setCommentAction: (fn) => {
+      commentAction = fn;
+      view.extraMenu = fn === null ? null : extra;
+    },
+  };
 }

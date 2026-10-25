@@ -4,6 +4,7 @@
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
 import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import type { Accessor } from 'gnim';
@@ -14,6 +15,9 @@ import type { FileDiff } from '../shared/schemas.ts';
 import { prettyPath } from '../shared/store.ts';
 import { createDiffView } from './DiffView.ts';
 import { issuesTab } from './IssuesTab.tsx';
+import { askComment, ReviewController, reviewPanel, type ReviewTarget } from './ReviewPanel.tsx';
+import type { ReviewComment, ReviewOrigin } from '../shared/review.ts';
+import type { DiffAnchor } from '../shared/diff.ts';
 
 const LOG_PAGE = 300;
 
@@ -41,7 +45,21 @@ export interface GitSource {
   load: () => Promise<FileDiff[]>;
   /** Incrémenté quand des fichiers changent (rafraîchissement automatique). */
   changed?: Accessor<number>;
+  /** sessions où envoyer une revue commentée (sinon : commentaires possibles, envoi désactivé) */
+  review?: ReviewTarget;
 }
+
+/** Commenter des lignes : contrôleur de la revue de la fenêtre et origine du diff affiché. */
+interface Commenting {
+  readonly review: ReviewController;
+  /** texte de l'origine (prompt) et origine structurée (retour au diff) */
+  readonly source: () => string;
+  readonly origin: () => ReviewOrigin | null;
+  /** clic sur un commentaire affiché dans le diff */
+  readonly select: (c: ReviewComment) => void;
+}
+
+const sameOrigin = (a: ReviewOrigin | undefined, b: ReviewOrigin | null): boolean => a !== undefined && b !== null && JSON.stringify(a) === JSON.stringify(b);
 
 export type GitTab = 'changes' | 'log' | 'branches' | 'compare' | 'issues';
 
@@ -91,10 +109,12 @@ function fileRow(file: GitFileChange): Gtk.ListBoxRow {
 const noPatch = (): Promise<string> => Promise.resolve('');
 
 /** Liste de fichiers modifiés et diff du fichier choisi (patch chargé à la demande). */
-function createFilesPane(): {
+function createFilesPane(commenting?: Commenting): {
   readonly widget: Gtk.Widget;
   show: (files: readonly GitFileChange[], patch: (f: GitFileChange) => Promise<string>, keep?: string | null) => void;
   readonly selected: () => string | null;
+  /** affiche un fichier à une ligne (commentaire de la revue), dès que la liste est chargée */
+  readonly reveal: (file: string, end: DiffAnchor | undefined) => void;
 } {
   const list = new Gtk.ListBox({ cssClasses: ['navigation-sidebar'] });
   const listBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
@@ -110,7 +130,33 @@ function createFilesPane(): {
   const errorPage = statusPage('dialog-error-symbolic', 'Diff illisible');
   stack.add_named(errorPage, 'error');
   const right = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-  right.append(paneHeader(title, subtitle));
+  // revue : lignes sélectionnées -> commentaire
+  const commentBtn = new Gtk.Button({ label: 'Commenter la sélection', cssClasses: ['flat'], valign: Gtk.Align.CENTER, sensitive: false, tooltipText: 'Sélectionne des lignes du diff pour les commenter' });
+  commentBtn.visible = commenting !== undefined;
+  diff.onSelectionChanged(() => {
+    commentBtn.sensitive = diff.selection() !== null;
+  });
+  const comment = (): void => {
+    const sel = diff.selection();
+    const origin = commenting?.origin() ?? null;
+    if (sel === null || commenting === undefined || origin === null) return;
+    const from = commenting.source();
+    askComment(commentBtn, `${sel.file} — ${sel.lines}`, sel.excerpt, '', (text) => commenting.review.add(sel, from, origin, text));
+  };
+  commentBtn.connect('clicked', comment);
+  if (commenting !== undefined) {
+    diff.setCommentAction(comment);
+    // commentaires de ce diff (même origine) affichés sous leurs lignes
+    diff.setAnnotations((file) => {
+      const origin = commenting.origin();
+      return commenting.review.comments
+        .peek()
+        .filter((c) => c.file === file && c.end !== undefined && sameOrigin(c.origin, origin))
+        .map((c) => ({ end: c.end ?? {}, text: c.text, onClick: () => commenting.select(c) }));
+    });
+    commenting.review.comments.subscribe(() => diff.refresh());
+  }
+  right.append(paneHeader(title, subtitle, commentBtn));
   right.append(new Gtk.Separator());
   right.append(stack);
 
@@ -118,6 +164,8 @@ function createFilesPane(): {
   let patchOf: (f: GitFileChange) => Promise<string> = noPatch;
   let selected: string | null = null;
   let generation = 0;
+  /** fichier et ligne à montrer (commentaire choisi dans la revue) */
+  let pending: { file: string; end: DiffAnchor | undefined } | null = null;
 
   const open = (file: GitFileChange | null): void => {
     const gen = ++generation;
@@ -140,6 +188,10 @@ function createFilesPane(): {
         if (gen !== generation) return;
         diff.show(file.path, patch);
         stack.visibleChildName = 'diff';
+        if (pending?.file === file.path) {
+          if (pending.end !== undefined) diff.reveal(pending.end);
+          pending = null;
+        }
       } catch (e) {
         if (gen !== generation) return;
         errorPage.description = esc(errorMessage(e));
@@ -160,8 +212,9 @@ function createFilesPane(): {
     selected = null;
     clearList(list);
     for (const f of files) list.append(fileRow(f));
-    // garde le fichier choisi s'il est toujours là, sinon le premier
-    const index = Math.max(0, files.findIndex((f) => f.path === keep));
+    // fichier demandé par la revue, sinon le fichier choisi s'il est toujours là, sinon le premier
+    const want = pending?.file ?? keep;
+    const index = Math.max(0, files.findIndex((f) => f.path === want));
     const row = list.get_row_at_index(index);
     if (row === null) {
       open(null);
@@ -180,13 +233,25 @@ function createFilesPane(): {
     shrinkEndChild: false,
     vexpand: true,
   });
-  return { widget: paned, show, selected: () => selected };
+  const reveal = (file: string, end: DiffAnchor | undefined): void => {
+    pending = { file, end };
+    const index = files.findIndex((f) => f.path === file);
+    if (index < 0) return; // liste pas encore chargée : appliqué par show()
+    if (selected === file) {
+      if (end !== undefined) diff.reveal(end);
+      pending = null;
+      return;
+    }
+    const row = list.get_row_at_index(index);
+    if (row !== null) list.select_row(row);
+  };
+  return { widget: paned, show, selected: () => selected, reveal };
 }
 
 // ------------------------------------------------------------------ Modifications
 
-function changesTab(source: GitSource): { widget: Gtk.Widget; load: () => Promise<void> } {
-  const pane = createFilesPane();
+function changesTab(source: GitSource, review: ReviewController, select: (c: ReviewComment) => void): { widget: Gtk.Widget; load: () => Promise<void>; reveal: (file: string, end: DiffAnchor | undefined) => void } {
+  const pane = createFilesPane({ review, source: () => 'modifications non commitées', origin: () => ({ kind: 'changes' }), select });
   const stack = new Gtk.Stack();
   stack.add_named(new Adw.Spinner({ halign: Gtk.Align.CENTER, valign: Gtk.Align.CENTER, widthRequest: 32, heightRequest: 32 }), 'loading');
   stack.add_named(pane.widget, 'files');
@@ -213,7 +278,7 @@ function changesTab(source: GitSource): { widget: Gtk.Widget; load: () => Promis
       stack.visibleChildName = 'error';
     }
   };
-  return { widget: stack, load };
+  return { widget: stack, load, reveal: pane.reveal };
 }
 
 // ------------------------------------------------------------------ Journal
@@ -303,7 +368,12 @@ function commitRow(c: GitCommit, graph: GraphRow | undefined, width: number): Gt
   return new Gtk.ListBoxRow({ child: line, tooltipText: `${c.subject}\n${c.hash}\n${c.author} <${c.email}>\n${fmtFullDate(c.date)}` });
 }
 
-function logTab(directory: string, compare: (from: string, to: string) => void): { widget: Gtk.Widget; load: () => Promise<void>; showRef: (ref: string, label: string) => void } {
+function logTab(
+  directory: string,
+  compare: (from: string, to: string) => void,
+  review: ReviewController,
+  select: (c: ReviewComment) => void,
+): { widget: Gtk.Widget; load: () => Promise<void>; showRef: (ref: string, label: string) => void; reveal: (file: string, end: DiffAnchor | undefined) => void } {
   // ---- liste des commits (gauche)
   const list = new Gtk.ListBox({ cssClasses: ['navigation-sidebar', 'git-log'] });
   const more = new Gtk.Button({ label: 'Afficher plus', cssClasses: ['flat'], marginTop: 6, marginBottom: 12, halign: Gtk.Align.CENTER, visible: false });
@@ -345,7 +415,12 @@ function logTab(directory: string, compare: (from: string, to: string) => void):
   info.append(infoTop);
   const bodyScroll = new Gtk.ScrolledWindow({ child: body, hscrollbarPolicy: Gtk.PolicyType.NEVER, propagateNaturalHeight: true, maxContentHeight: 180 });
   info.append(bodyScroll);
-  const files = createFilesPane();
+  const files = createFilesPane({
+    review,
+    source: () => (current === null ? 'commit' : `commit ${current.slice(0, 7)}`),
+    origin: () => (current === null ? null : { kind: 'commit', hash: current }),
+    select,
+  });
   const detail = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   detail.append(info);
   detail.append(new Gtk.Separator());
@@ -469,7 +544,7 @@ function logTab(directory: string, compare: (from: string, to: string) => void):
   });
 
   const paned = new Gtk.Paned({ startChild: left, endChild: rightStack, position: 380, shrinkStartChild: false, shrinkEndChild: false });
-  return { widget: paned, load, showRef };
+  return { widget: paned, load, showRef, reveal: files.reveal };
 }
 
 // ------------------------------------------------------------------ Comparer
@@ -508,7 +583,12 @@ function refPicker(placeholder: string, refs: () => readonly GitRef[], changed: 
   return { widget: box, entry };
 }
 
-function compareTab(directory: string, openCommit: (hash: string) => void): { widget: Gtk.Widget; load: () => Promise<void>; set: (from: string, to: string) => void } {
+function compareTab(
+  directory: string,
+  openCommit: (hash: string) => void,
+  review: ReviewController,
+  select: (c: ReviewComment) => void,
+): { widget: Gtk.Widget; load: () => Promise<void>; set: (from: string, to: string) => void; reveal: (file: string, end: DiffAnchor | undefined) => void } {
   let refs: GitRef[] = [];
   const run = (): void => void load();
   const from = refPicker('Base (ex. main)', () => refs, run);
@@ -539,7 +619,14 @@ function compareTab(directory: string, openCommit: (hash: string) => void): { wi
   left.append(paneHeader(summary, summarySub));
   left.append(new Gtk.Separator());
   left.append(new Gtk.ScrolledWindow({ child: commitList, vexpand: true, hscrollbarPolicy: Gtk.PolicyType.NEVER }));
-  const files = createFilesPane();
+  /** refs de la comparaison affichée (origine des commentaires) */
+  let compared: { from: string; to: string } | null = null;
+  const files = createFilesPane({
+    review,
+    source: () => (compared === null ? 'comparaison' : `comparaison ${compared.from}..${compared.to}`),
+    origin: () => (compared === null ? null : { kind: 'compare', from: compared.from, to: compared.to }),
+    select,
+  });
   const result = new Gtk.Paned({ startChild: left, endChild: files.widget, position: 320, shrinkStartChild: false, shrinkEndChild: false, vexpand: true });
 
   const stack = new Gtk.Stack({ vexpand: true });
@@ -592,6 +679,7 @@ function compareTab(directory: string, openCommit: (hash: string) => void): { wi
       section(`Seulement dans ${b} (${onlyB.length}${onlyB.length === 500 ? '+' : ''})`, onlyB);
       if (onlyA.length > 0) section(`Seulement dans ${a} (${onlyA.length}${onlyA.length === 500 ? '+' : ''})`, onlyA);
       summary.label = `${a} → ${b}`;
+      compared = { from: a, to: b };
       const add = changes.reduce((n, f) => n + (f.additions ?? 0), 0);
       const del = changes.reduce((n, f) => n + (f.deletions ?? 0), 0);
       summarySub.label = `↑${onlyB.length} ↓${onlyA.length} · ${plural(changes.length, 'fichier')} · +${add} −${del}`;
@@ -608,7 +696,7 @@ function compareTab(directory: string, openCommit: (hash: string) => void): { wi
     to.entry.text = b;
     run();
   };
-  return { widget: box, load, set };
+  return { widget: box, load, set, reveal: files.reveal };
 }
 
 // ------------------------------------------------------------------ Branches
@@ -709,12 +797,33 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
   const dialog = new Adw.Window({ title: `Git — ${source.title}`, defaultWidth: 1300, defaultHeight: 850, ...(app === null ? {} : { application: app }) });
 
   const stack = new Adw.ViewStack({ vexpand: true });
-  const changes = changesTab(source);
+  const review = new ReviewController(source.directory);
+  // commentaire choisi (revue ou diff) : onglet, fichier et ligne d'origine ; mis en évidence dans la revue
+  const goto = (c: ReviewComment): void => {
+    const o = c.origin;
+    if (o === undefined) return;
+    if (o.kind === 'changes') {
+      stack.visibleChildName = 'changes';
+      changes.reveal(c.file, c.end);
+    } else if (o.kind === 'commit') {
+      log.showRef(o.hash, o.hash.slice(0, 7));
+      stack.visibleChildName = 'log';
+      log.reveal(c.file, c.end);
+    } else {
+      compare.set(o.from, o.to);
+      stack.visibleChildName = 'compare';
+      compare.reveal(c.file, c.end);
+    }
+  };
+  const showInReview = (): void => {
+    split.showSidebar = true;
+  };
+  const changes = changesTab(source, review, showInReview);
   const compareWith = (a: string, b: string): void => {
     compare.set(a, b);
     stack.visibleChildName = 'compare';
   };
-  const log = logTab(source.directory, compareWith);
+  const log = logTab(source.directory, compareWith, review, showInReview);
   const branches = branchesTab(
     source.directory,
     (ref, label) => {
@@ -723,10 +832,15 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
     },
     compareWith,
   );
-  const compare = compareTab(source.directory, (hash) => {
-    log.showRef(hash, hash.slice(0, 7));
-    stack.visibleChildName = 'log';
-  });
+  const compare = compareTab(
+    source.directory,
+    (hash) => {
+      log.showRef(hash, hash.slice(0, 7));
+      stack.visibleChildName = 'log';
+    },
+    review,
+    showInReview,
+  );
   stack.add_titled_with_icon(changes.widget, 'changes', 'Modifications', 'document-edit-symbolic');
   stack.add_titled_with_icon(log.widget, 'log', 'Journal', 'document-open-recent-symbolic');
   stack.add_titled_with_icon(branches.widget, 'branches', 'Branches', 'media-playlist-consecutive-symbolic');
@@ -740,9 +854,30 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
   const refresh = new Gtk.Button({ iconName: 'view-refresh-symbolic', tooltipText: 'Rafraîchir (F5)' });
   header.pack_start(refresh);
   header.pack_start(title);
-  const view = new Adw.ToolbarView({ content: stack });
+  // revue commentée : panneau à droite, ouvert dès qu'un brouillon existe
+  const overlay = new Adw.ToastOverlay();
+  const toast = (m: string): void => overlay.add_toast(new Adw.Toast({ title: esc(m), timeout: 4 }));
+  const split = new Adw.OverlaySplitView({ content: stack, sidebar: reviewPanel(review, source.review, toast, goto), sidebarPosition: Gtk.PackType.END, showSidebar: !review.empty, minSidebarWidth: 320, maxSidebarWidth: 420 });
+  const reviewBtn = new Gtk.ToggleButton({ active: split.showSidebar, tooltipText: 'Revue commentée' });
+  split.bind_property('show-sidebar', reviewBtn, 'active', GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE);
+  const reviewLabel = new Adw.ButtonContent({ iconName: 'chat-message-new-symbolic', label: '' });
+  reviewBtn.child = reviewLabel;
+  const updateReviewBtn = (): void => {
+    const n = review.comments.peek().length;
+    reviewLabel.label = n === 0 ? 'Revue' : `Revue (${n})`;
+
+  };
+  updateReviewBtn();
+  const unsubscribeReview = review.comments.subscribe(() => {
+    updateReviewBtn();
+    // premier commentaire : panneau affiché
+    if (!review.empty && !split.showSidebar) split.showSidebar = true;
+  });
+  header.pack_end(reviewBtn);
+  const view = new Adw.ToolbarView({ content: split });
   view.add_top_bar(header);
-  dialog.content = view;
+  overlay.child = view;
+  dialog.content = overlay;
 
   // chaque onglet est chargé à sa première ouverture, puis rafraîchi à la demande
   const loaders: Record<GitTab, () => Promise<void>> = { changes: changes.load, log: log.load, branches: branches.load, compare: compare.load, issues: issues.load };
@@ -796,6 +931,7 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
     else loadVisible(true);
   });
   dialog.connect('close-request', () => {
+    unsubscribeReview();
     unsubscribe?.();
     if (queued !== 0) GLib.source_remove(queued);
     windows.delete(source.directory);

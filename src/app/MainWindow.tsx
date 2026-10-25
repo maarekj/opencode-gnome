@@ -221,6 +221,7 @@ export function MainWindow({
     terminals,
     openSubagent,
     forkFrom,
+    openSession: (id: string) => actions.openSession(id),
   });
   /** texte à pré-remplir dans la page de la prochaine session ouverte (fork depuis un message) */
   const drafts = new Map<string, { text: string; from: Session | undefined }>();

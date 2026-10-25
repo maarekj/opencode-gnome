@@ -17,6 +17,7 @@ import { keyedListBox } from './KeyedBox.ts';
 import { openEditor, taskIcon, taskMenu, taskRunButton, taskState, taskSwitch, type EditorContext, type TaskView } from './TasksWindow.tsx';
 import { describeSchedule } from '../shared/tasks.ts';
 import { LinkBar } from './LinkBar.tsx';
+import type { ReviewTarget } from './ReviewPanel.tsx';
 import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
 import { attachSessionMenu, deleteButton, type SessionActions } from './SessionMenu.ts';
 import { asWidget, normalize } from './Sidebar.tsx';
@@ -182,6 +183,23 @@ function SessionList({ sessions, actions, header }: { sessions: Accessor<readonl
 }
 
 
+/**
+ * Sessions où envoyer une revue commentée : sessions du projet (les plus récentes d'abord), la
+ * session d'origine présélectionnée, sinon la plus récente.
+ */
+export function reviewTarget(store: Store, project: string, preferred: string | null, open: (id: string) => void): ReviewTarget {
+  const sessions = (): SessionView[] => store.projects.peek().find((p) => p.path === project || p.sessions.some((v) => v.session.id === preferred))?.sessions.slice() ?? [];
+  return {
+    sessions: () => sessions().map((v) => ({ id: v.session.id, title: v.session.title })),
+    preferred: () => preferred ?? sessions()[0]?.session.id ?? null,
+    send: async (id, text) => {
+      const session = store.session(id);
+      await store.client.prompt(id, session?.directory ?? project, text);
+    },
+    open,
+  };
+}
+
 export function SessionsPage({
   store,
   current,
@@ -292,7 +310,7 @@ export function SessionsPage({
             onClicked={(self: Gtk.Button) => {
               const p = current.peek();
               if (p === null) return;
-              openGitWindow(self, { directory: p.path, title: p.name, load: () => store.client.gitDiff(p.path) });
+              openGitWindow(self, { directory: p.path, title: p.name, load: () => store.client.gitDiff(p.path), review: reviewTarget(store, p.path, null, actions.openSession) });
             }}
           />
         </Adw.HeaderBar>

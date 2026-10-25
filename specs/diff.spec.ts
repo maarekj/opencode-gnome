@@ -1,5 +1,5 @@
 // Découpage d'un patch unifié (vue des diffs).
-import { parsePatch } from '../src/app/DiffView.ts';
+import { parsePatch } from '../src/shared/diff.ts';
 
 const PATCH = `diff --git a/f.txt b/f.txt
 index 1..2 100644

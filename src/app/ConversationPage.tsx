@@ -13,6 +13,7 @@ import { builtinCommands } from './Builtins.ts';
 import { Composer } from './Composer.tsx';
 import { IdeButton } from './Ide.ts';
 import { LinkBar } from './LinkBar.tsx';
+import { reviewTarget } from './SessionsPage.tsx';
 import { openFolder } from './OpenFolder.ts';
 import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
@@ -88,6 +89,8 @@ export function createConversationPage(opts: {
   newSession: (directory: string) => void;
   sessionActions: (session: Session) => SessionActions;
   terminals: TerminalContext;
+  /** affiche une session (revue envoyée depuis la fenêtre git) */
+  openSession: (sessionID: string) => void;
   /** ouvre la conversation d'un sous-agent (au-dessus de cette page) */
   openSubagent: (sessionID: string) => void;
   /** session d'un sous-agent : lecture seule (pas de compositeur ni de terminaux) */
@@ -243,6 +246,7 @@ export function createConversationPage(opts: {
         title: GLib.path_get_basename(dir()),
         load: () => client.gitDiff(dir()),
         changed: conversation.diffVersion,
+        review: reviewTarget(store, projectPath.peek() ?? dir(), sessionID, opts.openSession),
       });
 
     const page = (

@@ -291,6 +291,22 @@ row.unread .title {
   margin: -2px -3px 0 0;
 }
 
+.diff-annotation {
+  background: alpha(var(--accent-bg-color), 0.10);
+  border-left: 3px solid var(--accent-bg-color);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0 6px 0;
+  font-family: sans-serif;
+}
+.review-comment {
+  padding: 10px 12px;
+}
+.review-excerpt {
+  background: alpha(currentColor, 0.05);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
 .issue-post {
   padding: 12px 16px;
 }
