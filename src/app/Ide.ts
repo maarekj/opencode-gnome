@@ -8,6 +8,7 @@ import { onCleanup, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import type { Settings } from '../shared/settings.ts';
 import { shq } from '../shared/terminal.ts';
+import { intercepted } from '../shared/sandbox.ts';
 
 export interface Ide {
   /** identifiant du fichier .desktop (ex. code.desktop) */
@@ -98,10 +99,7 @@ export function ideFor(settings: Settings, project: string, ides: readonly Ide[]
  */
 export function openInIde(ide: Ide, directory: string): void {
   if (!GLib.file_test(directory, GLib.FileTest.IS_DIR)) throw new Error(`dossier introuvable : ${directory}`);
-  if (GLib.getenv('OPENCODE_GNOME_TEST_LINKS') !== null) {
-    console.log(`IDE ${ide.id} ${directory}`);
-    return;
-  }
+  if (intercepted('IDE', `${ide.id} ${directory}`)) return;
   const exec = (ide.app.get_commandline() ?? '')
     .replaceAll(/%[fFuU]/gu, shq(directory))
     .replaceAll(/%[ick]/gu, '')

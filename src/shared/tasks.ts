@@ -9,6 +9,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import * as z from 'zod/mini';
+import { intercepted } from './sandbox.ts';
 
 Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async', 'communicate_utf8_finish');
 
@@ -300,6 +301,8 @@ async function run(argv: readonly string[]): Promise<{ ok: boolean; out: string 
 }
 
 async function systemctl(args: readonly string[]): Promise<string> {
+  // captures et tests sans espace de noms de test : les unités de l'utilisateur ne sont pas modifiées
+  if (args[0] !== 'show' && GLib.getenv('OGT_NAMESPACE') === null && intercepted('SYSTEMCTL', args.join(' '))) return '';
   const { ok, out } = await run(['systemctl', '--user', ...args]);
   if (!ok) throw new Error(`systemctl ${args.join(' ')} : ${out.trim()}`);
   return out;

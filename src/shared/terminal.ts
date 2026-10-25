@@ -1,5 +1,6 @@
 // Ouverture d'un terminal sur une session opencode (`opencode attach`).
 import GLib from 'gi://GLib';
+import { intercepted } from './sandbox.ts';
 
 /** terminal -> préfixe argv qui exécute le programme + arguments suivants */
 const TERMINALS: Readonly<Record<string, readonly string[]>> = {
@@ -58,6 +59,7 @@ function terminalArgv(choice: TerminalChoice): string[] {
 export function openTerminalArgv(program: readonly string[], cwd: string, choice: TerminalChoice = {}): void {
   const argv = terminalArgv(choice);
   const bin = argv[0] ?? '';
+  if (intercepted('TERMINAL', `${cwd} : ${program.join(' ')}`)) return;
   if (GLib.find_program_in_path(bin) === null) throw new Error(`Terminal introuvable : ${bin} (Préférences)`);
   GLib.spawn_async(cwd, [...argv, ...program], null, GLib.SpawnFlags.SEARCH_PATH, null);
 }
@@ -71,6 +73,7 @@ export function openTerminal(command: string, cwd: string, choice: TerminalChoic
   const argv = terminalArgv(choice);
   const bin = argv[0] ?? '';
   if (GLib.find_program_in_path(bin) === null) throw new Error(`Terminal introuvable : ${bin} (Préférences)`);
+  if (intercepted('TERMINAL', `${cwd} : ${command}`)) return;
   const shell = GLib.getenv('SHELL') ?? '/bin/sh';
   GLib.spawn_async(cwd, [...argv, shell, '-ic', `${command}; exec ${shq(shell)} -i`], null, GLib.SpawnFlags.SEARCH_PATH, null);
 }

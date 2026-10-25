@@ -7,6 +7,7 @@ import Pango from 'gi://Pango';
 import { createState, onCleanup } from 'gnim';
 import { parseMarkdown, stripMarkup, type Block } from '../shared/markdown.ts';
 import { DEFAULT_MARKDOWN_STYLE, type MarkdownStyle } from '../shared/settings.ts';
+import { intercepted } from '../shared/sandbox.ts';
 
 // ---------------------------------------------------------------- style (préférences)
 
@@ -332,13 +333,12 @@ function enableLinks(view: Gtk.TextView): void {
   view.add_controller(click);
 }
 
-/** Liens « ouverts » en mode test (OPENCODE_GNOME_TEST_LINKS). */
+/** Liens « ouverts » en bac à sable (captures et tests). */
 export const testLinks: string[] = [];
 
 /** Ouvre un lien ; en test, il est journalisé au lieu d'ouvrir le navigateur. */
 function openLink(from: Gtk.Widget, url: string): void {
-  if (GLib.getenv('OPENCODE_GNOME_TEST_LINKS') !== null) {
-    console.log(`LIEN ${url}`);
+  if (intercepted('LIEN', url)) {
     testLinks.push(url);
     return;
   }

@@ -8,6 +8,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { isModelReadable } from '../shared/client.ts';
 import type { Attachment } from '../shared/schemas.ts';
+import { intercepted } from '../shared/sandbox.ts';
 
 Gio._promisify(Gio.File.prototype, 'load_contents_async', 'load_contents_finish');
 Gio._promisify(Gio.File.prototype, 'query_info_async', 'query_info_finish');
@@ -128,6 +129,7 @@ async function launch(parent: Gtk.Widget, a: { mime?: string | undefined; filena
     file = Gio.File.new_for_path(GLib.build_filenamev([dir, name.includes('.') || ext === '' ? name : `${name}.${ext}`]));
     await file.replace_contents_bytes_async(new GLib.Bytes(bytes), null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
   }
+  if (intercepted('FICHIER', file.get_uri())) return;
   const root = parent.get_root();
   await new Gtk.FileLauncher({ file }).launch(root instanceof Gtk.Window ? root : null, null);
 }

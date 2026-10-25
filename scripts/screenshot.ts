@@ -22,7 +22,9 @@ const quote = (s: string): string => `'${s.replaceAll("'", String.raw`'\''`)}'`;
 const script = [
   // écran X virtuel, bus D-Bus privé (pas de contact avec une instance déjà ouverte),
   // sans accessibilité ni portails (absents de ce bus privé)
-  `export GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none GDK_DEBUG=no-portals GIO_USE_VFS=local`,
+  // OPENCODE_GNOME_SANDBOX : dossiers, fichiers, liens, terminaux et systemctl journalisés au lieu
+  // d'être lancés dans la session de l'utilisateur
+  `export GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none GDK_DEBUG=no-portals GIO_USE_VFS=local OPENCODE_GNOME_SANDBOX=1`,
   `timeout ${Number(delay) + (process.env['SCREENSHOT_XDOTOOL'] === undefined ? 3 : 120)} dbus-run-session -- gjs -m ${quote(path.join(root, 'dist', 'app', 'main.js'))} --size ${w}x${h} ${appArgs.map((a) => quote(a)).join(' ')} > >(grep -v -e '^dbus-daemon' -e 'DRI3') 2>&1 &`,
   'app=$!',
   `sleep ${delay}`,

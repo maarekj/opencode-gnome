@@ -9,7 +9,7 @@ import path from 'node:path';
 import { build } from 'esbuild';
 
 const root = path.resolve(import.meta.dirname, '..');
-const ENV = ['GDK_BACKEND=x11', 'GSK_RENDERER=cairo', 'GTK_A11Y=none'];
+const ENV = ['GDK_BACKEND=x11', 'GSK_RENDERER=cairo', 'GTK_A11Y=none', 'OPENCODE_GNOME_SANDBOX=1'];
 
 // ---------------------------------------------------------------- specs jasmine-gjs
 const only = process.argv.slice(2).filter((a) => a.endsWith('.spec.ts'));

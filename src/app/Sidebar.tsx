@@ -19,6 +19,7 @@ import { openEditor, taskIcon, taskMenu, taskRunButton, taskState, type EditorCo
 import { describeSchedule } from '../shared/tasks.ts';
 import { TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
 import { askDelete, askRename, type SessionActions } from './SessionMenu.ts';
+import { intercepted } from '../shared/sandbox.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
 
@@ -265,6 +266,8 @@ const treeKey = (i: TreeItem): string =>
         : `k|${i.view.task.id}|${i.view.task.name}|${i.view.task.enabled}|${i.view.running}|${i.view.last?.run ?? ''}|${i.view.last?.status ?? ''}|${i.view.next ?? ''}|${i.last}`;
 
 function startServer(): void {
+  // captures et tests : le serveur partagé de l'utilisateur n'est pas touché
+  if (intercepted('SYSTEMCTL', `start ${SERVER_UNIT}`)) return;
   try {
     Gio.Subprocess.new(['systemctl', '--user', 'start', SERVER_UNIT], Gio.SubprocessFlags.NONE);
   } catch (e) {
