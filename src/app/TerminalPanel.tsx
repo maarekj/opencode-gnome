@@ -5,6 +5,7 @@ import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import type VteNs from 'gi://Vte?version=3.91';
@@ -145,6 +146,42 @@ function createTerminal(V: typeof VteNs, settings: Settings, spec: TerminalTab, 
     return true;
   });
   term.add_controller(keys);
+
+  // clic droit : menu Copier / Coller / Tout sélectionner (capturé avant VTE, qui transmettrait
+  // sinon le clic aux applications en mode souris)
+  const menu = new Gtk.GestureClick({ button: Gdk.BUTTON_SECONDARY, propagationPhase: Gtk.PropagationPhase.CAPTURE });
+  menu.connect('pressed', (gesture: Gtk.GestureClick, _n: number, x: number, y: number) => {
+    gesture.set_state(Gtk.EventSequenceState.CLAIMED);
+    const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    const popover = new Gtk.Popover({ child: box, hasArrow: false, halign: Gtk.Align.START, cssClasses: ['menu'] });
+    const item = (label: string, enabled: boolean, fn: () => void): void => {
+      const b = new Gtk.Button({ label, sensitive: enabled, cssClasses: ['flat'] });
+      const text = b.get_child();
+      if (text instanceof Gtk.Label) text.xalign = 0;
+      b.connect('clicked', () => {
+        popover.popdown();
+        fn();
+        term.grab_focus();
+      });
+      box.append(b);
+    };
+    item('Copier', term.get_has_selection(), () => term.copy_clipboard_format(V.Format.TEXT));
+    item('Coller', true, () => term.paste_clipboard());
+    item('Tout sélectionner', true, () => term.select_all());
+    // attaché à la ScrolledWindow (parent du terminal), jamais au terminal lui-même
+    const anchor = term.get_parent() ?? term;
+    const [ok, point] = term.compute_point(anchor, new Graphene.Point({ x, y }));
+    popover.set_parent(anchor);
+    popover.set_pointing_to(new Gdk.Rectangle({ x: Math.round(ok ? point.x : x), y: Math.round(ok ? point.y : y), width: 1, height: 1 }));
+    popover.connect('closed', () => {
+      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        popover.unparent();
+        return GLib.SOURCE_REMOVE;
+      });
+    });
+    popover.popup();
+  });
+  term.add_controller(menu);
 
   term.connect('child-exited', (_t: VteNs.Terminal, status: number) => {
     pids.delete(term);
