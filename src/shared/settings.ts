@@ -90,14 +90,35 @@ export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_co
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-function read(path: string): SettingsData {
+/**
+ * Valide les réglages champ par champ : un champ invalide reprend sa valeur par défaut au lieu
+ * de remettre tous les réglages à zéro (#64).
+ */
+export function parseSettings(raw: unknown): SettingsData {
+  const input: Record<string, unknown> = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? { ...raw } : {};
+  for (const [key, schema] of Object.entries(SettingsData.def.shape)) {
+    if (!(key in input)) continue;
+    if (!z.safeParse(schema, input[key]).success) delete input[key];
+  }
+  const parsed = SettingsData.safeParse(input);
+  return parsed.success ? parsed.data : DEFAULTS;
+}
+
+/** Réglages du fichier ; `undefined` s'il est absent, `null` s'il est illisible (JSON invalide…). */
+function read(path: string): SettingsData | null | undefined {
+  let text: string;
   try {
     const [ok, bytes] = GLib.file_get_contents(path);
-    if (!ok) return DEFAULTS;
-    const parsed = SettingsData.safeParse(JSON.parse(decoder.decode(bytes)));
-    return parsed.success ? parsed.data : DEFAULTS;
+    if (!ok) return undefined;
+    text = decoder.decode(bytes);
   } catch {
-    return DEFAULTS; // absent ou illisible
+    return undefined; // absent
+  }
+  try {
+    return parseSettings(JSON.parse(text));
+  } catch {
+    console.error(`réglages illisibles, ignorés : ${path}`);
+    return null;
   }
 }
 
@@ -111,7 +132,7 @@ export class Settings {
 
   constructor(path = settingsPath()) {
     this.#path = path;
-    const [data, set] = createState<SettingsData>(read(path));
+    const [data, set] = createState<SettingsData>(read(path) ?? DEFAULTS);
     this.data = data;
     this.#set = set;
   }
@@ -122,7 +143,9 @@ export class Settings {
     this.#monitor = Gio.File.new_for_path(this.#path).monitor_file(Gio.FileMonitorFlags.NONE, null);
     this.#monitor.connect('changed', (_m: Gio.FileMonitor, _f: Gio.File, _o: Gio.File | null, event: Gio.FileMonitorEvent) => {
       if (event !== Gio.FileMonitorEvent.CHANGES_DONE_HINT && event !== Gio.FileMonitorEvent.CREATED) return;
+      // illisible (écriture en cours d'un autre processus…) ou supprimé : état courant conservé
       const next = read(this.#path);
+      if (next === null || next === undefined) return;
       if (JSON.stringify(next) !== this.#written) this.#set(next);
     });
   }
