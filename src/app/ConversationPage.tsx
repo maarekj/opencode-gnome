@@ -161,7 +161,8 @@ export function createConversationPage(opts: {
     // messages annulés par /undo (ici ou dans la TUI) : masqués jusqu'au prochain prompt
     const revert = view((v) => v?.session.revert?.messageID ?? null);
     conversation.setRevert(revert.peek());
-    revert.subscribe(() => conversation.setRevert(revert.peek()));
+    // subscribe() de gnim n'est pas lié au scope : désabonné explicitement au dispose (#58)
+    const unsubscribeRevert = revert.subscribe(() => conversation.setRevert(revert.peek()));
     const client = store.client;
     const dir = (): string => conversation.directory ?? view.peek()?.session.directory ?? GLib.get_home_dir();
 
@@ -350,6 +351,7 @@ export function createConversationPage(opts: {
       page,
       dispose: () => {
         for (const u of unsubscribeGit) u();
+        unsubscribeRevert();
         if (activeWindow !== null) activeWindow.disconnect(activeHandler);
         conversation.dispose();
         dispose();
