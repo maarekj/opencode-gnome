@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "gnim-types": "node scripts/gnim-types.ts",
-    "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/shared && tsc -p src/app && tsc -p src/cli",
+    "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/shared && tsc -p src/app && tsc -p src/cli && tsc -p specs",
     "lint": "oxlint --type-aware",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "build": "node scripts/build.ts",
@@ -31,6 +31,7 @@
     "@girs/pango-1.0": "5.5.0",
     "@girs/soup-3.0": "^5.5.0",
     "@girs/vte-3.91": "5.5.0",
+    "@types/jasmine": "~3.10.19",
     "@types/node": "^26.6.5",
     "esbuild": "^0.28.2",
     "oxlint": "^1.88.0",
