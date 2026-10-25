@@ -1,0 +1,426 @@
+{
+ "projects": [
+  {
+   "id": "prj_conv",
+   "worktree": "/tmp/opencode-fake/conv",
+   "name": "conv"
+  }
+ ],
+ "sessions": [
+  {
+   "id": "ses_c",
+   "projectID": "prj_conv",
+   "directory": "/tmp/opencode-fake/conv",
+   "title": "Changer le port",
+   "agent": "build",
+   "model": {
+    "id": "fake-model",
+    "providerID": "fake"
+   },
+   "time": {
+    "created": 1792900000000,
+    "updated": 1792900060000
+   }
+  },
+  {
+   "id": "ses_child",
+   "projectID": "prj_conv",
+   "directory": "/tmp/opencode-fake/conv",
+   "parentID": "ses_c",
+   "title": "Relire le changement (@general subagent)",
+   "time": {
+    "created": 1792900000000,
+    "updated": 1792900040000
+   }
+  },
+  {
+   "id": "ses_p",
+   "projectID": "prj_conv",
+   "directory": "/tmp/opencode-fake/conv",
+   "title": "Nettoyage",
+   "agent": "build",
+   "time": {
+    "created": 1792900000000,
+    "updated": 1792900030000
+   }
+  }
+ ],
+ "messages": {
+  "ses_c": [
+   {
+    "info": {
+     "id": "msg_001",
+     "role": "user",
+     "sessionID": "ses_c",
+     "time": {
+      "created": 1792900000000
+     }
+    },
+    "parts": [
+     {
+      "id": "prt_001",
+      "type": "text",
+      "text": "Change le port et explique.",
+      "messageID": "msg_001",
+      "sessionID": "ses_c"
+     }
+    ]
+   },
+   {
+    "info": {
+     "id": "msg_002",
+     "role": "assistant",
+     "sessionID": "ses_c",
+     "time": {
+      "created": 1792900001000,
+      "completed": 1792900006000
+     },
+     "parentID": "msg_001",
+     "providerID": "fake",
+     "modelID": "fake-model"
+    },
+    "parts": [
+     {
+      "id": "prt_002",
+      "type": "reasoning",
+      "text": "Il faut modifier la constante port.",
+      "time": {
+       "start": 1792900001000,
+       "end": 1792900004000
+      },
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     },
+     {
+      "id": "prt_003",
+      "type": "tool",
+      "tool": "edit",
+      "callID": "call_e",
+      "state": {
+       "status": "completed",
+       "input": {
+        "filePath": "/tmp/opencode-fake/conv/src/app.ts",
+        "oldString": "80",
+        "newString": "8080"
+       },
+       "metadata": {
+        "diff": "Index: src/app.ts\n===\n--- src/app.ts\n+++ src/app.ts\n@@ -1,2 +1,2 @@\n-const port = 80;\n+const port = 8080;\n console.log(port);\n"
+       },
+       "output": "ok",
+       "title": "src/app.ts"
+      },
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     },
+     {
+      "id": "prt_004",
+      "type": "tool",
+      "tool": "bash",
+      "callID": "call_b",
+      "state": {
+       "status": "completed",
+       "input": {
+        "command": "pnpm test"
+       },
+       "output": "tout passe",
+       "title": "pnpm test"
+      },
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     },
+     {
+      "id": "prt_005",
+      "type": "text",
+      "text": "Le port vaut **8080**. Voir la [documentation](https://example.com/doc).",
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     }
+    ]
+   },
+   {
+    "info": {
+     "id": "msg_003",
+     "role": "user",
+     "sessionID": "ses_c",
+     "time": {
+      "created": 1792900010000
+     }
+    },
+    "parts": [
+     {
+      "id": "prt_006",
+      "type": "text",
+      "text": "Délègue la revue à un sous-agent.",
+      "messageID": "msg_003",
+      "sessionID": "ses_c"
+     }
+    ]
+   },
+   {
+    "info": {
+     "id": "msg_004",
+     "role": "assistant",
+     "sessionID": "ses_c",
+     "time": {
+      "created": 1792900011000,
+      "completed": 1792900016000
+     },
+     "parentID": "msg_003",
+     "providerID": "fake",
+     "modelID": "fake-model"
+    },
+    "parts": [
+     {
+      "id": "prt_007",
+      "type": "tool",
+      "tool": "task",
+      "callID": "call_t",
+      "state": {
+       "status": "completed",
+       "input": {
+        "description": "Relire le changement",
+        "subagent_type": "general",
+        "prompt": "relis"
+       },
+       "metadata": {
+        "sessionId": "ses_child"
+       },
+       "output": "<task_result>\nRAS : le changement est **correct**.\n</task_result>",
+       "title": "Relire le changement",
+       "time": {
+        "start": 1792900011000,
+        "end": 1792900040000
+       }
+      },
+      "messageID": "msg_004",
+      "sessionID": "ses_c"
+     }
+    ]
+   },
+   {
+    "info": {
+     "id": "msg_005",
+     "role": "user",
+     "sessionID": "ses_c",
+     "time": {
+      "created": 1792900050000
+     }
+    },
+    "parts": [
+     {
+      "id": "prt_008",
+      "type": "text",
+      "text": "Pose-moi une question.",
+      "messageID": "msg_005",
+      "sessionID": "ses_c"
+     }
+    ]
+   },
+   {
+    "info": {
+     "id": "msg_006",
+     "role": "assistant",
+     "sessionID": "ses_c",
+     "time": {
+      "created": 1792900051000,
+      "completed": 1792900056000
+     },
+     "parentID": "msg_005",
+     "providerID": "fake",
+     "modelID": "fake-model"
+    },
+    "parts": [
+     {
+      "id": "prt_009",
+      "type": "tool",
+      "tool": "question",
+      "callID": "call_q",
+      "state": {
+       "status": "running",
+       "input": {
+        "questions": [
+         {
+          "question": "Quel environnement ?",
+          "header": "Cible",
+          "options": [
+           {
+            "label": "Production"
+           },
+           {
+            "label": "Recette"
+           }
+          ]
+         }
+        ]
+       }
+      },
+      "messageID": "msg_006",
+      "sessionID": "ses_c"
+     }
+    ]
+   }
+  ],
+  "ses_child": [
+   {
+    "info": {
+     "id": "msg_101",
+     "role": "user",
+     "sessionID": "ses_child",
+     "time": {
+      "created": 1792900012000
+     }
+    },
+    "parts": [
+     {
+      "id": "prt_101",
+      "type": "text",
+      "text": "relis",
+      "messageID": "msg_101",
+      "sessionID": "ses_child"
+     }
+    ]
+   },
+   {
+    "info": {
+     "id": "msg_102",
+     "role": "assistant",
+     "sessionID": "ses_child",
+     "time": {
+      "created": 1792900013000,
+      "completed": 1792900018000
+     },
+     "parentID": "msg_101",
+     "providerID": "fake",
+     "modelID": "fake-model"
+    },
+    "parts": [
+     {
+      "id": "prt_102",
+      "type": "text",
+      "text": "Lecture du diff du sous-agent.",
+      "messageID": "msg_102",
+      "sessionID": "ses_child"
+     }
+    ]
+   }
+  ],
+  "ses_p": [
+   {
+    "info": {
+     "id": "msg_201",
+     "role": "user",
+     "sessionID": "ses_p",
+     "time": {
+      "created": 1792900000000
+     }
+    },
+    "parts": [
+     {
+      "id": "prt_201",
+      "type": "text",
+      "text": "Supprime le cache.",
+      "messageID": "msg_201",
+      "sessionID": "ses_p"
+     }
+    ]
+   },
+   {
+    "info": {
+     "id": "msg_202",
+     "role": "assistant",
+     "sessionID": "ses_p",
+     "time": {
+      "created": 1792900001000,
+      "completed": 1792900006000
+     },
+     "parentID": "msg_201",
+     "providerID": "fake",
+     "modelID": "fake-model"
+    },
+    "parts": [
+     {
+      "id": "prt_202",
+      "type": "tool",
+      "tool": "bash",
+      "callID": "call_p",
+      "state": {
+       "status": "running",
+       "input": {
+        "command": "rm -rf .cache"
+       }
+      },
+      "messageID": "msg_202",
+      "sessionID": "ses_p"
+     }
+    ]
+   }
+  ]
+ },
+ "statuses": {
+  "ses_c": {
+   "type": "busy"
+  },
+  "ses_p": {
+   "type": "busy"
+  }
+ },
+ "questions": [
+  {
+   "id": "que_1",
+   "sessionID": "ses_c",
+   "questions": [
+    {
+     "question": "Quel environnement ?",
+     "header": "Cible",
+     "options": [
+      {
+       "label": "Production",
+       "description": "serveurs réels"
+      },
+      {
+       "label": "Recette"
+      }
+     ]
+    }
+   ],
+   "tool": {
+    "messageID": "msg_006",
+    "callID": "call_q"
+   }
+  }
+ ],
+ "permissions": [
+  {
+   "id": "per_p",
+   "sessionID": "ses_p",
+   "permission": "bash",
+   "patterns": [
+    "rm -rf .cache"
+   ],
+   "always": [
+    "rm *"
+   ],
+   "tool": {
+    "messageID": "msg_202",
+    "callID": "call_p"
+   }
+  }
+ ],
+ "todos": {
+  "ses_c": [
+   {
+    "content": "Modifier le port",
+    "status": "completed"
+   },
+   {
+    "content": "Lancer la revue",
+    "status": "in_progress",
+    "priority": "high"
+   },
+   {
+    "content": "Déployer",
+    "status": "pending"
+   }
+  ]
+ }
+}

@@ -48,6 +48,10 @@ const Scenario = z.object({
   providers: z.optional(z.looseObject({})),
   commands: z.optional(z.array(z.looseObject({ name: z.string() }))),
   skills: z.optional(z.array(z.looseObject({ name: z.string() }))),
+  /** liste de tâches par session (`GET /session/:id/todo`) */
+  todos: z.optional(z.record(z.string(), z.array(z.looseObject({ content: z.string(), status: z.string() })))),
+  /** requêtes qui échouent une fois (HTTP 500), ex. `GET /session/ses_a/message` */
+  failOnce: z.optional(z.array(z.string())),
   /** réponse simulée envoyée après un prompt (`false` : aucune) */
   reply: z.optional(z.union([z.string(), z.literal(false)])),
 });
@@ -76,6 +80,8 @@ class State {
   questions: Json[] = [];
   statuses: Record<string, Json> = {};
   mcp: Record<string, Json> = {};
+  todos: Record<string, Json[]> = {};
+  failOnce = new Set<string>();
   #seq = 0;
 
   load(s: Scenario): void {
@@ -88,6 +94,8 @@ class State {
     this.questions = structuredClone(s.questions ?? []);
     this.statuses = structuredClone(s.statuses ?? {});
     this.mcp = structuredClone(s.mcp ?? {});
+    this.todos = structuredClone(s.todos ?? {});
+    this.failOnce = new Set(s.failOnce ?? []);
   }
 
   /**
@@ -187,6 +195,18 @@ function finishTool(request: Json, output: string | null): void {
   if (part === undefined) return;
   const prev = obj(part['state']);
   part['state'] = output === null ? { ...prev, status: 'error', error: 'Permission refusée' } : { ...prev, status: 'completed', output };
+  emit('message.part.updated', { sessionID: sid, part });
+  setIdle(sid);
+}
+
+function finishQuestion(request: Json, answers: unknown): void {
+  const tool = obj(request['tool']);
+  const sid = str(request['sessionID']);
+  const msg = (state.messages.get(sid) ?? []).find((x) => x.info.id === tool['messageID']);
+  const part = msg?.parts.find((x) => x['callID'] === tool['callID']);
+  if (part === undefined) return;
+  const prev = obj(part['state']);
+  part['state'] = answers === null ? { ...prev, status: 'error', error: 'The user dismissed this question' } : { ...prev, status: 'completed', metadata: { answers }, output: 'ok' };
   emit('message.part.updated', { sessionID: sid, part });
   setIdle(sid);
 }
@@ -307,6 +327,8 @@ function handleRequests(method: string, p: string, b: Json, res: http.ServerResp
     else {
       state.questions = state.questions.filter((x) => x !== q);
       emit(verb === 'reply' ? 'question.replied' : 'question.rejected', { sessionID: q['sessionID'], requestID: id });
+      // appel de l'outil `question` : terminé avec les réponses (ou en erreur s'il est ignoré)
+      finishQuestion(q, verb === 'reply' ? b['answers'] : null);
       send(res, 200, true);
     }
     return true;
@@ -350,7 +372,7 @@ function handleSession(method: string, ses: Ses, action: string | undefined, que
       return;
     }
     case 'GET todo':
-      send(res, 200, []);
+      send(res, 200, state.todos[sid] ?? []);
       return;
     case 'GET children':
       send(res, 200, [...state.sessions.values()].filter((x) => x['parentID'] === sid));
@@ -437,6 +459,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return;
   }
   requests.push({ method, path: p, query, body });
+  if (state.failOnce.delete(`${method} ${p}`)) {
+    send(res, 500, { name: 'FakeError', data: { message: 'échec simulé' } });
+    return;
+  }
   if (method === 'GET') {
     const value = simpleRoute(p, query);
     if (value !== undefined) {

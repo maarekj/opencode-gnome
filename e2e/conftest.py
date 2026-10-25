@@ -107,13 +107,14 @@ _OFFSET: tuple[int, int] | None = None
 class App:
     """L'application, pilotée par l'accessibilité."""
 
-    def __init__(self, fake: Fake, args: list[str], settings: dict | None = None) -> None:
+    def __init__(self, fake: Fake, args: list[str], settings: dict | None = None, env: dict | None = None) -> None:
         self.fake = fake
         self.config_dir = fake.dir / 'config' / 'opencode-gnome'
         if settings is not None:
             self.config_dir.mkdir(parents=True, exist_ok=True)
             (self.config_dir / 'settings.json').write_text(json.dumps(settings))
         self.log_path = fake.dir / 'app.log'
+        extra_env = env
         env = dict(os.environ)
         env.update(
             OPENCODE_GNOME_URL=fake.url,
@@ -123,6 +124,7 @@ class App:
             XDG_CACHE_HOME=str(fake.dir / 'cache'),
             OPENCODE_GNOME_SANDBOX='1',
         )
+        env.update(extra_env or {})
         self._log = self.log_path.open('w')
         self.proc = subprocess.Popen(['gjs', '-m', str(ROOT / 'dist' / 'app' / 'main.js'), '--size', '1280x800', *args], env=env, stdout=self._log, stderr=subprocess.STDOUT)
         self.root = wait_until(self._find_app, 15, "démarrage de l'application")
@@ -291,6 +293,14 @@ class App:
 
         rawinput.typeText(text)
 
+    def clipboard(self) -> str:
+        """Contenu du presse-papier (écran virtuel)."""
+        return subprocess.run(['xclip', '-o', '-selection', 'clipboard'], capture_output=True, text=True, timeout=5).stdout
+
+    def emit(self, type_: str, properties: dict) -> None:
+        """Événement envoyé par le faux opencode."""
+        self.fake.post('/__test/emit', {'payload': {'type': type_, 'properties': properties}})
+
     def stop(self) -> None:
         self.proc.terminate()
         try:
@@ -309,10 +319,10 @@ def run_app(request):
     """`run_app(scenario, *args)` : démarre un faux opencode et l'application ; tout est arrêté après le test."""
     started: list = []
 
-    def start(data: dict | None, *args: str, settings: dict | None = None) -> tuple[Fake, App]:
+    def start(data: dict | None, *args: str, settings: dict | None = None, env: dict | None = None) -> tuple[Fake, App]:
         fake = Fake(data)
         started.append(fake)
-        app = App(fake, list(args), settings)
+        app = App(fake, list(args), settings, env)
         started.append(app)
         return fake, app
 
