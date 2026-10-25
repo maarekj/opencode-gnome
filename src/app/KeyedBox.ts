@@ -3,6 +3,7 @@
 // Chaque enfant vit dans sa propre racine gnim, libérée quand l'élément disparaît.
 import Gtk from 'gi://Gtk?version=4.0';
 import { createRoot, type Accessor } from 'gnim';
+import { afterMenusClosed, menuOpenIn } from './ContextMenu.ts';
 
 interface Child {
   readonly widget: Gtk.Widget;
@@ -24,10 +25,24 @@ function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (ite
   /** widget placé juste avant `index` (insertion en O(1), sans parcourir les enfants : #74) */
   const previous = (index: number): Gtk.Widget | null => (index === 0 ? null : (children.get(order[index - 1] ?? '')?.widget ?? null));
 
+  let deferred = false;
+  let disposed = false;
   const sync = (): void => {
     const list = items.peek();
     const keys = list.map((it) => key(it));
     const wanted = new Set(keys);
+    // un menu contextuel ouvert sur un élément à retirer (ligne reconstruite parce que son état a
+    // changé) se fermerait tout seul : mise à jour reportée à sa fermeture (#82)
+    if ([...children].some(([k, c]) => !wanted.has(k) && menuOpenIn(c.widget))) {
+      if (!deferred) {
+        deferred = true;
+        afterMenusClosed(() => {
+          deferred = false;
+          if (!disposed) sync();
+        });
+      }
+      return;
+    }
     for (const [k, c] of children) {
       if (!wanted.has(k)) {
         container.remove(c.widget);
@@ -56,6 +71,7 @@ function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (ite
   sync();
   const unsubscribe = items.subscribe(sync);
   return () => {
+    disposed = true;
     unsubscribe();
     for (const c of children.values()) c.dispose();
     children.clear();

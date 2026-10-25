@@ -9,6 +9,25 @@ export interface MenuItem {
   readonly activate: () => void;
 }
 
+/** menus ouverts, et fonctions à appeler quand ils sont tous refermés */
+const openMenus = new Set<Gtk.Popover>();
+const waiters: (() => void)[] = [];
+
+/** Un menu contextuel est-il ouvert sur `widget` ou l'un de ses descendants ? */
+export function menuOpenIn(widget: Gtk.Widget): boolean {
+  for (const m of openMenus) {
+    const parent = m.get_parent();
+    if (parent !== null && (parent === widget || parent.is_ancestor(widget))) return true;
+  }
+  return false;
+}
+
+/** Appelle `fn` une fois tous les menus contextuels refermés. */
+export function afterMenusClosed(fn: () => void): void {
+  if (openMenus.size === 0) fn();
+  else waiters.push(fn);
+}
+
 /**
  * Ajoute un menu contextuel à `widget`. `sections()` est appelée à chaque ouverture
  * (libellés à jour, ex. « Ajouter / Retirer des favoris ») ; chaque section est séparée par un trait.
@@ -43,9 +62,12 @@ export function attachContextMenu(widget: Gtk.Widget, sections: () => readonly (
     popover.connect('closed', () => {
       GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
         popover.unparent();
+        openMenus.delete(popover);
+        if (openMenus.size === 0) for (const fn of waiters.splice(0)) fn();
         return GLib.SOURCE_REMOVE;
       });
     });
+    openMenus.add(popover);
     popover.popup();
   };
 
