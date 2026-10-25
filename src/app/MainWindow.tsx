@@ -6,7 +6,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
-import { errorMessage } from '../shared/errors.ts';
+import { errorMessage, HttpError } from '../shared/errors.ts';
 import { esc, fmtCost, fmtRelative, fmtStamp } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
@@ -1353,15 +1353,33 @@ export function MainWindow({
   nav.connect('notify::visible-page', updateShown);
   onCleanup(current.subscribe(updateShown));
 
-  // sessions ouvertes qui n'existent plus (supprimées ailleurs) : retirées, une fois chargées
+  // Sessions ouvertes absentes de la liste chargée : soit supprimées ailleurs, soit simplement
+  // plus anciennes que les sessions chargées (limite du serveur). Vérifiées une à une : fermées
+  // seulement si le serveur répond 404, sinon ajoutées au store (#59).
+  const checking = new Set<string>();
+  /** sessions confirmées par le serveur : pas revérifiées avant une minute */
+  const alive = new Map<string, number>();
   onCleanup(
     store.projects.subscribe(() => {
       if (store.connection.peek().state !== 'connected') return;
       const known = new Set(store.projects.peek().flatMap((p) => p.sessions.map((v) => v.session.id)));
-      const gone = settings.data.peek().openSessions.filter((id) => !known.has(id));
-      if (gone.length > 0) {
-        settings.closeSessions(gone);
-        for (const id of gone) disposePage(id);
+      for (const id of settings.data.peek().openSessions) {
+        if (known.has(id) || checking.has(id) || Date.now() - (alive.get(id) ?? 0) < 60_000) continue;
+        checking.add(id);
+        const check = async (): Promise<void> => {
+          try {
+            const s = await store.client.session(id);
+            alive.set(id, Date.now());
+            if (s.parentID === undefined) store.upsertSession(s);
+          } catch (e) {
+            if (!(e instanceof HttpError) || e.status !== 404) return;
+            settings.closeSessions([id]);
+            disposePage(id);
+          } finally {
+            checking.delete(id);
+          }
+        };
+        void check();
       }
     }),
   );
