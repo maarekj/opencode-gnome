@@ -249,6 +249,8 @@ export function createConversationPage(opts: {
         review: reviewTarget(store, projectPath.peek() ?? dir(), sessionID, opts.openSession),
       });
 
+    /** affiche un message de la conversation (fourni par la vue) */
+    let revealMessage: ((messageID: string, partID?: string) => void) | null = null;
     const page = (
       <Adw.NavigationPage title={title} tag={child ? subagentTag(sessionID) : sessionTag(sessionID)}>
         <Adw.ToolbarView>
@@ -318,6 +320,9 @@ export function createConversationPage(opts: {
               },
               open: opts.openSubagent,
             }}
+            revealer={(fn) => {
+              revealMessage = fn;
+            }}
             emptyClick={() => {
               // zone de saisie du compositeur (premier TextView)
               const find = (w: Gtk.Widget | null): Gtk.TextView | null => {
@@ -364,6 +369,7 @@ export function createConversationPage(opts: {
     });
     return {
       page,
+      reveal: (messageID, partID) => revealMessage?.(messageID, partID),
       dispose: () => {
         for (const u of unsubscribeGit) u();
         unsubscribeRevert();
@@ -378,6 +384,8 @@ export function createConversationPage(opts: {
 /** Page d'une session ouverte, conservée en mémoire tant que la session est ouverte. */
 export interface ConversationPageHandle {
   readonly page: Adw.NavigationPage;
+  /** défile jusqu'au message et le met en évidence (résultat de recherche) */
+  readonly reveal: (messageID: string, partID?: string) => void;
   /** libère la page (session fermée ou supprimée) */
   readonly dispose: () => void;
 }

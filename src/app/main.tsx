@@ -189,6 +189,15 @@ aboutAction.connect('activate', () => {
 });
 app.add_action(aboutAction);
 
+/** app.search : recherche dans toutes les conversations (Ctrl+Maj+F, menu principal) */
+const searchAction = new Gio.SimpleAction({ name: 'search' });
+searchAction.connect('activate', () => {
+  if (mainWindow === null) app.activate();
+  api?.openSearch();
+});
+app.add_action(searchAction);
+app.set_accels_for_action('app.search', ['<Control><Shift>f']);
+
 // ------------------------------------------------------------------ fenêtre
 
 app.connect('startup', () => {

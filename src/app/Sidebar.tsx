@@ -448,6 +448,7 @@ export function Sidebar({
               const update = (): void => {
                 menu.remove_all();
                 const n = unseenFailures.peek();
+                menu.append('Rechercher dans les conversations', 'app.search');
                 menu.append(n === 0 ? 'Tâches planifiées' : `Tâches planifiées (${n} échec${n > 1 ? 's' : ''})`, n === 0 ? 'app.tasks::tasks' : 'app.tasks::history');
                 menu.append('MCP, skills et plugins (global)', 'app.extensions');
                 menu.append('Serveur opencode', 'app.server');

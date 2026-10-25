@@ -17,6 +17,8 @@ import { TerminalManager } from '../shared/terminals.ts';
 import { type TerminalContext } from './TerminalBar.tsx';
 import { TerminalDock } from './TerminalPanel.tsx';
 import { Sidebar } from './Sidebar.tsx';
+import { openSearch } from './SearchDialog.ts';
+import { SearchIndex } from '../shared/search.ts';
 import { SessionsPage, type Actions, type ProjectTasksContext } from './SessionsPage.tsx';
 
 // ---------------------------------------------------------------- fenêtre
@@ -101,6 +103,8 @@ export interface WindowApi {
   shownSession: () => string | null;
   /** dossier du projet affiché, ou null */
   currentDirectory: () => string | null;
+  /** recherche dans toutes les conversations (Ctrl+Maj+F) */
+  openSearch: () => void;
 }
 
 /** Fenêtres dont la fermeture a été confirmée : leur prochaine `close-request` passe. */
@@ -456,6 +460,8 @@ export function MainWindow({
     openTasksWindow: (page) => app.activate_action('tasks', new GLib.Variant('s', page)),
     toast,
   };
+  /** index de la recherche dans les conversations (fichier en cache, mis à jour à l'ouverture) */
+  const searchIndex = new SearchIndex(store.client);
   nav.add(asPage(SessionsPage({ store, current, actions, terminals, tasks: projectTasks })));
   const shownSession = (): string | null => {
     const tag = nav.visiblePage?.tag ?? '';
@@ -471,6 +477,18 @@ export function MainWindow({
       else if ((nav.visiblePage?.tag ?? '').startsWith('subagent:')) nav.pop();
     },
     shownSession,
+    openSearch: () => {
+      if (win === null) return;
+      openSearch(win, {
+        index: searchIndex,
+        projects: () => allProjects.peek(),
+        project: null,
+        open: (sessionID, messageID, partID) => {
+          actions.openSession(sessionID);
+          if (messageID !== null) pages.get(sessionID)?.reveal(messageID, partID ?? undefined);
+        },
+      });
+    },
   });
 
   /** Ligne mise en évidence dans la barre latérale : session affichée, sinon projet courant. */

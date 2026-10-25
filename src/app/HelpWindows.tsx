@@ -53,6 +53,7 @@ export const SHORTCUTS: readonly (readonly [string, readonly (readonly [string, 
       ['Rechercher un projet', '<Control>k'],
       ['Rechercher une session (page du projet)', '<Control>f'],
       ['Fermer la session affichée', '<Control>w'],
+      ['Rechercher dans toutes les conversations', '<Control><Shift>f'],
     ],
   ],
   [

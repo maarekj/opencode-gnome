@@ -629,7 +629,8 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
  * Garde la vue collée en bas (dernier message) pendant le chargement et le streaming,
  * sauf si l'utilisateur est remonté dans l'historique.
  */
-function stickToBottom(scrolled: Gtk.ScrolledWindow): void {
+/** Colle la vue en bas ; renvoie une fonction qui la décolle (ex. pour afficher un message). */
+function stickToBottom(scrolled: Gtk.ScrolledWindow): () => void {
   const adj = scrolled.get_vadjustment();
   // OPENCODE_GNOME_TEST_SCROLL=top : reste en haut (tests de la pastille sur captures)
   let stick = GLib.getenv('OPENCODE_GNOME_TEST_SCROLL') !== 'top';
@@ -642,6 +643,8 @@ function stickToBottom(scrolled: Gtk.ScrolledWindow): void {
     queued = true;
     GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
       queued = false;
+      // décollée entre-temps (message affiché par la recherche) : rien à faire
+      if (!stick) return GLib.SOURCE_REMOVE;
       adj.value = adj.upper - adj.pageSize;
       lastUpper = adj.upper;
       lastPage = adj.pageSize;
@@ -660,6 +663,9 @@ function stickToBottom(scrolled: Gtk.ScrolledWindow): void {
   };
   adj.connect('notify::upper', onResize);
   adj.connect('notify::page-size', onResize);
+  return () => {
+    stick = false;
+  };
 }
 
 /**
@@ -792,6 +798,7 @@ export function ConversationView({
   subagents,
   fork,
   emptyClick,
+  revealer,
 }: {
   conversation: Conversation;
   revealed: Accessor<boolean>;
@@ -803,6 +810,8 @@ export function ConversationView({
   fork?: ((messageID: string, text: string) => void) | undefined;
   /** clic dans l'espace vide de part et d'autre de la conversation (focus du compositeur) */
   emptyClick?: (() => void) | undefined;
+  /** reçoit la fonction qui affiche et met en évidence un message (résultats de recherche) */
+  revealer?: ((reveal: (messageID: string, partID?: string) => void) => void) | undefined;
 }): JSX.Element {
   // spinner tant que l'animation d'entrée n'est pas finie ou que rien n'est chargé
   const showLoading = createComputed(() => !revealed() || (conversation.loading() && conversation.blocks().length === 0));
@@ -892,6 +901,78 @@ export function ConversationView({
   });
   /** boîte des blocs de la conversation */
   let blocksRef: Gtk.Box | null = null;
+  /** décolle la vue du bas (cf. stickToBottom) */
+  let unstick: (() => void) | null = null;
+
+  /**
+   * Affiche le message `messageID` (sa partie `partID` si connue) : messages précédents chargés
+   * au besoin, défilement jusqu'au bloc, mis en évidence quelques secondes (#126).
+   */
+  const reveal = async (messageID: string, partID?: string): Promise<void> => {
+    const findBlock = (): Block | undefined => {
+      const blocks = conversation.blocks.peek();
+      return blocks.find((b) => b.id === partID) ?? blocks.find((b) => b.kind !== 'turn' && b.part.peek().messageID === messageID);
+    };
+    // historique chargé (premier chargement, puis pages précédentes) jusqu'à trouver le message
+    for (let i = 0; i < 200; i += 1) {
+      if (disposed || findBlock() !== undefined) break;
+      if (conversation.loading.peek()) {
+        // oxlint-disable-next-line no-await-in-loop -- attente du premier chargement
+        await new Promise((r) => {
+          GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            r(null);
+            return GLib.SOURCE_REMOVE;
+          });
+        });
+        continue;
+      }
+      if (!conversation.hasOlder.peek()) break;
+      // oxlint-disable-next-line no-await-in-loop -- pages précédentes, une à une
+      await conversation.loadOlder();
+    }
+    const block = findBlock();
+    if (block === undefined) return;
+    // le widget existe une fois la page affichée et la liste construite : quelques essais
+    let tries = 0;
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+      tries += 1;
+      const sw = scrolledRef;
+      const box = blocksRef;
+      if (disposed || sw === null || box === null) return GLib.SOURCE_REMOVE;
+      let widget: Gtk.Widget | null = null;
+      for (let w = box.get_first_child(); w !== null; w = w.get_next_sibling()) {
+        if (w.name === `block:${block.id}`) {
+          widget = w;
+          break;
+        }
+      }
+      const [ok, rect] = widget === null ? [false, null] : widget.compute_bounds(box);
+      if (widget === null || !ok || rect === null || box.get_height() <= 0) return tries < 50 ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+      const adj = sw.get_vadjustment();
+      // la mise en page des blocs continue (hauteurs calculées après coup) : position recalée
+      // sur le bloc tant que le contenu change, pendant 2 s
+      unstick?.();
+      const target0 = widget;
+      const place = (): void => {
+        const [okp, r] = target0.compute_bounds(box);
+        if (okp) adj.value = Math.max(0, Math.min(adj.upper - adj.pageSize, r.get_y() - 60));
+      };
+      place();
+      const handler = adj.connect('notify::upper', place);
+      GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+        adj.disconnect(handler);
+        return GLib.SOURCE_REMOVE;
+      });
+      widget.add_css_class('search-hit');
+      const target = widget;
+      GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+        target.remove_css_class('search-hit');
+        return GLib.SOURCE_REMOVE;
+      });
+      return GLib.SOURCE_REMOVE;
+    });
+  };
+  revealer?.((messageID, partID) => void reveal(messageID, partID));
   let scrolledRef: Gtk.ScrolledWindow | null = null;
   /** distance au haut (px) en deçà de laquelle les messages précédents sont chargés */
   const NEAR_TOP = 600;
@@ -902,7 +983,7 @@ export function ConversationView({
       // (les tableaux se recalent sur la nouvelle largeur, cf. MarkdownView)
       hscrollbarPolicy={Gtk.PolicyType.EXTERNAL}
       $={(self: Gtk.ScrolledWindow) => {
-        stickToBottom(self);
+        unstick = stickToBottom(self);
         // clic hors de la colonne des messages (marges du Clamp) : sans effet sur les messages eux-mêmes
         const click = new Gtk.GestureClick({ button: Gdk.BUTTON_PRIMARY });
         click.connect('released', (_g: Gtk.GestureClick, n: number, x: number, y: number) => {
@@ -972,7 +1053,12 @@ export function ConversationView({
               whenRevealed(() => {
                 const t0 = Date.now();
                 // type dans la clé : un bloc qui change de type (même id) est reconstruit (#88)
-                const stop = keyedBox(self, conversation.blocks, (b) => `${b.id}:${b.kind}`, (b) => BlockView({ block: b, ctx }));
+                const stop = keyedBox(self, conversation.blocks, (b) => `${b.id}:${b.kind}`, (b) => {
+                  const w = BlockView({ block: b, ctx });
+                  // retrouvé par reveal() (résultat de recherche)
+                  w.name = `block:${b.id}`;
+                  return w;
+                });
                 if (GLib.getenv('OPENCODE_GNOME_TIMING') !== null) console.log(`TIMING blocs=${conversation.blocks.peek().length} ${Date.now() - t0} ms`);
                 return stop;
               });

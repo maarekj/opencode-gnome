@@ -257,6 +257,19 @@ export const STYLESHEET = `
   min-width: 7px;
   min-height: 7px;
 }
+/* message trouvé par la recherche : mis en évidence quelques secondes */
+.search-hit {
+  outline: 2px solid alpha(var(--accent-color), 0.7);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+.search-hit textview,
+.search-hit textview text {
+  background: alpha(var(--accent-bg-color), 0.12);
+}
+.search-results row.search-session {
+  margin-top: 6px;
+}
 /* session non lue : point d'accent, titre en gras ; nombre de non lues sur le projet */
 .unread-dot {
   background: var(--accent-bg-color);
