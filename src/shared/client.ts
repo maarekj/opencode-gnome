@@ -37,11 +37,18 @@ const mentionParts = (directory: string, mentions: readonly Mention[]): object[]
     source: { type: 'file', path: m.path, text: { value: `@${m.path}`, start: m.start, end: m.end } },
   }));
 
+/** Délai sans aucune donnée du flux d'événements avant reconnexion (heartbeat : 10 s). */
+const WATCHDOG_MS = 30_000;
+
 export class OpencodeClient {
   readonly url: string;
-  readonly #session = new Soup.Session({ timeout: 30 });
-  /** Session dédiée au flux SSE : pas de timeout. */
-  readonly #stream = new Soup.Session({ timeout: 0, idleTimeout: 0 });
+  // libsoup limite les connexions par hôte (2 par défaut) : relevé, et le flux SSE (connexion
+  // permanente) a sa propre session pour ne jamais attendre derrière une requête longue (#62)
+  readonly #session = new Soup.Session({ timeout: 30, maxConnsPerHost: 8, maxConns: 32 });
+  /** Requêtes longues (commandes, résumé…) : pas de timeout. */
+  readonly #long = new Soup.Session({ timeout: 0, idleTimeout: 0, maxConnsPerHost: 8, maxConns: 32 });
+  /** Flux SSE uniquement. */
+  readonly #events = new Soup.Session({ timeout: 0, idleTimeout: 0 });
 
   constructor(url: string) {
     this.url = url.replace(/\/+$/u, '');
@@ -65,7 +72,7 @@ export class OpencodeClient {
     if (opts.body !== undefined) {
       msg.set_request_body_from_bytes('application/json', new GLib.Bytes(encoder.encode(JSON.stringify(opts.body))));
     }
-    const session = opts.long === true ? this.#stream : this.#session;
+    const session = opts.long === true ? this.#long : this.#session;
     const bytes = await session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, opts.cancellable ?? null);
     const data = bytes.get_data();
     const text = data === null ? '' : decoder.decode(data);
@@ -334,11 +341,40 @@ export class OpencodeClient {
     return () => cancellable.cancel();
   }
 
-  async #readStream(cancellable: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, onOpen: () => void): Promise<void> {
+  /**
+   * Lit un flux jusqu'à sa fin. Chien de garde : le serveur envoie un `server.heartbeat` toutes les
+   * 10 s ; sans aucune ligne pendant WATCHDOG_MS (connexion à moitié ouverte après une mise en
+   * veille ou un changement de réseau), la lecture est annulée et le flux reconnecté (#61).
+   */
+  async #readStream(outer: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, onOpen: () => void): Promise<void> {
+    const cancellable = new Gio.Cancellable();
+    const relay = outer.connect(() => cancellable.cancel());
+    let watchdog = 0;
+    const arm = (): void => {
+      if (watchdog !== 0) GLib.source_remove(watchdog);
+      watchdog = GLib.timeout_add(GLib.PRIORITY_DEFAULT, WATCHDOG_MS, () => {
+        watchdog = 0;
+        cancellable.cancel();
+        return GLib.SOURCE_REMOVE;
+      });
+    };
+    try {
+      arm();
+      await this.#readEvents(cancellable, onEvent, onOpen, arm);
+    } catch (e) {
+      // délai du chien de garde dépassé (flux annulé, pas l'appelant) : simple fin de flux
+      if (!cancellable.is_cancelled() || outer.is_cancelled()) throw e;
+    } finally {
+      if (watchdog !== 0) GLib.source_remove(watchdog);
+      outer.disconnect(relay);
+    }
+  }
+
+  async #readEvents(cancellable: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, onOpen: () => void, alive: () => void): Promise<void> {
     const msg = Soup.Message.new('GET', this.#uri('/global/event'));
     if (msg === null) throw new Error(`URL invalide : ${this.url}`);
     msg.get_request_headers().append('Accept', 'text/event-stream');
-    const input = await this.#stream.send_async(msg, GLib.PRIORITY_DEFAULT, cancellable);
+    const input = await this.#events.send_async(msg, GLib.PRIORITY_DEFAULT, cancellable);
     const status: number = msg.get_status();
     if (status !== 200) throw new HttpError(status, `/global/event : HTTP ${status}`);
     onOpen();
@@ -349,6 +385,7 @@ export class OpencodeClient {
         // oxlint-disable-next-line no-await-in-loop -- lecture séquentielle d'un flux SSE
         const [bytes] = await lines.read_line_async(GLib.PRIORITY_DEFAULT, cancellable);
         if (bytes === null) return; // fin du flux
+        alive();
         const line = decoder.decode(bytes).replace(/\r$/u, '');
         if (line === '') {
           if (data.length > 0) dispatch(data.join('\n'), onEvent);
