@@ -75,6 +75,12 @@ export class TerminalManager {
     });
   }
 
+  /** Arrête la relecture périodique (fenêtre fermée). */
+  dispose(): void {
+    if (this.#timer !== 0) GLib.source_remove(this.#timer);
+    this.#timer = 0;
+  }
+
   async refresh(): Promise<void> {
     if (!zellijInstalled()) return;
     try {

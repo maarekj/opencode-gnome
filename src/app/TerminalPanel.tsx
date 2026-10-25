@@ -186,6 +186,8 @@ interface ProjectPanel {
   readonly open: (spec: TerminalTab) => Tab;
   /** nombre d'onglets dont la clé commence par `prefix` (numérotation des shells) */
   readonly count: (prefix: string) => number;
+  /** onglets ouverts */
+  readonly tabs: () => readonly Tab[];
 }
 
 function projectPanel(V: typeof VteNs, settings: Settings, actions: Gtk.Widget, emptied: () => void): ProjectPanel {
@@ -234,6 +236,7 @@ function projectPanel(V: typeof VteNs, settings: Settings, actions: Gtk.Widget, 
       return tab;
     },
     count: (prefix) => [...tabs.keys()].filter((k) => k.startsWith(prefix)).length,
+    tabs: () => [...tabs.values()],
   };
 }
 
@@ -285,6 +288,29 @@ export class TerminalDock {
         return GLib.SOURCE_REMOVE;
       });
     });
+  }
+
+  /**
+   * Onglets dont le processus tourne et s'arrêtera avec la fenêtre (les onglets zellij ne font
+   * que se détacher : leur commande continue).
+   */
+  livingTabs(): { title: string; project: string }[] {
+    return [...this.#panels].flatMap(([project, panel]) =>
+      panel
+        .tabs()
+        .filter((t) => !t.spec.key.startsWith('zellij:') && pids.has(t.term))
+        .map((t) => ({ title: t.spec.title, project })),
+    );
+  }
+
+  /** Arrête tous les terminaux (fermeture de la fenêtre). */
+  dispose(): void {
+    for (const panel of this.#panels.values()) {
+      for (const t of panel.tabs()) {
+        disposers.get(t.term)?.();
+        disposers.delete(t.term);
+      }
+    }
   }
 
   /** Terminaux ouverts dans l'application (préférence + VTE disponible). */

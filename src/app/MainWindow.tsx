@@ -998,32 +998,40 @@ export interface WindowApi {
   currentDirectory: () => string | null;
 }
 
-/** Fermeture confirmée par l'utilisateur : la prochaine `close-request` passe. */
-let closeConfirmed = false;
+/** Fenêtres dont la fermeture a été confirmée : leur prochaine `close-request` passe. */
+const closeConfirmed = new WeakSet<Gtk.Window>();
 
 /**
  * Fermeture de la fenêtre : si des terminaux persistants tournent, propose de les arrêter
- * (Annuler / Laisser tourner / Tout arrêter). Renvoie true pour suspendre la fermeture.
+ * (Annuler / Laisser tourner / Tout arrêter) ; les terminaux intégrés ouverts (arrêtés avec la
+ * fenêtre) sont signalés aussi. Renvoie true pour suspendre la fermeture.
  */
-function confirmClose(win: Adw.ApplicationWindow, settings: Settings, manager: TerminalManager): boolean {
-  if (closeConfirmed) return false;
+function confirmClose(win: Adw.ApplicationWindow, settings: Settings, manager: TerminalManager, dock: TerminalDock): boolean {
+  if (closeConfirmed.has(win)) return false;
   const running = Object.entries(settings.data.peek().terminals).flatMap(([project, list]) =>
     list.filter((t) => manager.isRunning(t.id)).map((t) => ({ t, label: `${t.name} — ${GLib.path_get_basename(project)}` })),
   );
-  if (running.length === 0) return false;
+  const integrated = dock.livingTabs().map((t) => `${t.title} — ${GLib.path_get_basename(t.project)}`);
+  if (running.length === 0 && integrated.length === 0) return false;
   const n = running.length;
+  const parts = [
+    n === 0 ? '' : `${running.map((r) => `• ${r.label}`).join('\n')}\n\nLes laisser tourner en arrière-plan ou les arrêter ?`,
+    integrated.length === 0 ? '' : `${n === 0 ? 'Ils seront arrêtés' : 'Terminaux intégrés, arrêtés'} avec la fenêtre :\n${integrated.map((l) => `• ${l}`).join('\n')}`,
+  ].filter((x) => x !== '');
   const dialog = new Adw.AlertDialog({
-    heading: n === 1 ? 'Un terminal tourne encore' : `${n} terminaux tournent encore`,
-    body: `${running.map((r) => `• ${r.label}`).join('\n')}\n\nLes laisser tourner en arrière-plan ou les arrêter ?`,
+    heading: n === 0 ? 'Des terminaux intégrés sont ouverts' : n === 1 ? 'Un terminal tourne encore' : `${n} terminaux tournent encore`,
+    body: parts.join('\n\n'),
     defaultResponse: 'keep',
     closeResponse: 'cancel',
   });
   dialog.add_response('cancel', 'Annuler');
-  dialog.add_response('keep', 'Laisser tourner');
-  dialog.add_response('stop', n === 1 ? 'Arrêter' : 'Tout arrêter');
-  dialog.set_response_appearance('stop', Adw.ResponseAppearance.DESTRUCTIVE);
+  dialog.add_response('keep', n === 0 ? 'Fermer' : 'Laisser tourner');
+  if (n > 0) {
+    dialog.add_response('stop', n === 1 ? 'Arrêter' : 'Tout arrêter');
+    dialog.set_response_appearance('stop', Adw.ResponseAppearance.DESTRUCTIVE);
+  }
   const close = (): void => {
-    closeConfirmed = true;
+    closeConfirmed.add(win);
     win.close();
   };
   dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
@@ -1353,6 +1361,16 @@ export function MainWindow({
   nav.connect('notify::visible-page', updateShown);
   onCleanup(current.subscribe(updateShown));
 
+  // fenêtre fermée : pages des sessions (abonnements au store), relecture des terminaux
+  // persistants et terminaux intégrés libérés (#77)
+  onCleanup(() => {
+    for (const handle of [...pages.values(), ...subPages.values()]) handle.dispose();
+    pages.clear();
+    subPages.clear();
+    terminals.manager.dispose();
+    dock.dispose();
+  });
+
   // Sessions ouvertes absentes de la liste chargée : soit supprimées ailleurs, soit simplement
   // plus anciennes que les sessions chargées (limite du serveur). Vérifiées une à une : fermées
   // seulement si le serveur répond 404, sinon ajoutées au store (#59).
@@ -1392,7 +1410,7 @@ export function MainWindow({
       defaultHeight={size?.[1] ?? 720}
       $={(self: Adw.ApplicationWindow) => {
         // connecté avant le gestionnaire de main.tsx : renvoyer true suspend la fermeture
-        self.connect('close-request', () => confirmClose(self, settings, terminals.manager));
+        self.connect('close-request', () => confirmClose(self, settings, terminals.manager, dock));
         // Ctrl+Maj+J : terminaux intégrés (capturé avant le terminal ; Ctrl+J reste un saut de ligne pour lui)
         const keys = new Gtk.ShortcutController({ scope: Gtk.ShortcutScope.GLOBAL, propagationPhase: Gtk.PropagationPhase.CAPTURE });
         keys.add_shortcut(
