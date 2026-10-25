@@ -137,8 +137,13 @@ export function newTaskId(name: string): string {
  * de 10 s (processus tué) est ignoré.
  */
 function updateTasks(fn: (tasks: ScheduledTask[]) => ScheduledTask[]): void {
-  const lock = Gio.File.new_for_path(`${tasksPath()}.lock`);
-  GLib.mkdir_with_parents(GLib.path_get_dirname(tasksPath()), 0o700);
+  withLock(tasksPath(), () => saveTasks(fn(loadTasks())));
+}
+
+/** Exécute `fn` sous le verrou du fichier `path` (`path.lock` créé en exclusif ; périmé après 10 s). */
+function withLock(path: string, fn: () => void): void {
+  const lock = Gio.File.new_for_path(`${path}.lock`);
+  GLib.mkdir_with_parents(GLib.path_get_dirname(path), 0o700);
   const deadline = Date.now() + 2000;
   for (;;) {
     try {
@@ -163,7 +168,7 @@ function updateTasks(fn: (tasks: ScheduledTask[]) => ScheduledTask[]): void {
     }
   }
   try {
-    saveTasks(fn(loadTasks()));
+    fn();
   } finally {
     try {
       lock.delete(null);
@@ -392,12 +397,23 @@ export async function timerState(task: ScheduledTask): Promise<{ next: number | 
 export const newRunId = (): string => `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36).padStart(2, '0')}`;
 
 /** Ajoute l'état d'un run (début, puis fin) ; la dernière ligne d'un run fait foi. */
+/** Au-delà de cette taille, le journal est compacté aux KEEP_RUNS runs les plus récents (#99). */
+const MAX_RUNS_BYTES = 2 * 1024 * 1024;
+const KEEP_RUNS = 1000;
+
 export function recordRun(r: RunRecord): void {
   const path = runsPath();
-  GLib.mkdir_with_parents(GLib.path_get_dirname(path), 0o700);
-  const stream = Gio.File.new_for_path(path).append_to(Gio.FileCreateFlags.NONE, null);
-  stream.write_all(encoder.encode(`${JSON.stringify(r)}\n`), null);
-  stream.close(null);
+  withLock(path, () => {
+    const file = Gio.File.new_for_path(path);
+    const stream = file.append_to(Gio.FileCreateFlags.NONE, null);
+    stream.write_all(encoder.encode(`${JSON.stringify(r)}\n`), null);
+    stream.close(null);
+    // compaction : une ligne par run (dernier état), les plus récents seulement
+    const size = file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null).get_size();
+    if (size <= MAX_RUNS_BYTES) return;
+    const keep = loadRuns().slice(0, KEEP_RUNS).toReversed();
+    writeText(path, keep.map((x) => `${JSON.stringify(x)}\n`).join(''));
+  });
 }
 
 /** Runs du plus récent au plus ancien. */
@@ -425,7 +441,8 @@ export const isFailure = (r: RunRecord): boolean => FAILED.has(r.status);
 
 /** Runs en échec terminés après le dernier passage dans l'historique. */
 export function unseenFailures(runs: readonly RunRecord[] = loadRuns()): RunRecord[] {
-  const seen = Number(readText(seenPath()) ?? '0');
+  // fichier corrompu (NaN) : 0, tous les échecs sont signalés plutôt qu'aucun (#99)
+  const seen = Number(readText(seenPath()) ?? '0') || 0;
   return runs.filter((r) => isFailure(r) && (r.end ?? r.start) > seen);
 }
 
