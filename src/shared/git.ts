@@ -330,3 +330,36 @@ export async function gitStatus(directory: string): Promise<GitStatus | null> {
   const mainWorktree = linked ? (commonDir.endsWith('/.git') ? commonDir.slice(0, -5) : commonDir) : null;
   return { ...parseStatus(status), toplevel, mainWorktree };
 }
+
+/** Worktree d'un dépôt et son état. */
+export interface WorktreeStatus {
+  readonly path: string;
+  /** dépôt principal (premier de `git worktree list`) */
+  readonly main: boolean;
+  /** null : état illisible (dossier supprimé, worktree « prunable »…) */
+  readonly status: GitStatus | null;
+}
+
+/** Chemins des worktrees de `git worktree list --porcelain` (dépôt principal en premier). */
+export function parseWorktrees(out: string): string[] {
+  // un bloc par worktree, séparés par une ligne vide ; dépôt nu (`bare`) ignoré
+  return out
+    .split(/\n\n+/u)
+    .map((block) => block.split('\n'))
+    .filter((lines) => !lines.includes('bare'))
+    .flatMap((lines) => lines.filter((l) => l.startsWith('worktree ')).map((l) => l.slice('worktree '.length)));
+}
+
+/** « ↑2 ↓1 · 3 modifiés » ; vide si à jour et sans modification. */
+export function syncSummary(g: GitStatus): string {
+  const sync = [g.ahead > 0 ? `↑${g.ahead}` : '', g.behind > 0 ? `↓${g.behind}` : ''].filter((x) => x !== '').join(' ');
+  return [sync, g.changes === 0 ? '' : `${g.changes} modifié${g.changes > 1 ? 's' : ''}`].filter((x) => x !== '').join('  ·  ');
+}
+
+/** Worktrees du dépôt de `directory`, avec leur état (lus en parallèle). */
+export async function worktrees(directory: string): Promise<WorktreeStatus[]> {
+  const out = await git(directory, ['worktree', 'list', '--porcelain']);
+  if (out === null) return [];
+  const paths = parseWorktrees(out);
+  return Promise.all(paths.map(async (path, i) => ({ path, main: i === 0, status: await gitStatus(path).catch(() => null) })));
+}

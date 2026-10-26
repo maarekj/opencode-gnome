@@ -1,5 +1,5 @@
 // Lecture des sorties git et graphe des branches.
-import { commitGraph, parseStatus, type GitCommit } from '../src/shared/git.ts';
+import { commitGraph, parseStatus, parseWorktrees, syncSummary, type GitCommit } from '../src/shared/git.ts';
 
 const commit = (hash: string, parents: string[] = []): GitCommit => ({
   hash,
@@ -60,5 +60,21 @@ describe('commitGraph', () => {
     expect(x?.down.some((e) => e.from === 1 && e.to === 0)).toBeTrue();
     expect(a?.col).toBe(0);
     expect(a?.up.every((e) => e.from === 0 && e.to === 0)).toBeTrue();
+  });
+});
+
+describe('parseWorktrees', () => {
+  it('liste le dépôt principal puis les worktrees liés, ignore un dépôt nu', () => {
+    const out = ['worktree /r', 'HEAD abc', 'branch refs/heads/main', '', 'worktree /r-2', 'HEAD def', 'branch refs/heads/agent-2', '', 'worktree /old', 'HEAD 123', 'detached', 'prunable gitdir file points to non-existent location', ''].join('\n');
+    expect(parseWorktrees(out)).toEqual(['/r', '/r-2', '/old']);
+    expect(parseWorktrees(['worktree /bare.git', 'bare', '', 'worktree /w', 'HEAD a', 'branch refs/heads/x', ''].join('\n'))).toEqual(['/w']);
+  });
+});
+
+describe('syncSummary', () => {
+  it('résume avance, retard et modifications', () => {
+    const g = { branch: 'x', commit: 'a', upstream: 'o/x', ahead: 2, behind: 1, changes: 3, toplevel: '/r', mainWorktree: null };
+    expect(syncSummary(g)).toBe('↑2 ↓1  ·  3 modifiés');
+    expect(syncSummary({ ...g, ahead: 0, behind: 0, changes: 0 })).toBe('');
   });
 });
