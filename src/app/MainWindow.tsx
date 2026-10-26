@@ -19,6 +19,7 @@ import { TerminalDock } from './TerminalPanel.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { openSearch } from './SearchDialog.ts';
 import { SearchIndex } from '../shared/search.ts';
+import { descendantsOf } from '../shared/projecttree.ts';
 import { SessionsPage, type Actions, type ProjectTasksContext } from './SessionsPage.tsx';
 
 // ---------------------------------------------------------------- fenêtre
@@ -638,7 +639,8 @@ export function MainWindow({
                 isFavorite: (path) => settings.isFavorite(path),
                 extensions: (from, path) => openExtensions(from, store.client, path),
                 reloadConfig: (from, p) => reloadProjectConfig(from, store.client, p.path, p.working, actions.toast),
-                toggleFavorite: (path) => settings.toggleFavorite(path),
+                // ajout : ses sous-projets du moment avec lui
+                toggleFavorite: (path) => settings.toggleFavorite(path, descendantsOf(path, allProjects.peek().map((p) => p.path))),
                 newSession: (dir) => actions.newSession(dir),
                 attach: (dir) => actions.attach(dir),
                 toast: (m) => actions.toast(m),

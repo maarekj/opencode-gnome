@@ -1,0 +1,88 @@
+{
+ "projects": [
+  {
+   "id": "prj_c",
+   "worktree": "/tmp/opencode-fake/claude",
+   "name": "claude",
+   "time": {
+    "created": 1,
+    "updated": 10
+   }
+  },
+  {
+   "id": "prj_a",
+   "worktree": "/tmp/opencode-fake/claude/appartement netivot",
+   "name": "appartement netivot",
+   "time": {
+    "created": 1,
+    "updated": 9
+   }
+  },
+  {
+   "id": "prj_b",
+   "worktree": "/tmp/opencode-fake/claude/budget",
+   "name": "budget",
+   "time": {
+    "created": 1,
+    "updated": 8
+   }
+  },
+  {
+   "id": "prj_o",
+   "worktree": "/tmp/opencode-fake/autre",
+   "name": "autre",
+   "time": {
+    "created": 1,
+    "updated": 7
+   }
+  }
+ ],
+ "sessions": [
+  {
+   "id": "ses_prj_c",
+   "projectID": "prj_c",
+   "directory": "/tmp/opencode-fake/claude",
+   "title": "Session claude",
+   "time": {
+    "created": 1792900000000,
+    "updated": 1792900090000
+   }
+  },
+  {
+   "id": "ses_prj_a",
+   "projectID": "prj_a",
+   "directory": "/tmp/opencode-fake/claude/appartement netivot",
+   "title": "Session appartement netivot",
+   "time": {
+    "created": 1792900000000,
+    "updated": 1792900089000
+   }
+  },
+  {
+   "id": "ses_prj_b",
+   "projectID": "prj_b",
+   "directory": "/tmp/opencode-fake/claude/budget",
+   "title": "Session budget",
+   "time": {
+    "created": 1792900000000,
+    "updated": 1792900088000
+   }
+  },
+  {
+   "id": "ses_prj_o",
+   "projectID": "prj_o",
+   "directory": "/tmp/opencode-fake/autre",
+   "title": "Session autre",
+   "time": {
+    "created": 1792900000000,
+    "updated": 1792900087000
+   }
+  }
+ ],
+ "messages": {
+  "ses_prj_c": [],
+  "ses_prj_a": [],
+  "ses_prj_b": [],
+  "ses_prj_o": []
+ }
+}

@@ -6,6 +6,7 @@ import GLib from 'gi://GLib';
 import { createState, type Accessor } from 'gnim';
 import * as z from 'zod/mini';
 import { withLock } from './lock.ts';
+import { moveChild } from './projecttree.ts';
 
 export const SidebarMode = z.enum(['favorites', 'all']);
 export type SidebarMode = z.output<typeof SidebarMode>;
@@ -58,6 +59,8 @@ export const SettingsData = z.object({
   terminals: z.prefault(z.record(z.string(), z.array(ProjectTerminal)), {}),
   /** chemins des projets favoris */
   favorites: z.prefault(z.array(z.string()), []),
+  /** ordre des sous-projets (glisser-déposer) : chemin du projet parent -> chemins des sous-projets */
+  subprojects: z.prefault(z.record(z.string(), z.array(z.string())), {}),
   /** mode de la barre latérale */
   sidebarMode: z.prefault(SidebarMode, 'all'),
   /** sessions ouvertes (onglets de la barre latérale), dans l'ordre d'ouverture */
@@ -100,7 +103,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -209,8 +212,21 @@ export class Settings {
     this.update((d) => ({ ...d, openSessions: moveBefore(d.openSessions, id, before) }));
   }
 
-  toggleFavorite(path: string): void {
-    this.update((d) => ({ ...d, favorites: d.favorites.includes(path) ? d.favorites.filter((p) => p !== path) : [...d.favorites, path] }));
+  /**
+   * Ajoute ou retire un favori. Ajout : `descendants` (ses sous-projets du moment) sont ajoutés
+   * avec lui ; retrait : lui seul (chaque sous-projet se retire séparément).
+   */
+  toggleFavorite(path: string, descendants: readonly string[] = []): void {
+    this.update((d) => {
+      if (d.favorites.includes(path)) return { ...d, favorites: d.favorites.filter((p) => p !== path) };
+      const added = [path, ...descendants].filter((p, i, all) => !d.favorites.includes(p) && all.indexOf(p) === i);
+      return { ...d, favorites: [...d.favorites, ...added] };
+    });
+  }
+
+  /** Ordre des sous-projets de `parent` : `item` placé avant `before` (à la fin si null), parmi `siblings`. */
+  moveSubproject(parent: string, siblings: readonly string[], item: string, before: string | null): void {
+    this.update((d) => ({ ...d, subprojects: { ...d.subprojects, [parent]: moveChild(siblings, item, before) } }));
   }
 
   /** Modifie un réglage optionnel (`undefined` = valeur automatique, retirée du fichier). */

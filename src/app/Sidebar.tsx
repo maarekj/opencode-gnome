@@ -14,6 +14,7 @@ import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachContextMenu, labelMenuButton } from './ContextMenu.ts';
+import { projectTree } from '../shared/projecttree.ts';
 import { openFolder } from './OpenFolder.ts';
 import { ideFor, installedIdes, openInIde } from './Ide.ts';
 import { keyedListBox } from './KeyedBox.ts';
@@ -281,10 +282,14 @@ function rowNamed(list: Gtk.ListBox, name: string): Gtk.ListBoxRow | null {
   return null;
 }
 
-/** Ligne de projet suivante (après ses enfants), ou null. */
-function nextProjectRow(list: Gtk.ListBox, row: Gtk.ListBoxRow): Gtk.ListBoxRow | null {
+/** Projet frère suivant (même parent), ou null si la liste de ses frères se termine. */
+function nextSiblingRow(list: Gtk.ListBox, row: Gtk.ListBoxRow, parent: string | null, parentOf: (r: Gtk.ListBoxRow) => string | null | undefined): Gtk.ListBoxRow | null {
+  const depth = row.marginStart;
   for (let i = row.get_index() + 1, r = list.get_row_at_index(i); r !== null; i += 1, r = list.get_row_at_index(i)) {
-    if (r.name.startsWith('p:')) return r;
+    if (!r.name.startsWith('p:')) continue;
+    if ((parentOf(r) ?? null) === parent) return r;
+    // remontée à un niveau supérieur : fin des frères
+    if (r.marginStart < depth) return null;
   }
   return null;
 }
@@ -293,7 +298,8 @@ function nextProjectRow(list: Gtk.ListBox, row: Gtk.ListBoxRow): Gtk.ListBoxRow 
  * Glisser-déposer dans l'arbre : un projet favori (mode Favoris) réordonne les favoris, une
  * session ouverte se place parmi les sessions de son projet. Rien d'autre ne change l'ordre.
  */
-function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor<readonly ProjectView[]>): void {
+function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor<readonly ProjectView[]>, parents: () => ReadonlyMap<string, string | null>): void {
+  const parentOfRow = (row: Gtk.ListBoxRow): string | null | undefined => parents().get(row.name.slice(2));
   const pathOf = (row: Gtk.ListBoxRow | null): string | null => {
     const key = row?.name.slice(2);
     return projects.peek().find((p) => p.key === key)?.path ?? null;
@@ -302,7 +308,8 @@ function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor
   source.connect('prepare', (_s: Gtk.DragSource, _x: number, y: number) => {
     const row = list.get_row_at_y(Math.round(y));
     if (row === null) return null;
-    const movable = row.name.startsWith('s:') || (row.name.startsWith('p:') && settings.data.peek().sidebarMode === 'favorites');
+    // projet : sous-projet (parmi ses frères) dans les deux modes ; premier niveau en mode Favoris
+    const movable = row.name.startsWith('s:') || (row.name.startsWith('p:') && ((parentOfRow(row) ?? null) !== null || settings.data.peek().sidebarMode === 'favorites'));
     if (!movable) return null;
     source.set_icon(Gtk.WidgetPaintable.new(row), 20, 10);
     return Gdk.ContentProvider.new_for_value(row.name);
@@ -318,11 +325,23 @@ function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor
     const upper = y - (ok ? origin.y : 0) < over.get_height() / 2;
     if (value.startsWith('p:')) {
       const moved = projects.peek().find((p) => `p:${p.key}` === value)?.path;
-      const proj = projectRowOf(list, over);
-      if (moved === undefined || proj === null) return false;
-      // moitié haute d'une ligne de projet : avant lui ; sinon : avant le projet suivant
-      const before = over === proj && upper ? proj : nextProjectRow(list, proj);
-      settings.moveFavorite(moved, pathOf(before));
+      const from = rowNamed(list, value);
+      if (moved === undefined || from === null) return false;
+      const parent = parentOfRow(from) ?? null;
+      // projet survolé ramené au niveau du projet déplacé (frère de même parent)
+      let proj = projectRowOf(list, over);
+      while (proj !== null && (parentOfRow(proj) ?? null) !== parent) {
+        const up: string | null = parentOfRow(proj) ?? null;
+        proj = up === null ? null : rowNamed(list, `p:${projects.peek().find((p) => p.path === up)?.key ?? ''}`);
+      }
+      if (proj === null) return false;
+      // moitié haute de la ligne du frère : avant lui ; sinon : avant le frère suivant
+      const before = proj === over && upper ? proj : nextSiblingRow(list, proj, parent, parentOfRow);
+      if (parent === null) settings.moveFavorite(moved, pathOf(before));
+      else {
+        const siblings = [...parents()].filter(([, p]) => p === parent).map(([key]) => projects.peek().find((p) => p.key === key)?.path ?? '');
+        settings.moveSubproject(parent, siblings, moved, pathOf(before));
+      }
       return true;
     }
     if (value.startsWith('s:')) {
@@ -350,20 +369,38 @@ function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor
 }
 
 /** Élément de l'arbre aplati : un projet, ou une de ses sessions ouvertes. */
-type TreeItem =
-  | { readonly kind: 'project'; readonly project: ProjectView; readonly favorite: boolean; readonly open: number; readonly sessions: number; readonly expanded: boolean; readonly unread: number }
+type TreeItem = (
+  | {
+      readonly kind: 'project';
+      readonly project: ProjectView;
+      readonly favorite: boolean;
+      readonly open: number;
+      readonly sessions: number;
+      readonly expanded: boolean;
+      readonly unread: number;
+      /** chemin du projet parent (sous-projet), null au premier niveau */
+      readonly parent: string | null;
+    }
   | { readonly kind: 'session'; readonly view: SessionView; readonly last: boolean }
   | { readonly kind: 'terminal'; readonly t: ProjectTerminal; readonly project: string; readonly last: boolean }
-  | { readonly kind: 'task'; readonly view: TaskView; readonly last: boolean };
+  | { readonly kind: 'task'; readonly view: TaskView; readonly last: boolean }
+) & {
+  /** niveau du projet de la ligne (sous-projets : indentés) */
+  readonly depth: number;
+};
+
+/** Indentation d'un niveau de sous-projet (px). */
+const SUBPROJECT_INDENT = 22;
 
 const treeKey = (i: TreeItem): string =>
-  i.kind === 'project'
-    ? `p|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.unread}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}`
+  `${i.depth}|` +
+  (i.kind === 'project'
+    ? `p|${i.parent ?? ''}|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.unread}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}`
     : i.kind === 'session'
       ? `s|${i.view.session.id}|${i.view.activity}|${i.view.unread}|${i.view.session.title}|${i.last}`
       : i.kind === 'terminal'
         ? `t|${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.last}`
-        : `k|${i.view.task.id}|${i.view.task.name}|${i.view.task.enabled}|${i.view.running}|${i.view.last?.run ?? ''}|${i.view.last?.status ?? ''}|${i.view.next ?? ''}|${i.last}`;
+        : `k|${i.view.task.id}|${i.view.task.name}|${i.view.task.enabled}|${i.view.running}|${i.view.last?.run ?? ''}|${i.view.last?.status ?? ''}|${i.view.next ?? ''}|${i.last}`);
 
 function startServer(): void {
   // captures et tests : le serveur partagé de l'utilisateur n'est pas touché
@@ -552,12 +589,30 @@ export function Sidebar({
                 // d'ouverture, puis celui choisi par glisser-déposer), ses terminaux en cours et ses tâches
                 terminals.manager.watch();
                 const items = createComputed((): TreeItem[] => {
-                  const { openSessions, collapsed, terminals: configured } = settings.data();
+                  const { openSessions, collapsed, terminals: configured, subprojects } = settings.data();
                   const running = terminals.manager.running();
                   const favs = favorites();
                   const allTasks = tasks();
                   const out: TreeItem[] = [];
-                  for (const p of projects()) {
+                  const shownProjects = projects();
+                  const byPath = new Map(shownProjects.map((p) => [p.path, p]));
+                  // sous-projets sous leur ancêtre le plus proche (parmi les projets affichés)
+                  const tree = projectTree(
+                    shownProjects.map((p) => p.path),
+                    subprojects,
+                  );
+                  const subCount = new Map<string, number>();
+                  for (const n of tree) if (n.parent !== null) subCount.set(n.parent, (subCount.get(n.parent) ?? 0) + 1);
+                  /** projets repliés : leurs sous-projets ne sont pas affichés */
+                  const hidden = new Set<string>();
+                  for (const node of tree) {
+                    const p = byPath.get(node.path);
+                    if (p === undefined) continue;
+                    if (node.parent !== null && hidden.has(node.parent)) {
+                      hidden.add(p.path);
+                      continue;
+                    }
+                    const depth = node.depth;
                     const byID = new Map(p.sessions.map((v) => [v.session.id, v]));
                     const open = openSessions.flatMap((id) => {
                       const v = byID.get(id);
@@ -567,32 +622,42 @@ export function Sidebar({
                     const own = allTasks.filter((t) => t.task.directory === p.path);
                     const children = open.length + terms.length + own.length;
                     const expanded = !collapsed.includes(p.key);
+                    if (!expanded) hidden.add(p.path);
                     // non lues : celles qui n'apparaissent pas dessous (repliées ou non ouvertes)
                     const shownBelow = new Set(expanded ? open.map((v) => v.session.id) : []);
                     const unread = p.sessions.filter((v) => v.unread && !shownBelow.has(v.session.id)).length;
-                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children, sessions: open.length, expanded, unread });
+                    // repli possible aussi pour un projet qui n'a que des sous-projets
+                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children + (subCount.get(p.path) ?? 0), sessions: open.length, expanded, unread, parent: node.parent, depth });
                     if (!expanded) continue;
-                    // sessions ouvertes, terminaux en cours, puis tâches planifiées du projet
-                    for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1 });
-                    for (const [n, t] of terms.entries()) out.push({ kind: 'terminal', t, project: p.path, last: open.length + n === children - 1 });
-                    for (const [n, view] of own.entries()) out.push({ kind: 'task', view, last: open.length + terms.length + n === children - 1 });
+                    // sessions ouvertes, terminaux en cours, puis tâches planifiées du projet (ses sous-projets suivent)
+                    for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1, depth });
+                    for (const [n, t] of terms.entries()) out.push({ kind: 'terminal', t, project: p.path, last: open.length + n === children - 1, depth });
+                    for (const [n, view] of own.entries()) out.push({ kind: 'task', view, last: open.length + terms.length + n === children - 1, depth });
                   }
                   return out;
                 });
                 onCleanup(
-                  keyedListBox(self, items, treeKey, (i) =>
-                    i.kind === 'terminal'
-                      ? TerminalTreeRow({ t: i.t, project: i.project, last: i.last, ctx: terminals })
-                      : asWidget(
-                          i.kind === 'project'
-                            ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, unread: i.unread, actions })
-                            : i.kind === 'session'
-                              ? SessionTreeRow({ view: i.view, last: i.last, actions })
-                              : TaskTreeRow({ view: i.view, last: i.last, actions }),
-                        ),
-                  ),
+                  keyedListBox(self, items, treeKey, (i) => {
+                    const row =
+                      i.kind === 'terminal'
+                        ? TerminalTreeRow({ t: i.t, project: i.project, last: i.last, ctx: terminals })
+                        : asWidget(
+                            i.kind === 'project'
+                              ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, unread: i.unread, actions })
+                              : i.kind === 'session'
+                                ? SessionTreeRow({ view: i.view, last: i.last, actions })
+                                : TaskTreeRow({ view: i.view, last: i.last, actions }),
+                          );
+                    // sous-projet : la ligne et ses enfants sont indentés
+                    if (i.depth > 0) row.marginStart = i.depth * SUBPROJECT_INDENT;
+                    return row;
+                  }),
                 );
-                enableReorder(self, settings, projects);
+                enableReorder(self, settings, projects, () => {
+                  const parents = new Map<string, string | null>();
+                  for (const i of items.peek()) if (i.kind === 'project') parents.set(i.project.key, i.parent);
+                  return parents;
+                });
                 // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)
                 const highlight = (): void => {
                   const name = shown.peek();
