@@ -11,6 +11,7 @@ import { errorMessage } from '../shared/errors.ts';
 import { Settings } from '../shared/settings.ts';
 import { Store } from '../shared/store.ts';
 import { repoRoot } from '../shared/help.ts';
+import { applyInputMethod } from './inputMethod.ts';
 import { openAbout, openGuide, openShortcuts } from './HelpWindows.tsx';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { Notifier } from './Notifier.ts';
@@ -20,6 +21,9 @@ import { STYLESHEET } from './style.ts';
 import { openServerWindow } from './ServerWindow.tsx';
 import { refreshMarkdownColors, setMarkdownStyle, setMonospaceFamily } from './Markdown.tsx';
 import { openTasksWindow, TasksMonitor } from './TasksWindow.tsx';
+
+// méthode de saisie choisie avant la création de tout widget (#138)
+applyInputMethod();
 
 /** Identifiant D-Bus : distinct pour l'app d'un worktree (lancée en même temps que la principale). */
 export const APP_ID = GLib.getenv('OPENCODE_GNOME_APP_ID') ?? 'io.github.maarekj.OpencodeGnome';
