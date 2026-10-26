@@ -195,8 +195,19 @@ export const STYLESHEET = `
   margin: -6px -6px 0 0;
 }
 .copyable:hover .copy-button,
-.copyable .copy-button:focus-visible {
+.copyable .copy-button:focus-visible,
+.copyable .copy-button.reading {
   opacity: 1;
+}
+
+/* dictée en cours : bouton micro rouge qui pulse */
+@keyframes dictation-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.45; }
+}
+.dictating {
+  color: @error_color;
+  animation: dictation-pulse 0.8s ease-in-out infinite alternate;
 }
 
 .todo-panel .todo-header {

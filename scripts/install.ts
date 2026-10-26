@@ -35,6 +35,8 @@ const which = (bin: string): string => {
   if (found === undefined) throw new Error(`${bin} introuvable dans le PATH (lance ce script depuis le shell devenv)`);
   return fs.realpathSync(found);
 };
+/** Dossiers des outils de la voix (paquets Nix du shell devenv) : le lanceur ne reprend pas le PATH. */
+const voiceTools = [...new Set(['whisper-cli', 'piper', 'pw-record'].map((b) => path.dirname(which(b))))].join(':');
 /** Valeur d'unité systemd entre guillemets, `%` littéral. */
 const unitQuote = (s: string): string => `"${s.replaceAll('%', '%%').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 const shq = (s: string): string => `'${s.replaceAll("'", String.raw`'\''`)}'`;
@@ -120,6 +122,8 @@ export OPENCODE_GNOME_APP_ID=${APP_ID}
 export OCG_BIN=${shq(path.join(binDir, `ocg${suffix}`))}
 export OCG_NAMESPACE=${shq(variant)}
 export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
+# voix : whisper-cli, piper, pw-record / pw-play des paquets Nix de l'app (dictée, lecture)
+export OPENCODE_GNOME_TOOLS_PATH=${shq(voiceTools)}
 exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "$@"
 `,
   0o755,

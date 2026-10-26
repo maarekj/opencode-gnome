@@ -12,6 +12,7 @@ import { errorMessage } from '../shared/errors.ts';
 import { attachmentFromFile, attachmentFromTexture, attachmentsFromClipboard, AttachmentView, pickFiles } from './Attachments.tsx';
 import { CompletionPopover, type CompletionItem } from './Completion.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { dictation, fmtElapsed, voiceSettings } from './Voice.ts';
 import type { Agent, Attachment, Command, Mention, Providers } from '../shared/schemas.ts';
 
 export interface ModelRef {
@@ -79,6 +80,11 @@ export interface ComposerProps {
 const SEND_WITH_CTRL = true;
 
 const HINT = SEND_WITH_CTRL ? 'Ctrl+Entrée pour envoyer' : 'Entrée pour envoyer · Maj+Entrée pour un saut de ligne';
+
+/** raccourci de la dictée */
+const DICTATION_KEY = 'Ctrl+M';
+/** au-delà (ms), le raccourci maintenu termine la dictée au relâchement */
+const HOLD_MS = 400;
 
 const modelKey = (m: ModelRef): string => `${m.providerID}/${m.modelID}`;
 
@@ -436,6 +442,131 @@ export function Composer(props: ComposerProps): JSX.Element {
     void go();
   };
 
+  // ---------------------------------------------------------------- dictée
+  /** cette zone de saisie a lancé la dictée en cours (une seule dans l'application) */
+  let dictating = false;
+  const [voiceStatus, setVoiceStatus] = createState('');
+  const dictationLabel = createComputed(() => {
+    const state = dictation.state();
+    const status = voiceStatus();
+    if (state === 'recording') return `Dictée ${fmtElapsed(dictation.elapsed())} · ${DICTATION_KEY} ou clic pour terminer, Échap pour annuler`;
+    return status;
+  });
+  // texte dicté : plage entre deux marques, aperçu en italique grisé remplacé au fil de la dictée
+  const dictationTag = new Gtk.TextTag({ name: 'dictation', style: 2 /* Pango.Style.ITALIC */, foreground: '#77767b' });
+  buffer.tagTable.add(dictationTag);
+  let dictStart: Gtk.TextMark | null = null;
+  let dictEnd: Gtk.TextMark | null = null;
+  /** marques posées au curseur ; espace devant si le texte précédent n'en finit pas par une */
+  let dictSpace = false;
+  /** transcription finale en cours : la fin de l'enregistrement n'est pas une annulation */
+  let finishing = false;
+  const openDictation = (): void => {
+    const at = buffer.get_iter_at_mark(buffer.get_insert());
+    const before = at.copy();
+    dictSpace = before.backward_char() && !/\s/u.test(before.get_char());
+    dictStart = buffer.create_mark(null, at, true);
+    dictEnd = buffer.create_mark(null, at, false);
+  };
+  /** remplace le texte dicté ; `draft` : aperçu (italique grisé) */
+  const setDictated = (text: string, draft: boolean): void => {
+    if (dictStart === null || dictEnd === null) return;
+    const start = buffer.get_iter_at_mark(dictStart);
+    const end = buffer.get_iter_at_mark(dictEnd);
+    programmatic = true;
+    buffer.delete(start, end);
+    const at = buffer.get_iter_at_mark(dictStart);
+    const value = text === '' ? '' : `${dictSpace ? ' ' : ''}${text}`;
+    buffer.insert(at, value, -1);
+    if (draft) buffer.apply_tag(dictationTag, buffer.get_iter_at_mark(dictStart), buffer.get_iter_at_mark(dictEnd));
+    programmatic = false;
+  };
+  const closeDictation = (): void => {
+    if (dictEnd !== null) buffer.place_cursor(buffer.get_iter_at_mark(dictEnd));
+    if (dictStart !== null) buffer.delete_mark(dictStart);
+    if (dictEnd !== null) buffer.delete_mark(dictEnd);
+    dictStart = null;
+    dictEnd = null;
+  };
+  const unsubscribePartial = dictation.partial.subscribe(() => {
+    if (dictating && dictation.state.peek() === 'recording') setDictated(dictation.partial.peek(), true);
+  });
+  // annulée (Échap, autre fenêtre) : aperçu retiré
+  const unsubscribeState = dictation.state.subscribe(() => {
+    if (dictating && !finishing && dictation.state.peek() === 'idle' && dictStart !== null) {
+      setDictated('', false);
+      closeDictation();
+      dictating = false;
+    }
+  });
+  onCleanup(() => {
+    unsubscribePartial();
+    unsubscribeState();
+  });
+  const startDictation = (): void => {
+    if (dictation.state.peek() !== 'idle') return;
+    try {
+      openDictation();
+      dictating = true;
+      dictation.start(voiceSettings(), setVoiceStatus);
+    } catch (e) {
+      closeDictation();
+      dictating = false;
+      props.toast(`Dictée impossible : ${errorMessage(e)}`);
+    }
+  };
+  const finishDictation = (): void => {
+    if (!dictating || dictation.state.peek() !== 'recording') return;
+    const v = voiceSettings();
+    finishing = true;
+    const go = async (): Promise<void> => {
+      try {
+        const text = await dictation.stop(v, setVoiceStatus);
+        setDictated(text, false);
+        closeDictation();
+        if (text === '') props.toast('Dictée : rien n’a été compris');
+        else if (v.autoSend) submit();
+      } catch (e) {
+        setDictated('', false);
+        closeDictation();
+        props.toast(`Dictée impossible : ${errorMessage(e)}`);
+      } finally {
+        dictating = false;
+        finishing = false;
+        setVoiceStatus('');
+      }
+    };
+    void go();
+  };
+  const cancelDictation = (): boolean => {
+    if (!dictating || dictation.state.peek() !== 'recording') return false;
+    dictation.cancel();
+    dictating = false;
+    return true;
+  };
+  const toggleDictation = (): void => {
+    if (dictation.state.peek() === 'idle') startDictation();
+    else finishDictation();
+  };
+  onCleanup(() => {
+    cancelDictation();
+  });
+  /** raccourci : appui bref = bascule, maintenu = parler tant qu'il est enfoncé */
+  let keyDown = 0;
+  let startedByKey = false;
+  const dictationKeyPressed = (): void => {
+    if (keyDown !== 0) return; // répétition automatique
+    keyDown = GLib.get_monotonic_time();
+    startedByKey = dictation.state.peek() === 'idle';
+    toggleDictation();
+  };
+  const dictationKeyReleased = (): void => {
+    if (keyDown === 0) return;
+    const held = (GLib.get_monotonic_time() - keyDown) / 1000;
+    keyDown = 0;
+    if (startedByKey && held > HOLD_MS) finishDictation();
+  };
+
   /** Complétion « / » et « @ », historique, suppression des mentions d'un bloc. */
   const setupTextView = (view: Gtk.TextView): void => {
     const popover = new CompletionPopover(view);
@@ -678,11 +809,18 @@ export function Composer(props: ComposerProps): JSX.Element {
                 cycleVariant();
                 return true;
               }
+              if (ctrl && !shift && (keyval === Gdk.KEY_m || keyval === Gdk.KEY_M)) {
+                dictationKeyPressed();
+                return true;
+              }
               if (enter && (SEND_WITH_CTRL ? ctrl : !shift && !ctrl)) {
                 submit();
                 return true;
               }
               return false;
+            });
+            keys.connect('key-released', (_c: Gtk.EventControllerKey, keyval: number) => {
+              if (keyval === Gdk.KEY_m || keyval === Gdk.KEY_M || keyval === Gdk.KEY_Control_L || keyval === Gdk.KEY_Control_R) dictationKeyReleased();
             });
             self.add_controller(keys);
             setupTextView(self);
@@ -714,8 +852,17 @@ export function Composer(props: ComposerProps): JSX.Element {
           {modelDD}
           {variantDD}
           <ContextGauge context={props.context} limits={limits} />
-          <Gtk.Label valign={Gtk.Align.CENTER} cssClasses={['dim-label', 'caption']} label={hint} />
+          <Gtk.Label valign={Gtk.Align.CENTER} cssClasses={['dim-label', 'caption']} label={hint} visible={dictationLabel((l) => l === '')} />
+          <Gtk.Label valign={Gtk.Align.CENTER} cssClasses={['caption']} label={dictationLabel} visible={dictationLabel((l) => l !== '')} />
         </Adw.WrapBox>
+        <Gtk.Button
+          iconName={dictation.state((st) => (st === 'transcribing' ? 'content-loading-symbolic' : 'audio-input-microphone-symbolic'))}
+          valign={Gtk.Align.END}
+          tooltipText={dictation.state((st) => (st === 'recording' ? `Terminer la dictée (${DICTATION_KEY})` : st === 'transcribing' ? 'Transcription…' : `Dicter (${DICTATION_KEY} : appui bref pour commencer et finir, ou maintenu pendant que vous parlez)`))}
+          cssClasses={dictation.state((st) => (st === 'recording' ? ['circular', 'flat', 'dictating'] : ['circular', 'flat']))}
+          sensitive={dictation.state((st) => st !== 'transcribing')}
+          onClicked={toggleDictation}
+        />
         <Gtk.Button
           iconName="media-playback-stop-symbolic"
           valign={Gtk.Align.END}

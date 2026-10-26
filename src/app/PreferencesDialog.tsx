@@ -1,5 +1,7 @@
-// Préférences : terminal et modèle par défaut (enregistrés dans settings.json, cf. src/shared/settings.ts).
+// Préférences : terminal, modèle par défaut, voix (enregistrés dans settings.json, cf. src/shared/settings.ts).
 import Adw from 'gi://Adw?version=1';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import type { Providers } from '../shared/schemas.ts';
 import { createRoot } from 'gnim';
@@ -8,6 +10,12 @@ import { MarkdownView } from './Markdown.tsx';
 import { automaticIde, installedIdes } from './Ide.ts';
 import { automaticTerminal, installedTerminals } from '../shared/terminal.ts';
 import { integratedAvailable } from './TerminalPanel.tsx';
+import { piperModel, piperReady } from '../shared/speaker.ts';
+import { openFolder } from './OpenFolder.ts';
+import { prettyPath } from '../shared/store.ts';
+import { downloads, findTool, voiceDir, OPENAI_VOICES, PIPER_VOICES, WHISPER_MODELS, whisperModel, whisperReady } from '../shared/voice.ts';
+import { errorMessage } from '../shared/errors.ts';
+import { ReadButton } from './Voice.ts';
 
 const AUTO = 'auto';
 const CUSTOM = 'custom';
@@ -294,6 +302,160 @@ function ideGroup(settings: Settings): Adw.PreferencesGroup {
   return group;
 }
 
+/** « 1,6 Go », « 490 Mo » */
+const fmtSize = (bytes: number): string => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1).replace('.', ',')} Go` : `${Math.round(bytes / 1e6)} Mo`);
+
+/**
+ * Ligne d'un modèle à télécharger (whisper, voix Piper) : état dans le sous-titre, barre
+ * d'avancement, bouton « Télécharger ». Le téléchargement continue si la fenêtre est fermée.
+ */
+function downloadable(row: Adw.ComboRow, file: () => string, fetch: () => Promise<void>): () => void {
+  const bar = new Gtk.ProgressBar({ valign: Gtk.Align.CENTER, widthRequest: 80, hexpand: false, visible: false });
+  const button = new Gtk.Button({ iconName: 'folder-download-symbolic', tooltipText: 'Télécharger', valign: Gtk.Align.CENTER, cssClasses: ['flat', 'circular'] });
+  row.add_suffix(bar);
+  row.add_suffix(button);
+  let failure = '';
+  const update = (): void => {
+    const path = file();
+    const p = downloads.peek().get(path);
+    bar.visible = p !== undefined;
+    if (p !== undefined) {
+      if (p.total === null) bar.pulse();
+      else bar.fraction = p.received / p.total;
+      row.subtitle = p.total === null ? 'Téléchargement…' : `Téléchargement… ${Math.floor((100 * p.received) / p.total)} % · ${fmtSize(p.received)} / ${fmtSize(p.total)}`;
+      button.visible = false;
+      return;
+    }
+    const info = GLib.file_test(path, GLib.FileTest.EXISTS) ? Gio.File.new_for_path(path).query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null) : null;
+    button.visible = info === null;
+    if (info === null) row.subtitle = failure === '' ? 'À télécharger' : `Échec du téléchargement : ${failure}`;
+    else row.subtitle = `Sur cette machine · ${fmtSize(info.get_size())}`;
+  };
+  const start = (): void => {
+    failure = '';
+    fetch()
+      .catch((e: unknown) => {
+        failure = errorMessage(e);
+      })
+      .finally(update);
+    update();
+  };
+  button.connect('clicked', start);
+  const unsubscribe = downloads.subscribe(update);
+  row.connect('destroy', unsubscribe);
+  update();
+  return start;
+}
+
+/** « · outil introuvable » si un programme manque */
+const missing = (tool: string, pkg: string): string => (findTool(tool) === null ? `${tool} introuvable (${pkg})` : '');
+
+/** Page « Voix » : dictée et lecture à voix haute. */
+function voicePage(settings: Settings): Adw.PreferencesPage {
+  const page = new Adw.PreferencesPage({ title: 'Voix', iconName: 'audio-input-microphone-symbolic' });
+  const v = settings.data.peek().voice;
+
+  // --- dictée
+  const stt = new Adw.PreferencesGroup({ title: 'Dictée', description: 'Bouton micro du champ de saisie, ou Ctrl+M (appui bref : commencer / finir ; maintenu : parler tant qu’il est enfoncé). Le texte transcrit est inséré dans le champ, modifiable avant l’envoi.' });
+  const sttIds = ['whisper', 'openai'] as const;
+  const sttRow = comboRow('Moteur', '', false);
+  setItems(sttRow, ['whisper.cpp (local)', 'OpenAI (en ligne)'], sttIds.indexOf(v.stt));
+  const sttSubtitle = (id: (typeof sttIds)[number]): string => (id === 'whisper' ? missing('whisper-cli', 'paquet whisper-cpp') || 'Hors ligne, sur cette machine' : 'Clé API OpenAI requise (ci-dessous)');
+  sttRow.subtitle = sttSubtitle(v.stt);
+  const modelRow = comboRow('Modèle whisper', '', false);
+  setItems(modelRow, WHISPER_MODELS.map((m) => m.label), WHISPER_MODELS.findIndex((m) => m.id === v.whisperModel));
+  modelRow.visible = v.stt === 'whisper';
+  sttRow.connect('notify::selected', () => {
+    const id = sttIds[sttRow.selected] ?? 'whisper';
+    settings.setVoice({ stt: id });
+    modelRow.visible = id === 'whisper';
+    sttRow.subtitle = sttSubtitle(id);
+  });
+  const selectedModel = (): (typeof WHISPER_MODELS)[number]['id'] => WHISPER_MODELS[modelRow.selected]?.id ?? 'small';
+  // modèle choisi : téléchargé tout de suite, pas à la première dictée
+  const fetchModel = downloadable(modelRow, () => whisperModel({ whisperModel: selectedModel() }), () => whisperReady({ whisperModel: selectedModel() }, () => {}));
+  modelRow.connect('notify::selected', () => {
+    settings.setVoice({ whisperModel: selectedModel() });
+    fetchModel();
+  });
+  const autoSend = new Adw.SwitchRow({ title: 'Envoyer automatiquement', subtitle: 'Envoyer le prompt dès la fin de la dictée, sans relecture', active: v.autoSend });
+  autoSend.connect('notify::active', () => settings.setVoice({ autoSend: autoSend.active }));
+  stt.add(sttRow);
+  stt.add(modelRow);
+  stt.add(autoSend);
+  page.add(stt);
+
+  // --- lecture
+  const tts = new Adw.PreferencesGroup({ title: 'Lecture à voix haute', description: 'Bouton « Lire » au survol d’une réponse ou d’une réflexion ; Échap arrête la lecture. Le code, les liens et la mise en forme ne sont pas lus.' });
+  const ttsIds = ['piper', 'speechd', 'openai'] as const;
+  const ttsRow = comboRow('Moteur', '', false);
+  setItems(ttsRow, ['Piper (local)', 'Voix du système', 'OpenAI (en ligne)'], ttsIds.indexOf(v.tts));
+  const ttsSubtitle = (id: (typeof ttsIds)[number]): string =>
+    id === 'piper' ? missing('piper', 'paquet piper-tts') || 'Voix naturelles, hors ligne' : id === 'speechd' ? missing('spd-say', 'speech-dispatcher') || 'speech-dispatcher, voix robotique' : 'Clé API OpenAI requise (ci-dessous)';
+  ttsRow.subtitle = ttsSubtitle(v.tts);
+  const piperVoices = [...new Set([...PIPER_VOICES, v.piperVoice])];
+  const piperRow = comboRow('Voix Piper', '', false);
+  setItems(piperRow, piperVoices, piperVoices.indexOf(v.piperVoice));
+  const openaiVoices = [...new Set([...OPENAI_VOICES, v.openaiVoice])];
+  const openaiRow = comboRow('Voix OpenAI', '', false);
+  setItems(openaiRow, openaiVoices, openaiVoices.indexOf(v.openaiVoice));
+  const sync = (id: (typeof ttsIds)[number]): void => {
+    piperRow.visible = id === 'piper';
+    openaiRow.visible = id === 'openai';
+  };
+  sync(v.tts);
+  ttsRow.connect('notify::selected', () => {
+    const id = ttsIds[ttsRow.selected] ?? 'piper';
+    settings.setVoice({ tts: id });
+    ttsRow.subtitle = ttsSubtitle(id);
+    sync(id);
+  });
+  const selectedVoice = (): string => piperVoices[piperRow.selected] ?? 'fr_FR-siwis-medium';
+  const fetchVoice = downloadable(piperRow, () => piperModel(selectedVoice()), () => piperReady(selectedVoice(), () => {}));
+  piperRow.connect('notify::selected', () => {
+    settings.setVoice({ piperVoice: selectedVoice() });
+    fetchVoice();
+  });
+  openaiRow.connect('notify::selected', () => settings.setVoice({ openaiVoice: openaiVoices[openaiRow.selected] ?? 'alloy' }));
+  const rate = new Adw.SpinRow({ title: 'Vitesse', subtitle: '1 = normale', digits: 2, adjustment: new Gtk.Adjustment({ lower: 0.5, upper: 2, stepIncrement: 0.05, pageIncrement: 0.25, value: v.rate }) });
+  rate.connect('notify::value', () => settings.setVoice({ rate: Math.round(rate.value * 100) / 100 }));
+  const test = new Adw.ActionRow({ title: 'Essayer', subtitle: 'Lit une phrase avec ces réglages' });
+  test.add_suffix(ReadButton(() => 'Bonjour ! Voici la voix qui lira les réponses de l’agent.', 'Essayer la voix', ['flat', 'circular']));
+  tts.add(ttsRow);
+  tts.add(piperRow);
+  tts.add(openaiRow);
+  tts.add(rate);
+  tts.add(test);
+  page.add(tts);
+
+  // --- commun
+  const common = new Adw.PreferencesGroup({ title: 'Langue et compte' });
+  const lang = new Adw.EntryRow({ title: 'Langue (code ISO, ex. fr, en)', text: v.language });
+  lang.connect('changed', () => {
+    const code = lang.text.trim().toLowerCase();
+    if (/^[a-z]{2,3}$/u.test(code)) settings.setVoice({ language: code });
+  });
+  const key = new Adw.PasswordEntryRow({ title: 'Clé API OpenAI', text: v.openaiKey ?? '' });
+  key.connect('changed', () => settings.setVoice({ openaiKey: key.text.trim() }));
+  const keyHint = new Adw.ActionRow({ title: 'Clé enregistrée dans les réglages (~/.config/opencode-gnome/settings.json, lisible par vous seul) ; vide : variable OPENAI_API_KEY', cssClasses: ['dim-label'] });
+  // modèles téléchargés : ménage à la main (un modèle supprimé est retéléchargé s'il est rechoisi)
+  const folder = new Adw.ActionRow({ title: 'Modèles téléchargés', subtitle: prettyPath(voiceDir()) });
+  const open = new Gtk.Button({ iconName: 'folder-open-symbolic', tooltipText: 'Ouvrir le dossier des modèles', valign: Gtk.Align.CENTER, cssClasses: ['flat', 'circular'] });
+  open.connect('clicked', () => {
+    GLib.mkdir_with_parents(voiceDir(), 0o755);
+    openFolder(open, voiceDir(), (m) => {
+      folder.subtitle = m;
+    });
+  });
+  folder.add_suffix(open);
+  common.add(folder);
+  common.add(lang);
+  common.add(key);
+  common.add(keyHint);
+  page.add(common);
+  return page;
+}
+
 export function openPreferences(parent: Gtk.Widget, settings: Settings, providers: Promise<Providers>): void {
   const page = new Adw.PreferencesPage({ title: 'Général', iconName: 'preferences-system-symbolic' });
   page.add(appearanceGroup(settings));
@@ -304,5 +466,6 @@ export function openPreferences(parent: Gtk.Widget, settings: Settings, provider
   const dialog = new Adw.PreferencesDialog({ title: 'Préférences', searchEnabled: false });
   dialog.add(page);
   dialog.add(markdownPage(settings));
+  dialog.add(voicePage(settings));
   dialog.present(parent);
 }

@@ -14,6 +14,7 @@ import { readInfo, type ReadInfo } from '../shared/toolread.ts';
 import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { openFile } from './OpenFolder.ts';
+import { ReadButton } from './Voice.ts';
 import { MarkdownView } from './Markdown.tsx';
 import { AnsweredQuestions, PermissionCard, QuestionCard, type RequestActions } from './Requests.tsx';
 import { todosOfCall, TodoRows, todoSummary } from './TodoPanel.tsx';
@@ -573,9 +574,14 @@ function throttled(source: Accessor<string>): Accessor<string> {
  * Message en markdown, sélectionnable d'un bloc (un seul TextView), avec un bouton « Copier »
  * (markdown source) qui apparaît au survol.
  */
-function Copyable({ text: source, css, onFork }: { text: Accessor<string>; css: string; onFork?: (() => void) | undefined }): JSX.Element {
+function Copyable({ text: source, css, onFork, readable = false }: { text: Accessor<string>; css: string; onFork?: (() => void) | undefined; readable?: boolean }): JSX.Element {
   return (
     <Gtk.Overlay cssClasses={['copyable', css]}>
+      {readable ? (
+        <Gtk.Box $type="overlay" halign={Gtk.Align.END} valign={Gtk.Align.START} marginEnd={36}>
+          {ReadButton(() => source.peek(), 'Lire à voix haute', ['flat', 'circular', 'copy-button'])}
+        </Gtk.Box>
+      ) : null}
       {onFork === undefined ? null : (
         <Gtk.Button
           $type="overlay"
@@ -637,15 +643,20 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
       widget = <TurnFooter turn={block.turn} />;
       break;
     case 'text':
-      widget = <Copyable text={text(block.part)} css="assistant-message" />;
+      widget = <Copyable text={text(block.part)} css="assistant-message" readable />;
       break;
     case 'reasoning':
       widget = (
-        <Gtk.Expander label={block.part(reasoningLabel)} cssClasses={['reasoning']}>
-          <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
-            <With value={throttled(text(block.part))}>{(t: string) => MarkdownView({ text: t })}</With>
+        <Gtk.Overlay cssClasses={['copyable']}>
+          <Gtk.Expander label={block.part(reasoningLabel)} cssClasses={['reasoning']}>
+            <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
+              <With value={throttled(text(block.part))}>{(t: string) => MarkdownView({ text: t })}</With>
+            </Gtk.Box>
+          </Gtk.Expander>
+          <Gtk.Box $type="overlay" halign={Gtk.Align.END} valign={Gtk.Align.START}>
+            {ReadButton(() => block.part.peek().text ?? '', 'Lire la réflexion à voix haute', ['flat', 'circular', 'copy-button'])}
           </Gtk.Box>
-        </Gtk.Expander>
+        </Gtk.Overlay>
       );
       break;
     case 'tool':

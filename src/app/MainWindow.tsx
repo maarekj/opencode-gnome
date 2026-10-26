@@ -18,6 +18,7 @@ import { type TerminalContext } from './TerminalBar.tsx';
 import { TerminalDock } from './TerminalPanel.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { openSearch } from './SearchDialog.ts';
+import { initVoice, escapeStopsVoice } from './Voice.ts';
 import { SearchIndex } from '../shared/search.ts';
 import { descendantsOf } from '../shared/projecttree.ts';
 import { SessionsPage, type Actions, type ProjectTasksContext } from './SessionsPage.tsx';
@@ -592,6 +593,9 @@ export function MainWindow({
         // retour sur la fenêtre : la session affichée est vue
         win = self;
         self.connect('notify::is-active', markSeen);
+        // voix : messages (téléchargements, erreurs) dans cette fenêtre ; Échap arrête la lecture
+        initVoice(settings, toast);
+        escapeStopsVoice(self);
         // Ctrl+Maj+J : terminaux intégrés (capturé avant le terminal ; Ctrl+J reste un saut de ligne pour lui)
         const keys = new Gtk.ShortcutController({ scope: Gtk.ShortcutScope.GLOBAL, propagationPhase: Gtk.PropagationPhase.CAPTURE });
         keys.add_shortcut(

@@ -9,6 +9,7 @@ import { OpencodeClient } from '../shared/client.ts';
 import { serverUrl } from '../shared/config.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { Settings } from '../shared/settings.ts';
+import { cleanVoiceTemp, initVoice } from './Voice.ts';
 import { Store } from '../shared/store.ts';
 import { repoRoot } from '../shared/help.ts';
 import { applyInputMethod } from './inputMethod.ts';
@@ -33,6 +34,8 @@ const app = new Adw.Application({ applicationId: APP_ID, flags: Gio.ApplicationF
 Gtk.Window.set_default_icon_name(APP_ID);
 const store = new Store(new OpencodeClient(serverUrl()));
 const settings = new Settings();
+initVoice(settings);
+cleanVoiceTemp();
 let api: WindowApi | null = null;
 /** tâches planifiées : suivi des fichiers (créé au démarrage) */
 let tasks: TasksMonitor | null = null;

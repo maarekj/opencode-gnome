@@ -36,6 +36,30 @@ export const MarkdownStyle = z.object({
 export type MarkdownStyle = z.output<typeof MarkdownStyle>;
 export const DEFAULT_MARKDOWN_STYLE: MarkdownStyle = { font: 'system', lineSpacing: 2, paragraphSpacing: 8, colors: 'sober' };
 
+/** Voix : dictée (STT) et lecture à voix haute (TTS). */
+export const VoiceSettings = z.object({
+  /** moteur de dictée : whisper.cpp local ou API OpenAI */
+  stt: z.prefault(z.enum(['whisper', 'openai']), 'whisper'),
+  /** modèle whisper.cpp (téléchargé au premier usage) */
+  whisperModel: z.prefault(z.enum(['base', 'small', 'medium', 'large-v3-turbo']), 'small'),
+  /** moteur de lecture : Piper local, speech-dispatcher (voix du système) ou API OpenAI */
+  tts: z.prefault(z.enum(['piper', 'speechd', 'openai']), 'piper'),
+  /** voix Piper (identifiant rhasspy/piper-voices, téléchargée au premier usage) */
+  piperVoice: z.prefault(z.string(), 'fr_FR-siwis-medium'),
+  /** voix OpenAI */
+  openaiVoice: z.prefault(z.string(), 'alloy'),
+  /** langue (code ISO 639-1) */
+  language: z.prefault(z.string(), 'fr'),
+  /** vitesse de lecture (1 = normale) */
+  rate: z.prefault(z.number(), 1),
+  /** envoyer le prompt dès la fin de la dictée */
+  autoSend: z.prefault(z.boolean(), false),
+  /** clé API OpenAI ; absente = variable OPENAI_API_KEY */
+  openaiKey: z.optional(z.string()),
+});
+export type VoiceSettings = z.output<typeof VoiceSettings>;
+export const DEFAULT_VOICE: VoiceSettings = { stt: 'whisper', whisperModel: 'small', tts: 'piper', piperVoice: 'fr_FR-siwis-medium', openaiVoice: 'alloy', language: 'fr', rate: 1, autoSend: false };
+
 /** Lien web épinglé d'un projet ; l'adresse peut contenir des variables ($PORT_WEB…). */
 export const ProjectLink = z.object({
   id: z.string(),
@@ -95,6 +119,8 @@ export const SettingsData = z.object({
   terminalTheme: z.prefault(z.enum(['system', 'light', 'dark']), 'system'),
   /** hauteur du panneau des terminaux intégrés, en px */
   terminalPanelHeight: z.prefault(z.number(), 300),
+  /** dictée et lecture à voix haute */
+  voice: z.prefault(VoiceSettings, DEFAULT_VOICE),
   /** modèle par défaut des sessions sans modèle (`fournisseur/modèle`) ; absent = automatique */
   defaultModel: z.optional(z.string()),
   /** niveau de raisonnement par défaut associé au modèle par défaut */
@@ -103,7 +129,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -192,6 +218,8 @@ export class Settings {
         this.#written = JSON.stringify(next);
         GLib.mkdir_with_parents(GLib.path_get_dirname(this.#path), 0o700);
         GLib.file_set_contents(this.#path, encoder.encode(`${JSON.stringify(next, null, 2)}\n`));
+        // peut contenir une clé API (voix) : lisible par l'utilisateur seul
+        GLib.chmod(this.#path, 0o600);
       });
     } catch (e) {
       console.error(`réglages non enregistrés : ${String(e)}`);
@@ -268,6 +296,14 @@ export class Settings {
     this.update((d) => {
       const { [project]: _old, ...rest } = d.ides;
       return { ...d, ides: id === undefined ? rest : { ...rest, [project]: id } };
+    });
+  }
+
+  /** Modifie les réglages de la voix (`openaiKey: undefined` : clé retirée). */
+  setVoice(patch: Partial<VoiceSettings>): void {
+    this.update((d) => {
+      const { openaiKey, ...merged } = { ...d.voice, ...patch };
+      return { ...d, voice: openaiKey === undefined || openaiKey === '' ? merged : { ...merged, openaiKey } };
     });
   }
 

@@ -45,6 +45,9 @@ in
     pkgs.gtksourceview5 # vue de code (diffs : coloration syntaxique)
     pkgs.vte-gtk4 # terminal intégré (Vte-3.91)
     pkgs.libgda6 # index de recherche des conversations (SQLite FTS5, Gda-6.0)
+    pkgs.whisper-cpp # dictée locale (whisper-cli ; modèle téléchargé au premier usage)
+    pkgs.piper-tts # lecture à voix haute locale (piper ; voix téléchargée au premier usage)
+    pkgs.pipewire # pw-record / pw-play : micro et lecture audio
     pkgs.glib # gdbus, glib-compile-schemas, glib-compile-resources
     pkgs.gobject-introspection
     pkgs.curl # spikes / debug de l'API opencode
