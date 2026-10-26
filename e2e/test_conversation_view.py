@@ -21,8 +21,22 @@ def test_markdown_et_reflexion(run_app):
 def test_edit_avec_diff_et_ouverture_du_fichier(run_app):
     _, app = run_app(conv(), '--session', 'ses_c')
     app.find('label', '+1')
-    app.click('button', 'Ouvrir le fichier')
+    # dernier bouton : celui de l'edit (les lectures qui le précèdent ont aussi le leur)
+    app.all('button', 'Ouvrir le fichier')[-1].doActionNamed('click')
     assert app.logged('FICHIER', FILE)
+
+
+def test_read_plage_ouverture_et_contenu(run_app):
+    # conversation affichée depuis le haut : les lectures sont à l'écran (dépliées par un vrai clic)
+    _, app = run_app(conv(), '--session', 'ses_c', env={'OPENCODE_GNOME_TEST_SCROLL': 'top'})
+    # fichier lu en entier (metadata.display) et lecture partielle (sortie brute, offset / limit)
+    app.find('label', '2 lignes')
+    app.find('label', 'lignes 120–159 sur 300')
+    app.all('button', 'Ouvrir le fichier')[0].doActionNamed('click')
+    assert app.logged('FICHIER', FILE)
+    # déplié : contenu renuméroté (« 120  … » et non « 120: … »), sans l'enveloppe <path>/<content>
+    app.click('label', 'src/server.ts')
+    assert app.text_visible('120  export function listen()')
 
 
 def test_copier_un_message(run_app):

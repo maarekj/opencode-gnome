@@ -92,6 +92,54 @@
       "sessionID": "ses_c"
      },
      {
+      "id": "prt_002b",
+      "type": "tool",
+      "tool": "read",
+      "callID": "call_r1",
+      "state": {
+       "status": "completed",
+       "input": {
+        "filePath": "/tmp/opencode-fake/conv/src/app.ts"
+       },
+       "metadata": {
+        "preview": "const port = 80;",
+        "truncated": false,
+        "display": {
+         "type": "file",
+         "path": "/tmp/opencode-fake/conv/src/app.ts",
+         "text": "const port = 80;\nconsole.log(port);",
+         "lineStart": 1,
+         "lineEnd": 2,
+         "totalLines": 2,
+         "truncated": false
+        }
+       },
+       "output": "<path>/tmp/opencode-fake/conv/src/app.ts</path>\n<type>file</type>\n<content>\n1: const port = 80;\n2: console.log(port);\n\n(End of file - total 2 lines)\n</content>",
+       "title": "src/app.ts"
+      },
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     },
+     {
+      "id": "prt_002c",
+      "type": "tool",
+      "tool": "read",
+      "callID": "call_r2",
+      "state": {
+       "status": "completed",
+       "input": {
+        "filePath": "/tmp/opencode-fake/conv/src/server.ts",
+        "offset": 120,
+        "limit": 40
+       },
+       "metadata": {},
+       "output": "<path>/tmp/opencode-fake/conv/src/server.ts</path>\n<type>file</type>\n<content>\n120: export function listen() {\n121:   return port;\n\n(Showing lines 120-159 of 300. Use offset=160 to continue.)\n</content>",
+       "title": "src/server.ts"
+      },
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     },
+     {
       "id": "prt_003",
       "type": "tool",
       "tool": "edit",

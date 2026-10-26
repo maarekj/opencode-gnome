@@ -10,6 +10,7 @@ import type { Activity } from '../shared/store.ts';
 import { AttachmentView } from './Attachments.tsx';
 import { esc, fmtDuration, fmtFullDate, fmtStamp } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../shared/schemas.ts';
+import { readInfo, type ReadInfo } from '../shared/toolread.ts';
 import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { openFile } from './OpenFolder.ts';
@@ -258,6 +259,47 @@ function EditToolLine({ part: p, patch, open }: { part: Part; patch: string; ope
 }
 
 /**
+ * Appel `read` : chemin, plage lue et bouton pour ouvrir le fichier ; déplié, le contenu lu avec
+ * ses numéros de ligne, construit à la demande.
+ */
+function ReadToolLine({ part: p, info, open }: { part: Part; info: ReadInfo; open: Unfold }): JSX.Element {
+  const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, marginTop: 6, marginStart: 28 });
+  let built = false;
+  const build = (): void => {
+    if (built) return;
+    built = true;
+    const text = info.text === '' ? asText(p.state?.output) : info.text;
+    body.append(new Gtk.Label({ label: truncate(text), xalign: 0, selectable: true, wrap: true, wrapMode: Pango.WrapMode.CHAR, cssClasses: ['monospace', 'tool-output'] }));
+  };
+  if (open.value) build();
+  return (
+    <Gtk.Expander
+      expanded={open.value}
+      onNotifyExpanded={(self: Gtk.Expander) => {
+        open.value = self.expanded;
+        if (self.expanded) build();
+      }}
+    >
+      <Gtk.Box $type="label" spacing={8}>
+        <StatusIcon status={p.state?.status ?? 'pending'} />
+        <Gtk.Label label="read" cssClasses={['heading']} />
+        <Gtk.Label label={toolSummary('read', p.state)} ellipsize={Pango.EllipsizeMode.MIDDLE} xalign={0} cssClasses={['dim-label', 'monospace']} />
+        <Gtk.Label label={info.range} visible={info.range !== ''} cssClasses={['caption', 'dim-label']} />
+        <Gtk.Box hexpand />
+        <Gtk.Button
+          iconName={info.directory ? 'folder-open-symbolic' : 'document-open-symbolic'}
+          tooltipText={info.directory ? 'Ouvrir le dossier' : 'Ouvrir le fichier'}
+          valign={Gtk.Align.CENTER}
+          cssClasses={['flat', 'circular', 'open-file']}
+          onClicked={(self: Gtk.Button) => openFile(self, info.path)}
+        />
+      </Gtk.Box>
+      {body}
+    </Gtk.Expander>
+  );
+}
+
+/**
  * État déplié d'un appel d'outil, gardé par le bloc : la ligne est reconstruite à chaque mise à
  * jour de l'appel (statut, sortie en direct) sans se replier (#73).
  */
@@ -270,6 +312,10 @@ function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold
   if (!generic && (p.tool === 'edit' || p.tool === 'write') && p.state?.status !== 'error') {
     const patch = editPatch(p);
     if (patch !== null) return <EditToolLine part={p} patch={patch} open={open} />;
+  }
+  if (!generic && p.tool === 'read' && p.state?.status !== 'error') {
+    const info = readInfo(p.state);
+    if (info !== null) return <ReadToolLine part={p} info={info} open={open} />;
   }
   const waiting = p.tool === 'question' && (p.state?.status === 'running' || p.state?.status === 'pending');
   return (
