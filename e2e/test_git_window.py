@@ -186,11 +186,25 @@ def review_data(repo: Path) -> dict:
     return data
 
 
-def comment_all(app, text: str) -> None:
-    """Sélectionne tout le diff affiché et le commente."""
-    view = app.find('text', None, within=app.find('frame', 'Git — depot'))
-    app._point(view, 'b1c')
-    app.key('<Control>a')
+def diff_view(app, contains: str):
+    """Vue du diff affiché (zone de texte contenant `contains`)."""
+
+    def check():
+        for n in app.find('frame', 'Git — depot').findChildren(lambda n: n.roleName == 'text' and n.showing, recursive=True):
+            try:
+                if contains in (n.text or ''):
+                    return n
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    return wait_until(check, 10, f'diff contenant « {contains} »')
+
+
+def comment_all(app, text: str, contains: str) -> None:
+    """Sélectionne tout le diff affiché (celui qui contient `contains`) et le commente."""
+    view = diff_view(app, contains)
+    view.queryText().addSelection(0, view.queryText().characterCount)
     app.click('button', 'Commenter la sélection')
     app.dialog()
     app.type(text)
@@ -201,11 +215,10 @@ def test_revue_commentee_envoyee_a_l_agent(run_app, repo):
     fake, app = run_app(review_data(repo), '--session', 'ses_g')
     app.click('button', 'Git : modifications, journal, branches')
     app.find('list item', 'Modifié : app.txt')
-    comment_all(app, 'Pourquoi non commité ?')
+    comment_all(app, 'Pourquoi non commité ?', 'non commité')
     app.click('list item', 'Modifié : lib.txt')
     assert app.text_visible('ajout dans lib')
-    comment_all(app, 'Renommer cette ligne')
-    app.find('toggle button', 'Revue commentée')
+    comment_all(app, 'Renommer cette ligne', 'ajout dans lib')
     assert app.text_visible('Revue · 2 commentaires')
     app.click('button', 'Envoyer à l’agent')
     body = fake.wait_request('POST', '/session/ses_g/prompt_async')['body']
@@ -222,7 +235,7 @@ def test_revue_brouillon_conserve(run_app, repo):
     _, app = run_app(review_data(repo), '--session', 'ses_g')
     app.click('button', 'Git : modifications, journal, branches')
     app.find('list item', 'Modifié : app.txt')
-    comment_all(app, 'À revoir')
+    comment_all(app, 'À revoir', 'non commité')
     app.key('Escape')
     wait_until(lambda: not app.has('frame', 'Git — depot'), 5, 'fenêtre fermée')
     app.click('button', 'Git : modifications, journal, branches')

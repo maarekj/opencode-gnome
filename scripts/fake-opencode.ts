@@ -78,6 +78,34 @@ const DEFAULT_PROVIDERS = {
 
 // ---------------------------------------------------------------- état
 
+/** Champs de date (ms depuis 1970) des scénarios : session.time, message.info.time, part.time, state.time… */
+const TIME_KEYS = new Set(['created', 'updated', 'completed', 'start', 'end', 'archived', 'compacting']);
+/** En deçà : pas une date (ordres relatifs comme `created: 1`, laissés tels quels). */
+const EPOCH_MIN = 1_000_000_000_000;
+
+function eachDate(v: unknown, fn: (n: number) => number): unknown {
+  if (Array.isArray(v)) return v.map((x) => eachDate(x, fn));
+  if (typeof v !== 'object' || v === null) return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) out[k] = TIME_KEYS.has(k) && typeof x === 'number' && x >= EPOCH_MIN ? fn(x) : eachDate(x, fn);
+  return out;
+}
+
+/**
+ * Décale toutes les dates du scénario d'un même écart : la plus récente devient `now` moins une
+ * minute (les écarts entre dates, donc l'ordre et les durées affichées, sont conservés).
+ */
+export function shiftDates(scenario: Scenario, now: number): Scenario {
+  let max = 0;
+  eachDate(scenario, (n) => {
+    max = Math.max(max, n);
+    return n;
+  });
+  if (max === 0) return scenario;
+  const delta = now - 60_000 - max;
+  return z.parse(Scenario, eachDate(scenario, (n) => n + delta));
+}
+
 class State {
   scenario: Scenario = {};
   readonly sessions = new Map<string, Ses>();
@@ -90,7 +118,10 @@ class State {
   failOnce = new Set<string>();
   #seq = 0;
 
-  load(s: Scenario): void {
+  load(scenario: Scenario): void {
+    // dates du scénario recalées sur l'heure de lancement (#135) : l'app ignore l'activité des
+    // sessions mises à jour il y a plus de 24 h, un scénario daté vieillirait
+    const s = shiftDates(scenario, Date.now());
     this.scenario = s;
     this.sessions.clear();
     this.messages.clear();
