@@ -55,6 +55,8 @@ export function openSearch(parent: Gtk.Widget, o: SearchOptions): void {
   });
 
   const entry = new Gtk.SearchEntry({ placeholderText: 'Rechercher dans toutes les conversations…', hexpand: true });
+  // nom accessible (lecteurs d'écran, tests) : le texte d'aide n'est pas exposé
+  entry.update_property([Gtk.AccessibleProperty.LABEL], ['Rechercher dans toutes les conversations']);
   const projects = [...o.projects()].toSorted((a, b) => a.name.localeCompare(b.name));
   const projectKeys = [null, ...projects.map((p) => p.key)];
   const projectDD = Gtk.DropDown.new_from_strings(['Tous les projets', ...projects.map((p) => (projects.filter((q) => q.name === p.name).length > 1 ? `${p.name} (${prettyPath(p.path)})` : p.name))]);
