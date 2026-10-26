@@ -229,3 +229,50 @@ def test_revue_brouillon_conserve(run_app, repo):
     # rouvert : brouillon retrouvé, panneau affiché
     assert app.text_visible('Revue · 1 commentaire')
     assert app.text_visible('À revoir')
+
+
+def nested_diff() -> list:
+    def d(path, add, rem):
+        return {'file': path, 'status': 'modified', 'additions': add, 'deletions': rem, 'patch': f'diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,1 +1,1 @@\n-ancien {path}\n+nouveau {path}\n'}
+
+    return [d('src/app/main.ts', 3, 1), d('src/app/view.ts', 2, 0), d('src/shared/util.ts', 1, 1), d('README.md', 1, 0)]
+
+
+def test_arborescence_des_fichiers(run_app, repo):
+    data = data_for(repo)
+    data['vcsDiff'] = nested_diff()
+    _, app = run_app(data)
+    app.click('list item', 'depot')
+    app.click('button', 'Git : modifications, journal, branches, comparaison')
+    win = app.find('frame', 'Git — depot')
+    app.find('list item', 'Modifié : src/app/main.ts', within=win)
+    # bascule en arborescence : dossiers dépliables, choix mémorisé
+    app.click('radio button', 'Arborescence des dossiers', within=win)
+    app.find('list item', 'src/app/ — replier', within=win)
+    app.find('list item', 'src/shared/ — replier', within=win)
+    wait_until(lambda: app.settings().get('gitFilesTree') is True, 5, 'choix mémorisé')
+    # repli d'un dossier : ses fichiers disparaissent
+    app._point(app.find('list item', 'src/app/ — replier', within=win), 'b1c')
+    app.find('list item', 'src/app/ — déplier', within=win)
+    wait_until(lambda: not app.has('list item', 'Modifié : src/app/view.ts'), 5, 'fichiers du dossier masqués')
+    # rafraîchissement : le dossier reste replié (même s'il contient le fichier affiché)
+    app.click('button', 'Rafraîchir (F5)', within=win)
+    time.sleep(1)
+    app.find('list item', 'src/app/ — déplier', within=win)
+    # fichier choisi dans l'arborescence : son diff
+    app._point(app.find('list item', 'Modifié : src/shared/util.ts', within=win), 'b1c')
+    assert app.text_visible('nouveau src/shared/util.ts')
+    # retour à plat
+    app.click('radio button', 'Liste à plat', within=win)
+    app.find('list item', 'Modifié : src/app/view.ts', within=win)
+    wait_until(lambda: app.settings().get('gitFilesTree') is False, 5, 'choix mémorisé')
+
+
+def test_arborescence_memorisee(run_app, repo):
+    data = data_for(repo)
+    data['vcsDiff'] = nested_diff()
+    _, app = run_app(data, settings={'gitFilesTree': True})
+    app.click('list item', 'depot')
+    app.click('button', 'Git : modifications, journal, branches, comparaison')
+    win = app.find('frame', 'Git — depot')
+    app.find('list item', 'src/app/ — replier', within=win)

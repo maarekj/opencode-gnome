@@ -74,6 +74,8 @@ export const SettingsData = z.object({
   maxWidth: z.prefault(z.number(), 860),
   /** afficher les appels d'outils dans les conversations */
   showTools: z.prefault(z.boolean(), true),
+  /** fenêtre git : fichiers modifiés en arborescence de dossiers (sinon à plat) */
+  gitFilesTree: z.prefault(z.boolean(), false),
   /** notifications de bureau (session terminée, question, permission, erreur) */
   notifications: z.prefault(z.boolean(), true),
   /** son joué avec les notifications */
@@ -98,7 +100,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, terminals: {}, favorites: [], sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -296,6 +298,10 @@ export class Settings {
 
   setTerminalIntegrated(on: boolean): void {
     if (this.data.peek().terminalIntegrated !== on) this.update((d) => ({ ...d, terminalIntegrated: on }));
+  }
+
+  setGitFilesTree(tree: boolean): void {
+    if (this.data.peek().gitFilesTree !== tree) this.update((d) => ({ ...d, gitFilesTree: tree }));
   }
 
   setShowTools(show: boolean): void {

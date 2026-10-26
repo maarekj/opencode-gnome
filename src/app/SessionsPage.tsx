@@ -310,7 +310,7 @@ export function SessionsPage({
             onClicked={(self: Gtk.Button) => {
               const p = current.peek();
               if (p === null) return;
-              openGitWindow(self, { directory: p.path, title: p.name, load: () => store.client.gitDiff(p.path), review: reviewTarget(store, p.path, null, actions.openSession) });
+              openGitWindow(self, { directory: p.path, title: p.name, load: () => store.client.gitDiff(p.path), review: reviewTarget(store, p.path, null, actions.openSession), settings: terminals.settings });
             }}
           />
         </Adw.HeaderBar>

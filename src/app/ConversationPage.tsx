@@ -247,6 +247,7 @@ export function createConversationPage(opts: {
         load: () => client.gitDiff(dir()),
         changed: conversation.diffVersion,
         review: reviewTarget(store, projectPath.peek() ?? dir(), sessionID, opts.openSession),
+        settings,
       });
 
     /** affiche un message de la conversation (fourni par la vue) */

@@ -7,11 +7,13 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
-import type { Accessor } from 'gnim';
+import { createState, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtFullDate, fmtRelative } from '../shared/format.ts';
 import { gitChanges, gitCommit, gitFilePatch, gitLog, gitRefs, gitStatus, gitResolve, commitGraph, type GitCommit, type GitFileChange, type GitRef, type GraphEdge, type GraphRow } from '../shared/git.ts';
 import type { FileDiff } from '../shared/schemas.ts';
+import { fileTree, type TreeRow } from '../shared/filetree.ts';
+import type { Settings } from '../shared/settings.ts';
 import { prettyPath } from '../shared/store.ts';
 import { createDiffView } from './DiffView.ts';
 import { issuesTab } from './IssuesTab.tsx';
@@ -47,7 +49,20 @@ export interface GitSource {
   changed?: Accessor<number>;
   /** sessions où envoyer une revue commentée (sinon : commentaires possibles, envoi désactivé) */
   review?: ReviewTarget;
+  /** réglages (affichage à plat / en arborescence des fichiers, mémorisé) */
+  settings?: Settings;
 }
+
+/**
+ * Affichage des listes de fichiers : à plat ou en arborescence. Partagé par toutes les listes de
+ * toutes les fenêtres git, mémorisé dans les réglages.
+ */
+const [treeView, setTreeViewState] = createState(false);
+let treeSettings: Settings | null = null;
+const setTreeView = (tree: boolean): void => {
+  setTreeViewState(tree);
+  treeSettings?.setGitFilesTree(tree);
+};
 
 /** Commenter des lignes : contrôleur de la revue de la fenêtre et origine du diff affiché. */
 interface Commenting {
@@ -89,19 +104,35 @@ function paneHeader(title: Gtk.Label, subtitle: Gtk.Label, ...extra: Gtk.Widget[
 const headerTitle = (): Gtk.Label => new Gtk.Label({ xalign: 0, ellipsize: Pango.EllipsizeMode.MIDDLE, cssClasses: ['heading'] });
 const headerSubtitle = (): Gtk.Label => new Gtk.Label({ xalign: 0, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['dim-label', 'caption'] });
 
-function fileRow(file: GitFileChange): Gtk.ListBoxRow {
+/** Décompte des lignes ajoutées / retirées, en couleur. */
+const statMarkup = (add: number | null, del: number | null): string =>
+  add === null ? 'binaire' : `<span foreground="#26a269">+${add}</span> <span foreground="#c01c28">−${del ?? 0}</span>`;
+
+const INDENT = 16;
+
+/** Ligne d'un dossier de l'arborescence : flèche, nom, nombre de fichiers et lignes ; clic : replier / déplier. */
+function dirRow(row: Extract<TreeRow<GitFileChange>, { kind: 'dir' }>, open: boolean): Gtk.ListBoxRow {
+  const box = new Gtk.Box({ spacing: 8, marginTop: 4, marginBottom: 4, marginStart: 6 + row.depth * INDENT, marginEnd: 6 });
+  box.append(new Gtk.Image({ iconName: open ? 'pan-down-symbolic' : 'pan-end-symbolic', cssClasses: ['dim-label'] }));
+  box.append(new Gtk.Image({ iconName: open ? 'folder-open-symbolic' : 'folder-symbolic', cssClasses: ['dim-label'] }));
+  box.append(new Gtk.Label({ label: row.label, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.MIDDLE, cssClasses: ['heading'] }));
+  box.append(new Gtk.Label({ label: String(row.files), cssClasses: ['caption', 'dim-label', 'numeric'], tooltipText: plural(row.files, 'fichier') }));
+  box.append(new Gtk.Label({ label: statMarkup(row.additions, row.deletions), useMarkup: true, cssClasses: ['caption', 'numeric'] }));
+  return new Gtk.ListBoxRow({ child: box, selectable: false, activatable: true, tooltipText: `${row.path}/ — ${open ? 'replier' : 'déplier'}`, name: `dir:${row.path}` });
+}
+
+function fileRow(file: GitFileChange, depth: number | null = null): Gtk.ListBoxRow {
   const st = statusOf(file.status);
-  const dir = dirname(file.path);
-  const box = new Gtk.Box({ spacing: 10, marginTop: 6, marginBottom: 6, marginStart: 6, marginEnd: 6 });
+  // arborescence : le dossier est donné par l'indentation
+  const dir = depth === null ? dirname(file.path) : '';
+  const box = new Gtk.Box({ spacing: 10, marginTop: 6, marginBottom: 6, marginStart: 6 + (depth ?? 0) * INDENT + (depth === null ? 0 : 20), marginEnd: 6 });
   box.append(new Gtk.Image({ iconName: st.icon, cssClasses: [st.css] }));
   const names = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
   names.append(new Gtk.Label({ label: basename(file.path), xalign: 0, ellipsize: Pango.EllipsizeMode.MIDDLE }));
   const sub = file.from === undefined ? dir : `← ${file.from}`;
   if (sub !== '') names.append(new Gtk.Label({ label: sub, xalign: 0, ellipsize: Pango.EllipsizeMode.START, cssClasses: ['dim-label', 'caption'] }));
   box.append(names);
-  const stat =
-    file.additions === null ? 'binaire' : `<span foreground="#26a269">+${file.additions}</span> <span foreground="#c01c28">−${file.deletions ?? 0}</span>`;
-  box.append(new Gtk.Label({ label: stat, useMarkup: true, cssClasses: ['caption', 'numeric'] }));
+  box.append(new Gtk.Label({ label: statMarkup(file.additions, file.deletions), useMarkup: true, cssClasses: ['caption', 'numeric'] }));
   const tooltip = file.from === undefined ? `${st.label} : ${file.path}` : `${st.label} : ${file.from} → ${file.path}`;
   return new Gtk.ListBoxRow({ child: box, tooltipText: tooltip });
 }
@@ -119,6 +150,18 @@ function createFilesPane(commenting?: Commenting): {
   const list = new Gtk.ListBox({ cssClasses: ['navigation-sidebar'] });
   const listBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   listBox.append(list);
+  // à plat / arborescence (choix commun à toutes les listes)
+  const viewToggle = new Adw.ToggleGroup({ cssClasses: ['round'], halign: Gtk.Align.START, marginStart: 6, marginTop: 6, marginBottom: 2 });
+  viewToggle.add(new Adw.Toggle({ name: 'flat', iconName: 'view-list-symbolic', tooltip: 'Liste à plat' }));
+  viewToggle.add(new Adw.Toggle({ name: 'tree', iconName: 'folder-symbolic', tooltip: 'Arborescence des dossiers' }));
+  viewToggle.activeName = treeView.peek() ? 'tree' : 'flat';
+  viewToggle.connect('notify::active-name', () => {
+    const tree = viewToggle.activeName === 'tree';
+    if (tree !== treeView.peek()) setTreeView(tree);
+  });
+  const sidebar = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+  sidebar.append(viewToggle);
+  sidebar.append(new Gtk.ScrolledWindow({ child: listBox, hscrollbarPolicy: Gtk.PolicyType.NEVER, vexpand: true }));
   const diff = createDiffView();
   const title = headerTitle();
   const subtitle = headerSubtitle();
@@ -161,6 +204,10 @@ function createFilesPane(commenting?: Commenting): {
   right.append(stack);
 
   let files: readonly GitFileChange[] = [];
+  /** lignes affichées : fichier ou dossier (arborescence) */
+  let shown: ({ kind: 'file'; file: GitFileChange } | { kind: 'dir'; path: string })[] = [];
+  /** dossiers repliés (arborescence), conservés d'un rafraîchissement à l'autre */
+  const collapsed = new Set<string>();
   let patchOf: (f: GitFileChange) => Promise<string> = noPatch;
   let selected: string | null = null;
   let generation = 0;
@@ -202,31 +249,71 @@ function createFilesPane(commenting?: Commenting): {
 
   list.connect('row-selected', (_l: Gtk.ListBox, row: Gtk.ListBoxRow | null) => {
     if (row === null) return;
-    const file = files[row.get_index()];
-    if (file !== undefined && file.path !== selected) open(file);
+    const entry = shown[row.get_index()];
+    if (entry?.kind === 'file' && entry.file.path !== selected) open(entry.file);
   });
+  // dossier : replier / déplier
+  list.connect('row-activated', (_l: Gtk.ListBox, row: Gtk.ListBoxRow) => {
+    const entry = shown[row.get_index()];
+    if (entry?.kind !== 'dir') return;
+    if (collapsed.has(entry.path)) collapsed.delete(entry.path);
+    else collapsed.add(entry.path);
+    render();
+  });
+
+  /** Lignes de la liste (à plat ou en arborescence) ; le fichier affiché reste sélectionné. */
+  const render = (): void => {
+    clearList(list);
+    if (treeView.peek()) {
+      const rows = fileTree(files, collapsed);
+      shown = rows.map((r) => (r.kind === 'dir' ? { kind: 'dir', path: r.path } : { kind: 'file', file: r.file }));
+      for (const r of rows) list.append(r.kind === 'dir' ? dirRow(r, !collapsed.has(r.path)) : fileRow(r.file, r.depth));
+    } else {
+      shown = files.map((file) => ({ kind: 'file', file }));
+      for (const f of files) list.append(fileRow(f));
+    }
+    const index = shown.findIndex((e) => e.kind === 'file' && e.file.path === selected);
+    const row = index < 0 ? null : list.get_row_at_index(index);
+    if (row !== null) list.select_row(row);
+  };
+  const unsubscribeView = treeView.subscribe(() => {
+    viewToggle.activeName = treeView.peek() ? 'tree' : 'flat';
+    render();
+  });
+  list.connect('destroy', unsubscribeView);
+
+  /**
+   * Sélectionne le fichier `path`, ou le premier fichier. `unfold` : dossiers parents dépliés
+   * (fichier demandé ailleurs, ex. la revue) ; un rafraîchissement ne touche pas aux replis.
+   */
+  const selectFile = (path: string | null, unfold: boolean): GitFileChange | null => {
+    const file = files.find((f) => f.path === path) ?? (treeView.peek() ? (fileTree(files).find((r) => r.kind === 'file')?.file ?? null) : (files[0] ?? null));
+    if (file === null) return null;
+    if (unfold) for (const dir of collapsed) if (file.path.startsWith(`${dir}/`)) collapsed.delete(dir);
+    selected = file.path;
+    render();
+    return file;
+  };
 
   const show = (next: readonly GitFileChange[], patch: (f: GitFileChange) => Promise<string>, keep: string | null = null): void => {
     files = next;
     patchOf = patch;
     selected = null;
-    clearList(list);
-    for (const f of files) list.append(fileRow(f));
     // fichier demandé par la revue, sinon le fichier choisi s'il est toujours là, sinon le premier
-    const want = pending?.file ?? keep;
-    const index = Math.max(0, files.findIndex((f) => f.path === want));
-    const row = list.get_row_at_index(index);
-    if (row === null) {
+    const file = selectFile(pending?.file ?? keep, pending !== null);
+    if (file === null) {
+      clearList(list);
+      shown = [];
       open(null);
       stack.visibleChildName = 'empty';
     } else {
-      list.select_row(row);
-      open(files[index] ?? null);
+      selected = null;
+      open(file);
     }
   };
 
   const paned = new Gtk.Paned({
-    startChild: new Gtk.ScrolledWindow({ child: listBox, hscrollbarPolicy: Gtk.PolicyType.NEVER, widthRequest: 220 }),
+    startChild: sidebar,
     endChild: right,
     position: 300,
     shrinkStartChild: false,
@@ -235,15 +322,15 @@ function createFilesPane(commenting?: Commenting): {
   });
   const reveal = (file: string, end: DiffAnchor | undefined): void => {
     pending = { file, end };
-    const index = files.findIndex((f) => f.path === file);
-    if (index < 0) return; // liste pas encore chargée : appliqué par show()
+    if (!files.some((f) => f.path === file)) return; // liste pas encore chargée : appliqué par show()
     if (selected === file) {
       if (end !== undefined) diff.reveal(end);
       pending = null;
       return;
     }
-    const row = list.get_row_at_index(index);
-    if (row !== null) list.select_row(row);
+    const target = selectFile(file, true);
+    selected = null;
+    if (target !== null) open(target);
   };
   return { widget: paned, show, selected: () => selected, reveal };
 }
@@ -791,6 +878,16 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
     existing.stack.visibleChildName = tab;
     existing.window.present();
     return;
+  }
+  if (source.settings !== undefined && treeSettings === null) {
+    const settings = source.settings;
+    treeSettings = settings;
+    setTreeViewState(settings.data.peek().gitFilesTree);
+    // réglage modifié ailleurs (autre instance, fichier) : suivi
+    settings.data.subscribe(() => {
+      const tree = settings.data.peek().gitFilesTree;
+      if (tree !== treeView.peek()) setTreeViewState(tree);
+    });
   }
   const root = parent.get_root();
   const app = root instanceof Gtk.Window ? root.application : null;
