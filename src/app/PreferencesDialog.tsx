@@ -3,6 +3,7 @@ import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
+import { fullLabelFactory } from './ComboLabels.ts';
 import type { Providers } from '../shared/schemas.ts';
 import { createRoot } from 'gnim';
 import { DEFAULT_MARKDOWN_STYLE, type Settings, type Theme } from '../shared/settings.ts';
@@ -22,7 +23,7 @@ const CUSTOM = 'custom';
 
 /** ComboRow de chaînes : `ids` (valeurs enregistrées) et `labels` (affichés), recherche optionnelle. */
 function comboRow(title: string, subtitle: string, search: boolean): Adw.ComboRow {
-  const row = new Adw.ComboRow({ title, subtitle, enableSearch: search, useSubtitle: false });
+  const row = new Adw.ComboRow({ title, subtitle, enableSearch: search, useSubtitle: false, factory: fullLabelFactory(true), listFactory: fullLabelFactory() });
   if (search) row.expression = Gtk.PropertyExpression.new(Gtk.StringObject.$gtype, null, 'string');
   return row;
 }

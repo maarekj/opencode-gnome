@@ -4,9 +4,8 @@
 import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import type GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
-import Pango from 'gi://Pango';
+import { fullLabelFactory } from './ComboLabels.ts';
 import { createState, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtDuration, fmtRelative, fmtStamp } from '../shared/format.ts';
@@ -219,24 +218,6 @@ interface Choice {
   readonly value: string;
 }
 
-/** Lignes de la liste déroulante : libellé complet (pas d'ellipse), la liste s'élargit. */
-function fullLabelFactory(inRow = false): Gtk.SignalListItemFactory {
-  const factory = new Gtk.SignalListItemFactory();
-  factory.connect('setup', (_f: Gtk.SignalListItemFactory, item: GObject.Object) => {
-    if (!(item instanceof Gtk.ListItem)) return;
-    // valeur affichée dans la ligne : une seule ligne, coupée seulement faute de place
-    item.child = inRow
-      ? new Gtk.Label({ xalign: 1, ellipsize: Pango.EllipsizeMode.END })
-      : new Gtk.Label({ xalign: 0, maxWidthChars: 70, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR });
-  });
-  factory.connect('bind', (_f: Gtk.SignalListItemFactory, item: GObject.Object) => {
-    if (!(item instanceof Gtk.ListItem)) return;
-    const label = item.child;
-    const str = item.item;
-    if (label instanceof Gtk.Label && str instanceof Gtk.StringObject) label.label = str.string;
-  });
-  return factory;
-}
 
 /**
  * Liste déroulante de choix. `keep` : une valeur absente de la liste (session supprimée, modèle
