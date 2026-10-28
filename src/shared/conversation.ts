@@ -73,7 +73,7 @@ const FLUSH_MS = 80;
  * Messages chargés à l'ouverture (et au rechargement) : peu, pour une ouverture rapide (#141) ; un
  * message est une étape de l'agent (texte, réflexion, appels d'outils), souvent plusieurs blocs.
  */
-const INITIAL_PAGE = 30;
+const INITIAL_PAGE = 20;
 /** messages chargés à chaque « messages précédents » (en remontant en haut, ou par le bouton) */
 const PAGE = 100;
 /** rechargement après reconnexion : large, pour couvrir les messages arrivés pendant la coupure */

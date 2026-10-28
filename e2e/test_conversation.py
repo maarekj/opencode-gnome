@@ -52,7 +52,7 @@ def shown(app, text):
 
 def test_charger_les_messages_precedents(run_app):
     data = scenario('demo')
-    # 150 messages : 30 chargés à l'ouverture (#141), puis 100, puis les 20 premiers
+    # 150 messages : 20 chargés à l'ouverture (#141, #142), puis 100, puis les 30 premiers
     msgs = []
     for i in range(150):
         mid = f'msg_{i:04d}'
@@ -64,12 +64,12 @@ def test_charger_les_messages_precedents(run_app):
     fake, app = run_app(data, '--session', 'ses_a')
     assert app.text_visible('Message numéro 149')
     first = fake.requests('GET', '/session/ses_a/message')[0]
-    assert first['query'].get('limit') == '30', first
-    assert not shown(app, 'Message numéro 119')
+    assert first['query'].get('limit') == '20', first
+    assert not shown(app, 'Message numéro 129')
     app.click('button', 'Charger les messages précédents')
     wait_until(lambda: any(r['query'].get('limit') == '100' and 'before' in r['query'] for r in fake.requests('GET', '/session/ses_a/message')), 10, 'page précédente demandée')
-    assert app.text_visible('Message numéro 20')
-    assert not shown(app, 'Message numéro 19')
+    assert app.text_visible('Message numéro 30')
+    assert not shown(app, 'Message numéro 29')
     app.click('button', 'Charger les messages précédents')
     assert app.text_visible('Message numéro 0')
     # début de la session atteint : plus de bouton
@@ -89,15 +89,15 @@ def test_actualiser_la_conversation(run_app):
     fake, app = run_app(data, '--session', 'ses_a')
     assert app.text_visible('Message numéro 149')
     app.click('button', 'Charger les messages précédents')
-    assert app.text_visible('Message numéro 20')
+    assert app.text_visible('Message numéro 30')
     count = len(fake.requests('GET', '/session/ses_a/message'))
     # relue comme à l'ouverture : dernière page seulement, pages précédentes libérées
     app.click('button', contains='Actualiser la conversation')
     wait_until(lambda: len(fake.requests('GET', '/session/ses_a/message')) > count, 10, 'conversation relue')
     last = fake.requests('GET', '/session/ses_a/message')[-1]
-    assert last['query'].get('limit') == '30' and 'before' not in last['query'], last
+    assert last['query'].get('limit') == '20' and 'before' not in last['query'], last
     assert app.text_visible('Message numéro 149')
-    wait_until(lambda: not shown(app, 'Message numéro 20'), 5, 'pages précédentes libérées')
+    wait_until(lambda: not shown(app, 'Message numéro 30'), 5, 'pages précédentes libérées')
     app.find('button', 'Charger les messages précédents')
 
 
