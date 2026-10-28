@@ -164,3 +164,37 @@ def test_messages_annules_masques(run_app):
     time.sleep(0.5)
     assert not app.has('text', None, contains='Délègue la revue')
     assert not app.root.findChildren(lambda n: n.roleName == 'text' and n.showing and 'Délègue la revue' in (n.text or ''))
+
+
+BASH = 'git add -A && git commit -q -m "Conversation : 20 messages chargés à l\'ouverture et à l\'actualisation (au lieu de 30). Closes #142"'
+
+
+def test_bash_commande_structuree(run_app):
+    _, app = run_app(conv(), '--session', 'ses_c', env={'OPENCODE_GNOME_TEST_SCROLL': 'top'})
+    app.click('label', 'Commit et vérification')
+    # une ligne par étape, opérateurs en tête ; message de commit replié
+    assert app.text_visible('git fetch -q')
+    assert app.text_visible('tail -1')
+    app.find('label', contains='"Conversation : 20 messages chargés à l')
+    # commande brute et copie
+    app.click('toggle button', 'Commande brute')
+    assert app.text_visible('$ ' + BASH)
+    app.click('button', 'Copier la commande')
+    wait_until(lambda: (app.clipboard() or '').startswith(BASH + ' && git fetch -q'), 5, 'commande copiée')
+
+
+def test_bash_heredoc(run_app):
+    _, app = run_app(conv(), '--session', 'ses_c', env={'OPENCODE_GNOME_TEST_SCROLL': 'top'})
+    app.click('label', 'Version et ports')
+    # corps du heredoc replié avec son nombre de lignes, commandes suivantes sur leur ligne
+    app.find('label', contains='(4 lignes)')
+    assert app.text_visible('uniq -c')
+
+
+def test_permission_bash_commande_structuree(run_app):
+    _, app = run_app(conv(), '--session', 'ses_p')
+    # même vue que l'outil bash déplié : une ligne par étape, commande brute à la demande
+    assert app.text_visible('pnpm install --frozen-lockfile')
+    assert app.text_visible('tail -5')
+    app.click('toggle button', 'Commande brute')
+    assert app.text_visible('$ rm -rf .cache node_modules/.vite && pnpm install')

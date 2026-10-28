@@ -15,6 +15,7 @@ import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { openFile } from './OpenFolder.ts';
 import { ReadButton } from './Voice.ts';
+import { ShellCommand } from './ShellCommand.ts';
 import { MarkdownView } from './Markdown.tsx';
 import { AnsweredQuestions, PermissionCard, QuestionCard, type RequestActions } from './Requests.tsx';
 import { todosOfCall, TodoRows, todoSummary } from './TodoPanel.tsx';
@@ -87,8 +88,27 @@ const pendingList = (c: Conversation): Pending[] => [
 ];
 
 /** Carte d'une demande, enregistrée pour la pastille tant qu'elle existe. */
+/**
+ * Commande de l'appel d'outil `callID` (bash) : la demande de permission n'en porte que les
+ * motifs, découpés par opencode.
+ */
+function toolCommand(conversation: Conversation, callID: string | undefined): string | undefined {
+  if (callID === undefined) return undefined;
+  for (const b of conversation.blocks.peek()) {
+    if (b.kind === 'turn') continue;
+    const part = b.part.peek();
+    if (part.callID === callID) return field(part.state?.input, 'command');
+  }
+  return undefined;
+}
+
 function RequestCard({ pending, ctx }: { pending: Pending; ctx: FlowContext }): Gtk.Widget {
-  const widget = pending.kind === 'permission' ? <PermissionCard request={pending.request} actions={ctx.actions} /> : <QuestionCard request={pending.request} actions={ctx.actions} />;
+  const widget =
+    pending.kind === 'permission' ? (
+      <PermissionCard request={pending.request} actions={ctx.actions} command={toolCommand(ctx.conversation, pending.request.tool?.callID)} />
+    ) : (
+      <QuestionCard request={pending.request} actions={ctx.actions} />
+    );
   if (!(widget instanceof Gtk.Widget)) throw new TypeError('widget attendu');
   ctx.cards.add(pending.request.id, widget);
   onCleanup(() => ctx.cards.remove(pending.request.id, widget));
@@ -153,7 +173,12 @@ function ToolDetails({ part }: { part: Part }): JSX.Element {
   const error = asText(state?.error);
   return (
     <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={6} marginTop={6} marginStart={28}>
-      {command === undefined ? <Code text={truncate(asText(input), 3000)} css={['dim-label']} /> : <Code text={`$ ${command}`} />}
+      {command === undefined ? (
+        <Code text={truncate(asText(input), 3000)} css={['dim-label']} />
+      ) : (
+        // enchaînements, pipes, arguments longs : vue structurée (#143)
+        (ShellCommand(command) ?? <Code text={`$ ${command}`} />)
+      )}
       {output === '' ? null : <Code text={truncate(output)} />}
       {error === '' ? null : <Code text={truncate(error)} css={['error']} />}
     </Gtk.Box>

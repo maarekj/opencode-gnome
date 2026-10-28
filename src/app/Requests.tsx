@@ -5,6 +5,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { esc } from '../shared/format.ts';
 import type { Part, PermissionRequest, QuestionInfo, QuestionRequest } from '../shared/schemas.ts';
+import { ShellCommand } from './ShellCommand.ts';
 
 /** Réponses : résolues à false en cas d'échec (erreur déjà affichée). */
 export interface RequestActions {
@@ -33,8 +34,12 @@ const field = (v: unknown, key: string): string | undefined => {
   return typeof value === 'string' ? value : undefined;
 };
 
-export function PermissionCard({ request, actions }: { request: PermissionRequest; actions: RequestActions }): JSX.Element {
-  const detail = field(request.metadata, 'command') ?? field(request.metadata, 'filepath') ?? (request.patterns ?? []).join('\n');
+export function PermissionCard({ request, actions, command: callCommand }: { request: PermissionRequest; actions: RequestActions; command?: string | undefined }): JSX.Element {
+  // commande : celle de l'appel d'outil (complète), sinon celle de la demande si elle la porte
+  const command = callCommand ?? field(request.metadata, 'command');
+  const detail = command ?? field(request.metadata, 'filepath') ?? (request.patterns ?? []).join('\n');
+  // commande shell : même vue structurée que l'outil bash déplié (#143)
+  const shell = request.permission === 'bash' && detail !== '' ? ShellCommand(detail) : null;
   let card: Gtk.Widget | null = null;
   const reply = (r: 'once' | 'always' | 'reject'): void => answerOnce(() => card, () => actions.replyPermission(request.id, r));
   return (
@@ -50,7 +55,7 @@ export function PermissionCard({ request, actions }: { request: PermissionReques
         <Gtk.Image iconName="dialog-warning-symbolic" cssClasses={['warning']} />
         <Gtk.Label useMarkup label={`Autoriser <b>${esc(request.permission)}</b> ?`} xalign={0} hexpand />
       </Gtk.Box>
-      {detail === '' ? null : <Gtk.Label label={detail} xalign={0} wrap wrapMode={Pango.WrapMode.CHAR} selectable cssClasses={['monospace', 'tool-output']} />}
+      {shell ?? (detail === '' ? null : <Gtk.Label label={detail} xalign={0} wrap wrapMode={Pango.WrapMode.CHAR} selectable cssClasses={['monospace', 'tool-output']} />)}
       <Gtk.Box spacing={6} halign={Gtk.Align.END}>
         <Gtk.Button label="Refuser" onClicked={() => reply('reject')} />
         <Gtk.Button

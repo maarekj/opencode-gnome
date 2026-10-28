@@ -177,6 +177,40 @@
       "sessionID": "ses_c"
      },
      {
+      "id": "prt_004b",
+      "type": "tool",
+      "tool": "bash",
+      "callID": "call_b2",
+      "state": {
+       "status": "completed",
+       "input": {
+        "command": "git add -A && git commit -q -m \"Conversation : 20 messages chargés à l'ouverture et à l'actualisation (au lieu de 30). Closes #142\" && git fetch -q && git rebase origin/main 2>&1 | tail -1 && pnpm check >/dev/null 2>&1; echo check=$?",
+        "description": "Commit et vérification"
+       },
+       "output": "La branche courante issue-142 est à jour.\ncheck=0",
+       "title": "Commit et vérification"
+      },
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     },
+     {
+      "id": "prt_004c",
+      "type": "tool",
+      "tool": "bash",
+      "callID": "call_b3",
+      "state": {
+       "status": "completed",
+       "input": {
+        "command": "cd /tmp/opencode-fake/conv && python3 - <<'EOF'\nimport json\nd = json.load(open('package.json'))\nprint(d['version'])\nEOF\ngrep -rn \"port\" src | sort | uniq -c | head -5",
+        "description": "Version et ports"
+       },
+       "output": "0.1.0\n      2 src/app.ts:1:const port = 8080;",
+       "title": "Version et ports"
+      },
+      "messageID": "msg_002",
+      "sessionID": "ses_c"
+     },
+     {
       "id": "prt_005",
       "type": "text",
       "text": "Le port vaut **8080**. Voir la [documentation](https://example.com/doc).",
@@ -394,7 +428,7 @@
       "state": {
        "status": "running",
        "input": {
-        "command": "rm -rf .cache"
+        "command": "rm -rf .cache node_modules/.vite && pnpm install --frozen-lockfile 2>&1 | tail -5"
        }
       },
       "messageID": "msg_202",
@@ -443,7 +477,8 @@
    "sessionID": "ses_p",
    "permission": "bash",
    "patterns": [
-    "rm -rf .cache"
+    "rm -rf .cache",
+    "pnpm install"
    ],
    "always": [
     "rm *"
@@ -451,7 +486,8 @@
    "tool": {
     "messageID": "msg_202",
     "callID": "call_p"
-   }
+   },
+   "metadata": {}
   }
  ],
  "todos": {
