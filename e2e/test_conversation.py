@@ -42,11 +42,19 @@ def test_forker_a_partir_d_un_message(run_app):
     wait_until(lambda: 'La connexion échoue' in (app.composer().text or ''), 5, 'compositeur pré-rempli')
 
 
+def shown(app, text):
+    """Texte affiché (vérification immédiate, sans attente)."""
+    try:
+        return app.text_visible(text, timeout=0.5)
+    except AssertionError:
+        return False
+
+
 def test_charger_les_messages_precedents(run_app):
     data = scenario('demo')
-    # 250 messages : 200 chargés à l'ouverture, les 50 premiers à la demande
+    # 150 messages : 30 chargés à l'ouverture (#141), puis 100, puis les 20 premiers
     msgs = []
-    for i in range(250):
+    for i in range(150):
         mid = f'msg_{i:04d}'
         msgs.append({
             'info': {'id': mid, 'role': 'user', 'sessionID': 'ses_a', 'time': {'created': 1792900000000 + i * 1000}},
@@ -54,13 +62,43 @@ def test_charger_les_messages_precedents(run_app):
         })
     data['messages']['ses_a'] = msgs
     fake, app = run_app(data, '--session', 'ses_a')
-    assert app.text_visible('Message numéro 249')
-    assert not app.has('label', contains='Message numéro 0\n')
+    assert app.text_visible('Message numéro 149')
+    first = fake.requests('GET', '/session/ses_a/message')[0]
+    assert first['query'].get('limit') == '30', first
+    assert not shown(app, 'Message numéro 119')
     app.click('button', 'Charger les messages précédents')
-    wait_until(lambda: any('before' in r['query'] for r in fake.requests('GET', '/session/ses_a/message')), 10, 'page précédente demandée')
+    wait_until(lambda: any(r['query'].get('limit') == '100' and 'before' in r['query'] for r in fake.requests('GET', '/session/ses_a/message')), 10, 'page précédente demandée')
+    assert app.text_visible('Message numéro 20')
+    assert not shown(app, 'Message numéro 19')
+    app.click('button', 'Charger les messages précédents')
     assert app.text_visible('Message numéro 0')
     # début de la session atteint : plus de bouton
     wait_until(lambda: not app.has('button', 'Charger les messages précédents'), 5, 'bouton retiré')
+
+
+def test_actualiser_la_conversation(run_app):
+    data = scenario('demo')
+    msgs = []
+    for i in range(150):
+        mid = f'msg_{i:04d}'
+        msgs.append({
+            'info': {'id': mid, 'role': 'user', 'sessionID': 'ses_a', 'time': {'created': 1792900000000 + i * 1000}},
+            'parts': [{'id': f'prt_{i:04d}', 'type': 'text', 'messageID': mid, 'sessionID': 'ses_a', 'text': f'Message numéro {i}'}],
+        })
+    data['messages']['ses_a'] = msgs
+    fake, app = run_app(data, '--session', 'ses_a')
+    assert app.text_visible('Message numéro 149')
+    app.click('button', 'Charger les messages précédents')
+    assert app.text_visible('Message numéro 20')
+    count = len(fake.requests('GET', '/session/ses_a/message'))
+    # relue comme à l'ouverture : dernière page seulement, pages précédentes libérées
+    app.click('button', contains='Actualiser la conversation')
+    wait_until(lambda: len(fake.requests('GET', '/session/ses_a/message')) > count, 10, 'conversation relue')
+    last = fake.requests('GET', '/session/ses_a/message')[-1]
+    assert last['query'].get('limit') == '30' and 'before' not in last['query'], last
+    assert app.text_visible('Message numéro 149')
+    wait_until(lambda: not shown(app, 'Message numéro 20'), 5, 'pages précédentes libérées')
+    app.find('button', 'Charger les messages précédents')
 
 
 def test_supprimer_une_session_par_double_clic(run_app):

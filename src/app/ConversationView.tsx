@@ -687,7 +687,7 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
  * sauf si l'utilisateur est remonté dans l'historique.
  */
 /** Colle la vue en bas ; renvoie une fonction qui la décolle (ex. pour afficher un message). */
-function stickToBottom(scrolled: Gtk.ScrolledWindow): () => void {
+function stickToBottom(scrolled: Gtk.ScrolledWindow): { unstick: () => void; stick: () => void } {
   const adj = scrolled.get_vadjustment();
   // OPENCODE_GNOME_TEST_SCROLL=top : reste en haut (tests de la pastille sur captures)
   let stick = GLib.getenv('OPENCODE_GNOME_TEST_SCROLL') !== 'top';
@@ -720,8 +720,14 @@ function stickToBottom(scrolled: Gtk.ScrolledWindow): () => void {
   };
   adj.connect('notify::upper', onResize);
   adj.connect('notify::page-size', onResize);
-  return () => {
-    stick = false;
+  return {
+    unstick: () => {
+      stick = false;
+    },
+    stick: () => {
+      stick = true;
+      toBottom();
+    },
   };
 }
 
@@ -960,6 +966,8 @@ export function ConversationView({
   let blocksRef: Gtk.Box | null = null;
   /** décolle la vue du bas (cf. stickToBottom) */
   let unstick: (() => void) | null = null;
+  /** recolle la vue en bas (après « Actualiser ») */
+  let stick: (() => void) | null = null;
 
   /**
    * Affiche le message `messageID` (sa partie `partID` si connue) : messages précédents chargés
@@ -1040,7 +1048,9 @@ export function ConversationView({
       // (les tableaux se recalent sur la nouvelle largeur, cf. MarkdownView)
       hscrollbarPolicy={Gtk.PolicyType.EXTERNAL}
       $={(self: Gtk.ScrolledWindow) => {
-        unstick = stickToBottom(self);
+        const sticky = stickToBottom(self);
+        unstick = sticky.unstick;
+        stick = sticky.stick;
         // clic hors de la colonne des messages (marges du Clamp) : sans effet sur les messages eux-mêmes
         const click = new Gtk.GestureClick({ button: Gdk.BUTTON_PRIMARY });
         click.connect('released', (_g: Gtk.GestureClick, n: number, x: number, y: number) => {
@@ -1144,6 +1154,22 @@ export function ConversationView({
       <Adw.Spinner name="loading" $type="named" halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER} widthRequest={32} heightRequest={32} />
       <Gtk.Overlay name="messages" $type="named" child={scrolled}>
         <Pastille $type="overlay" ctx={ctx} scrolled={scrolled} />
+        <Gtk.Button
+          $type="overlay"
+          iconName="view-refresh-symbolic"
+          tooltipText="Actualiser la conversation (relue comme à son ouverture)"
+          halign={Gtk.Align.END}
+          valign={Gtk.Align.START}
+          marginTop={8}
+          marginEnd={12}
+          cssClasses={['circular', 'osd', 'refresh-conversation']}
+          sensitive={conversation.loading((l) => !l)}
+          onClicked={() => {
+            stopAnchoring?.();
+            stick?.();
+            void conversation.refresh();
+          }}
+        />
       </Gtk.Overlay>
     </Gtk.Stack>
   );

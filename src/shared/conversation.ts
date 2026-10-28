@@ -69,8 +69,16 @@ interface MessageEntry {
 
 /** Délai de regroupement des mises à jour (ms) : le streaming émet des dizaines de deltas par seconde. */
 const FLUSH_MS = 80;
-/** messages chargés à l'ouverture, puis à chaque « messages précédents » */
-const PAGE = 200;
+/**
+ * Messages chargés à l'ouverture (et au rechargement) : peu, pour une ouverture rapide (#141) ; un
+ * message est une étape de l'agent (texte, réflexion, appels d'outils), souvent plusieurs blocs.
+ */
+const INITIAL_PAGE = 30;
+/** messages chargés à chaque « messages précédents » (en remontant en haut, ou par le bouton) */
+const PAGE = 100;
+/** rechargement après reconnexion : large, pour couvrir les messages arrivés pendant la coupure */
+const RELOAD_PAGE = 200;
+const TIMING = GLib.getenv('OPENCODE_GNOME_TIMING') !== null;
 
 /** Retire les repères « [Image N] » insérés par le TUI à la place des images collées. */
 export const stripImageMarkers = (text: string): string => text.replaceAll(/\[Image \d+\] ?/gu, '');
@@ -216,8 +224,12 @@ export class Conversation {
   async reload(): Promise<void> {
     this.#setLoading(true);
     this.#reloading += 1;
+    const t0 = Date.now();
+    let count = 0;
     try {
-      const { messages, older } = await this.#store.client.messagePage(this.sessionID, PAGE);
+      const limit = this.#messages.size === 0 ? INITIAL_PAGE : RELOAD_PAGE;
+      const { messages, older } = await this.#store.client.messagePage(this.sessionID, limit);
+      count = messages.length;
       if (this.#disposed) return;
       this.#ingest(messages);
       this.#replayEarly();
@@ -232,8 +244,11 @@ export class Conversation {
       this.#reloading -= 1;
       if (this.#reloading === 0) this.#early.clear();
     }
+    const t1 = Date.now();
     this.#setLoading(false);
+    // affichage des blocs (construits de façon synchrone par les abonnés)
     this.#flush();
+    if (TIMING) console.log(`TIMING chargement messages=${count} réseau=${t1 - t0} ms affichage=${Date.now() - t1} ms`);
   }
 
   /**
@@ -265,6 +280,24 @@ export class Conversation {
         entry.dirty = true;
       }
     }
+  }
+
+  /**
+   * Actualiser : la conversation est relue comme à son ouverture (dernière page seulement, les
+   * pages précédentes déjà chargées sont libérées), avec ses demandes et sa liste de tâches.
+   */
+  async refresh(): Promise<void> {
+    if (this.#disposed) return;
+    this.#messages.clear();
+    this.#parts.clear();
+    this.#turns.clear();
+    this.#older = null;
+    this.#olderLoaded = false;
+    this.#setHasOlder(false);
+    // blocs retirés d'abord : les widgets (liés aux anciens états) sont libérés, puis reconstruits
+    this.#structureChanged = true;
+    this.#flush();
+    await Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]);
   }
 
   /** Charge la page de messages précédant les plus anciens déjà chargés. */
