@@ -10,6 +10,10 @@ describe('disposition de la barre', () => {
     expect(keys(normalizeLayout(undefined, T, L))).toEqual(['terminal:t1', 'terminal:t2', 'link:l1', 'link:l2']);
   });
 
+  it('devenv : référence et ajout à la fin', () => {
+    expect(keys(normalizeLayout([{ devenv: 'd1' }, { devenv: 'zz' }], T, [], [{ id: 'd1' }, { id: 'd2' }]))).toEqual(['devenv:d1', 'terminal:t1', 'terminal:t2', 'devenv:d2']);
+  });
+
   it('orphelins et doublons retirés, manquants ajoutés à la fin', () => {
     const l = normalizeLayout([{ link: 'l2' }, { terminal: 'zz' }, { folder: 'f', name: 'F', items: [{ terminal: 't2' }, { link: 'l2' }] }], T, L);
     expect(keys(l)).toEqual(['link:l2', 'folder:f[terminal:t2]', 'terminal:t1', 'link:l1']);

@@ -13,13 +13,15 @@
 import GLib from 'gi://GLib';
 
 /** Module de saisie à imposer, ou null pour garder celui de l'environnement. */
-export function inputModuleOverride(env: { wayland: string | null; module: string | null }): string | null {
+export function inputModuleOverride(env: { wayland: string | null; module: string | null; backend?: string | null }): string | null {
   if (env.wayland === null || env.wayland === '') return null;
+  // backend X11 imposé (captures, tests) : le module wayland n'y existe pas
+  if (env.backend !== undefined && env.backend !== null && env.backend !== '' && !env.backend.startsWith('wayland')) return null;
   return env.module === 'ibus' ? 'wayland' : null;
 }
 
 /** Impose le module de saisie si besoin (GTK lit GTK_IM_MODULE à la création de chaque contexte). */
 export function applyInputMethod(): void {
-  const override = inputModuleOverride({ wayland: GLib.getenv('WAYLAND_DISPLAY'), module: GLib.getenv('GTK_IM_MODULE') });
+  const override = inputModuleOverride({ wayland: GLib.getenv('WAYLAND_DISPLAY'), module: GLib.getenv('GTK_IM_MODULE'), backend: GLib.getenv('GDK_BACKEND') });
   if (override !== null) GLib.setenv('GTK_IM_MODULE', override, true);
 }

@@ -10,6 +10,11 @@ describe('méthode de saisie', () => {
     expect(inputModuleOverride({ wayland: null, module: 'ibus' })).toBeNull();
   });
 
+  it('backend X11 imposé : environnement conservé', () => {
+    expect(inputModuleOverride({ wayland: 'wayland-0', module: 'ibus', backend: 'x11' })).toBeNull();
+    expect(inputModuleOverride({ wayland: 'wayland-0', module: 'ibus', backend: 'wayland,x11' })).toBe('wayland');
+  });
+
   it('autre module choisi : conservé', () => {
     expect(inputModuleOverride({ wayland: 'wayland-0', module: 'fcitx' })).toBeNull();
     expect(inputModuleOverride({ wayland: 'wayland-0', module: null })).toBeNull();

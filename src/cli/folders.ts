@@ -6,8 +6,8 @@ import { projectDir } from './project.ts';
 
 export const FOLDER_HELP = `ocg folder — dossiers de la barre d'un projet
 
-Dans l'application, terminaux et liens d'un projet partagent une même barre ; un dossier y
-regroupe des terminaux et des liens (ex. un dossier par worktree, « utilitaires »), affiché comme
+Dans l'application, terminaux, liens et devenv d'un projet partagent une même barre ; un dossier y
+regroupe des terminaux, des liens et des devenv (ex. un dossier par worktree, « utilitaires »), affiché comme
 une pastille qui ouvre un menu.
 
 Usage :
@@ -16,8 +16,8 @@ Usage :
   ocg folder rename <dossier> NOM [--project DIR]
   ocg folder rm <dossier> [--project DIR]        (son contenu reste dans la barre)
 
-Ranger un terminal ou un lien : option --folder de « ocg terminal add|edit » et
-« ocg link add|edit » (dossier créé s'il n'existe pas ; --folder '' : sortir du dossier).
+Ranger un terminal, un lien ou un devenv : option --folder de « ocg terminal add|edit »,
+« ocg link add|edit » et « ocg devenv add|edit » (dossier créé s'il n'existe pas ; --folder '' : sortir du dossier).
 
 <dossier> : identifiant ou nom.
 
@@ -73,15 +73,18 @@ export function folderCommand(argv: readonly string[]): number {
       const d = settings.data.peek();
       const terminals = new Map((d.terminals[project] ?? []).map((t) => [t.id, t.name]));
       const links = new Map((d.links[project] ?? []).map((l) => [l.id, l.name]));
+      const devenvs = new Map((d.devenvs[project] ?? []).map((x) => [x.id, x.name]));
       const folders = layoutOf(d, project).filter((e): e is FolderEntry => 'folder' in e);
       const rows = folders.map((f) => ({
         id: f.folder,
         name: f.name,
-        items: f.items.map((r) => ('terminal' in r ? { terminal: r.terminal, name: terminals.get(r.terminal) ?? '' } : { link: r.link, name: links.get(r.link) ?? '' })),
+        items: f.items.map((r) =>
+          'terminal' in r ? { terminal: r.terminal, name: terminals.get(r.terminal) ?? '' } : 'devenv' in r ? { devenv: r.devenv, name: devenvs.get(r.devenv) ?? '' } : { link: r.link, name: links.get(r.link) ?? '' },
+        ),
       }));
       if (args.flags.has('json')) print(JSON.stringify(rows, null, 2));
       else if (rows.length === 0) print(`Aucun dossier dans ${project}. Crée-en un : ocg folder add "worktree 1"`);
-      else for (const r of rows) print(`${r.id}  ${r.name}\n${r.items.map((i) => `    ${'terminal' in i ? '▸ terminal' : '↗ lien'}  ${i.name}`).join('\n') || '    (vide)'}`);
+      else for (const r of rows) print(`${r.id}  ${r.name}\n${r.items.map((i) => `    ${'terminal' in i ? '▸ terminal' : 'devenv' in i ? '⚙ devenv' : '↗ lien'}  ${i.name}`).join('\n') || '    (vide)'}`);
       return 0;
     }
     case 'add': {

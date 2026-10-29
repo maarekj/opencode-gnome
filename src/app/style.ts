@@ -445,4 +445,21 @@ menubutton.folder-pill.running > button {
 .folder-row {
   border-radius: 8px;
 }
+.devenv-dot {
+  border-radius: 999px;
+  min-width: 8px;
+  min-height: 8px;
+}
+.devenv-dot.devenv-ok {
+  background: var(--success-color);
+}
+.devenv-dot.devenv-busy {
+  background: var(--warning-color);
+}
+.devenv-dot.devenv-stopped {
+  background: alpha(currentColor, 0.3);
+}
+.devenv-dot.devenv-failed {
+  background: var(--error-color);
+}
 `;

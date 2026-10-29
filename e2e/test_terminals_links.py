@@ -202,10 +202,11 @@ def order(app) -> list[str]:
     out = []
     for e in app.settings().get('layout', {}).get(DIR, []):
         if 'folder' in e:
-            inner = ','.join(f"{'terminal:' + i['terminal'] if 'terminal' in i else 'link:' + i['link']}" for i in e['items'])
+            inner = ','.join(f"{k}:{i[k]}" for i in e['items'] for k in ('terminal', 'link', 'devenv') if k in i)
             out.append(f"{e['name']}[{inner}]")
         else:
-            out.append('terminal:' + e['terminal'] if 'terminal' in e else 'link:' + e['link'])
+            kind = 'terminal' if 'terminal' in e else 'devenv' if 'devenv' in e else 'link'
+            out.append(f'{kind}:{e[kind]}')
     return out
 
 
@@ -350,3 +351,92 @@ def test_reordonner_dans_le_menu_d_un_dossier(run_app):
         time.sleep(0.05)
     subprocess.run(['xdotool', 'mouseup', '1'], check=True)
     wait_until(lambda: order(app) == ['outils[link:l2,link:l0,link:l1]'], 5, 'ordre dans le dossier')
+
+
+# ---------------------------------------------------------------- devenv (#147)
+
+
+def fake_devenv(tmp_path, running: bool):
+    """Dossier bin avec un faux `devenv`, son fichier d'état et l'environnement à passer à l'app."""
+    import json
+    import pathlib
+
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'devenv').symlink_to(pathlib.Path(__file__).parent / 'fake_devenv.py')
+    state = tmp_path / 'devenv.json'
+    state.write_text(json.dumps({'running': running, 'processes': {'postgres': 'ready', 'web': 'ready', 'worker': 'gave_up'}}))
+    env = {'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'FAKE_DEVENV_STATE': str(state)}
+    return state, env
+
+
+DEVENV = {'devenvs': {DIR: [{'id': 'd1', 'name': 'services'}]}}
+
+
+def calls(state) -> str:
+    try:
+        return (state.parent / (state.name + '.log')).read_text()
+    except FileNotFoundError:
+        return ''
+
+
+def test_devenv_services_et_actions(run_app, tmp_path):
+    state, env = fake_devenv(tmp_path, running=True)
+    _, app = project(run_app, settings=DEVENV, env=env)
+    # pastille : un service en échec
+    pill = app.find('toggle button', contains='devenv « services »')
+    assert app.text_visible('1 en échec')
+    app.click('toggle button', contains='devenv « services »')
+    app.find('label', 'worker')
+    assert app.text_visible('en échec · 5 redémarrages')
+    # actions sur un service, dans le dossier du projet
+    app.click('button', 'Démarrer worker')
+    wait_until(lambda: f'processes start worker @ {DIR}' in calls(state), 5, 'devenv processes start worker')
+    wait_until(lambda: app.has('button', 'Arrêter worker'), 10, 'worker démarré')
+    app.click('button', 'Arrêter web')
+    wait_until(lambda: 'processes stop web' in calls(state), 5, 'devenv processes stop web')
+    app.click('button', 'Redémarrer postgres')
+    wait_until(lambda: 'processes restart postgres' in calls(state), 5, 'devenv processes restart postgres')
+    # logs dans une fenêtre
+    app.click('button', 'Logs de postgres')
+    app.find('frame', 'Logs — postgres')
+    assert app.text_visible('postgres : ligne 2')
+    assert pill
+
+
+def test_devenv_tout_demarrer_puis_tout_arreter(run_app, tmp_path):
+    state, env = fake_devenv(tmp_path, running=False)
+    _, app = project(run_app, settings=DEVENV, env=env)
+    assert app.text_visible('arrêté')
+    app.click('toggle button', contains='devenv « services »')
+    # bouton actif une fois l'état lu
+    assert app.text_visible('Process manager arrêté')
+    app.click('button', 'Tout démarrer')
+    # sortie de devenv up affichée pendant le démarrage
+    assert app.text_visible('Building shell')
+    wait_until(lambda: 'up --detach --no-tui' in calls(state), 5, f'devenv up --detach : {calls(state)!r}')
+    app.find('label', 'postgres', timeout=10)
+    app.click('button', 'Tout arrêter')
+    wait_until(lambda: 'processes down' in calls(state), 5, 'devenv processes down')
+    # services retenus du démarrage : listés même arrêtés, et un seul peut être relancé
+    assert app.text_visible('services du dernier démarrage')
+    assert app.settings()['devenvs'][DIR][0]['services'] == ['postgres', 'web', 'worker']
+    app.click('button', 'Démarrer web')
+    wait_until(lambda: 'processes start web' in calls(state), 5, 'devenv processes start web')
+    wait_until(lambda: app.has('button', 'Arrêter web'), 10, 'web démarré')
+
+
+def test_devenv_ajoute_par_le_menu_dans_un_dossier(run_app, tmp_path):
+    _, env = fake_devenv(tmp_path, running=True)
+    settings = {'layout': {DIR: [{'folder': 'f1', 'name': 'worktree 1', 'items': []}]}}
+    _, app = project(run_app, settings=settings, env=env)
+    # depuis le menu du dossier : dossier présélectionné
+    app.click('toggle button', contains='Dossier « worktree 1 »')
+    app.click('button', 'devenv')
+    dialog = app.find('alert', 'Nouveau devenv')
+    fill(app, dialog, ['wt1', 'sous-dossier'])
+    app.click('button', 'Ajouter', within=dialog)
+    wait_until(lambda: app.settings().get('devenvs', {}).get(DIR), 5, 'devenv enregistré')
+    did = app.settings()['devenvs'][DIR][0]['id']
+    wait_until(lambda: order(app) == [f'worktree 1[devenv:{did}]'], 5, f'devenv rangé dans le dossier : {order(app)}')
+    assert app.settings()['devenvs'][DIR][0]['cwd'] == 'sous-dossier'

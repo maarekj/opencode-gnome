@@ -103,7 +103,10 @@ export function attachContextMenu(widget: Gtk.Widget, sections: () => readonly (
       model.append_section(null, section);
     }
     const popover = Gtk.PopoverMenu.new_from_model(model);
-    popover.set_parent(widget);
+    // Gtk.MenuButton ne présente que son propre menu : un autre popover qui lui est rattaché garde
+    // une taille minuscule (avec défilement). Rattaché à son bouton interne, il est dimensionné.
+    const anchor = widget instanceof Gtk.MenuButton ? (widget.get_first_child() ?? widget) : widget;
+    popover.set_parent(anchor);
     popover.hasArrow = false;
     popover.halign = Gtk.Align.START;
     popover.set_pointing_to(new Gdk.Rectangle({ x: Math.round(x), y: Math.round(y), width: 1, height: 1 }));

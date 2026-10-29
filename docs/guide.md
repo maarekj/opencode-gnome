@@ -65,7 +65,11 @@ Le bouton git de l'en-tête ouvre une fenêtre séparée : fichiers modifiés (d
   zoom : **Ctrl+plus**, **Ctrl+moins**, **Ctrl+0**.
 - **Liens épinglés** par projet : adresses web, avec les variables `$VAR` du direnv du projet ;
   le navigateur du projet se choisit à droite de la barre.
-- En ligne de commande : `ocg terminal`, `ocg link` (option `--folder`) et `ocg folder`.
+- **devenv** : un élément de la barre (bouton **+** → « Nouveau devenv ») suit le process manager de
+  `devenv up` d'un dossier. Sa pastille résume l'état des services (prêts, en échec, arrêté) ; un
+  clic ouvre la liste des services : démarrer, arrêter, redémarrer, logs (fenêtre dédiée), et
+  « Tout démarrer » (`devenv up --detach`) / « Tout arrêter ».
+- En ligne de commande : `ocg terminal`, `ocg link`, `ocg devenv` (option `--folder`) et `ocg folder`.
 - Le projet s'ouvre aussi dans un **IDE** (en-tête ou menu du projet).
 
 ## Tâches planifiées

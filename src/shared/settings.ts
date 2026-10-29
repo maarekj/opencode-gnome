@@ -69,7 +69,20 @@ export const ProjectLink = z.object({
 });
 export type ProjectLink = z.output<typeof ProjectLink>;
 
+/** Process manager devenv d'un dossier du projet (`devenv up`, services) (#147). */
+export const ProjectDevenv = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** dossier contenant devenv.nix, relatif au projet ; absent = racine du projet */
+  cwd: z.optional(z.string()),
+  /** services vus lors du dernier démarrage (affichés quand le process manager est arrêté) */
+  services: z.optional(z.array(z.string())),
+});
+export type ProjectDevenv = z.output<typeof ProjectDevenv>;
+
 export const SettingsData = z.object({
+  /** process managers devenv : chemin du projet -> éléments devenv de la barre */
+  devenvs: z.prefault(z.record(z.string(), z.array(ProjectDevenv)), {}),
   /** liens épinglés : chemin du projet -> liens */
   links: z.prefault(z.record(z.string(), z.array(ProjectLink)), {}),
   /** disposition de la barre de chaque projet : terminaux et liens mélangés, dossiers (#145) */
@@ -132,7 +145,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { links: {}, layout: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -180,11 +193,11 @@ export function moveBefore(list: readonly string[], item: string, before: string
 }
 
 /** Disposition complète du projet dans `d` (terminaux et liens actuels). */
-export const layoutOf = (d: SettingsData, project: string): LayoutEntry[] => normalizeLayout(d.layout[project], d.terminals[project] ?? [], d.links[project] ?? []);
+export const layoutOf = (d: SettingsData, project: string): LayoutEntry[] => normalizeLayout(d.layout[project], d.terminals[project] ?? [], d.links[project] ?? [], d.devenvs[project] ?? []);
 
 /** `d` avec la disposition du projet modifiée par `fn` (puis normalisée). */
 function withLayout(d: SettingsData, project: string, fn: (layout: LayoutEntry[]) => LayoutEntry[]): SettingsData {
-  const next = normalizeLayout(fn(layoutOf(d, project)), d.terminals[project] ?? [], d.links[project] ?? []);
+  const next = normalizeLayout(fn(layoutOf(d, project)), d.terminals[project] ?? [], d.links[project] ?? [], d.devenvs[project] ?? []);
   return { ...d, layout: { ...d.layout, [project]: next } };
 }
 
@@ -383,6 +396,35 @@ export class Settings {
       const next = list.some((t) => t.id === terminal.id) ? list.map((t) => (t.id === terminal.id ? terminal : t)) : [...list, terminal];
       const saved = { ...d, terminals: { ...d.terminals, [project]: next } };
       return folder === undefined ? saved : withLayout(saved, project, (l) => moveEntry(l, `terminal:${terminal.id}`, folder, null));
+    });
+  }
+
+  /** Ajoute ou remplace (même id) un élément devenv du projet ; `folder` : comme pour saveLink. */
+  saveDevenv(project: string, devenv: ProjectDevenv, folder?: string | null): void {
+    this.update((d) => {
+      const list = d.devenvs[project] ?? [];
+      const next = list.some((x) => x.id === devenv.id) ? list.map((x) => (x.id === devenv.id ? devenv : x)) : [...list, devenv];
+      const saved = { ...d, devenvs: { ...d.devenvs, [project]: next } };
+      return folder === undefined ? saved : withLayout(saved, project, (l) => moveEntry(l, `devenv:${devenv.id}`, folder, null));
+    });
+  }
+
+  /** Services connus d'un élément devenv (cache, liste réelle quand il tourne). */
+  setDevenvServices(project: string, id: string, services: readonly string[]): void {
+    const withServices = (x: ProjectDevenv): ProjectDevenv => {
+      if (x.id !== id) return x;
+      const next: ProjectDevenv = { id: x.id, name: x.name, services: [...services] };
+      if (x.cwd !== undefined) next.cwd = x.cwd;
+      return next;
+    };
+    this.update((d) => ({ ...d, devenvs: { ...d.devenvs, [project]: (d.devenvs[project] ?? []).map((x) => withServices(x)) } }));
+  }
+
+  removeDevenv(project: string, id: string): void {
+    this.update((d) => {
+      const { [project]: list = [], ...others } = d.devenvs;
+      const next = list.filter((x) => x.id !== id);
+      return { ...d, devenvs: next.length === 0 ? others : { ...others, [project]: next } };
     });
   }
 

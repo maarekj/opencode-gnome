@@ -4,7 +4,10 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { createState, type Accessor } from 'gnim';
 import type { ProjectTerminal } from './settings.ts';
+import { resolveCwd } from './paths.ts';
 import { openTerminalArgv, shq, type TerminalChoice } from './terminal.ts';
+
+export { resolveCwd };
 
 Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async', 'communicate_utf8_finish');
 Gio._promisify(Gio.Subprocess.prototype, 'wait_async', 'wait_finish');
@@ -141,13 +144,6 @@ export function shellArgv(command: string, shell: string): string[] {
 }
 
 /** Répertoire de lancement : relatif à la racine du projet, `~/…` ou absolu. */
-export function resolveCwd(cwd: string | undefined, project: string): string {
-  const c = (cwd ?? '').trim();
-  if (c === '' || c === '.') return project;
-  if (c === '~' || c.startsWith('~/')) return GLib.build_filenamev([GLib.get_home_dir(), c.slice(1)]);
-  if (GLib.path_is_absolute(c)) return c;
-  return GLib.canonicalize_filename(c, project);
-}
 
 /** Client zellij attaché à la session du terminal (le quitter détache). */
 export const attachArgv = (t: ProjectTerminal): string[] => ['zellij', 'attach', t.id];

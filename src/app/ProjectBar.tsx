@@ -8,26 +8,29 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, onCleanup, type Accessor } from 'gnim';
-import { addFolder, folderId, moveEntry, removeFolder, renameFolder, type FolderEntry } from '../shared/layout.ts';
-import { layoutOf, type ProjectLink, type ProjectTerminal } from '../shared/settings.ts';
+import { addFolder, folderId, moveEntry, removeFolder, renameFolder, type FolderEntry, type ItemRef } from '../shared/layout.ts';
+import { devenvInstalled } from '../shared/devenv.ts';
+import { layoutOf, type ProjectDevenv, type ProjectLink, type ProjectTerminal } from '../shared/settings.ts';
 import { zellijInstalled } from '../shared/terminals.ts';
 import { attachContextMenu, labelMenuButton, type MenuItem } from './ContextMenu.ts';
+import { askDevenv, DevenvPill, devenvMenu, devenvStatusWidget, openDevenvDialog } from './DevenvItem.tsx';
 import { foldersOf } from './FolderChoice.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { askLink, BrowserButton, LinkPill, type LinkContext } from './LinkBar.tsx';
 import { dropAtEnd, pillScroller, reorderable } from './PillBar.ts';
 import { askTerminal, attachTerminalMenu, TerminalPill, terminalActions, type TerminalContext } from './TerminalBar.tsx';
 
-type Item = { kind: 'terminal'; t: ProjectTerminal; running: boolean } | { kind: 'link'; link: ProjectLink };
+type Item = { kind: 'terminal'; t: ProjectTerminal; running: boolean } | { kind: 'link'; link: ProjectLink } | { kind: 'devenv'; d: ProjectDevenv };
 type Entry = Item | { kind: 'folder'; folder: FolderEntry; items: Item[]; running: number };
 
-const itemKey = (i: Item): string => (i.kind === 'terminal' ? `terminal:${i.t.id}` : `link:${i.link.id}`);
+const itemKey = (i: Item): string => (i.kind === 'terminal' ? `terminal:${i.t.id}` : i.kind === 'devenv' ? `devenv:${i.d.id}` : `link:${i.link.id}`);
 const entryKey = (e: Entry): string => (e.kind === 'folder' ? `folder:${e.folder.folder}` : itemKey(e));
 
 /** Clé de reconstruction : change avec tout ce qui est affiché. */
 function signature(e: Entry): string {
   if (e.kind === 'terminal') return `t|${e.t.id}|${e.t.name}|${e.t.command}|${e.t.cwd ?? ''}|${e.running}`;
   if (e.kind === 'link') return `l|${e.link.id}|${e.link.name}|${e.link.url}`;
+  if (e.kind === 'devenv') return `d|${e.d.id}|${e.d.name}|${e.d.cwd ?? ''}`;
   return `f|${e.folder.folder}|${e.folder.name}|${e.running}|${e.items.map((i) => signature(i)).join(';')}`;
 }
 
@@ -121,6 +124,18 @@ function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () =
       row.append(restart);
       row.append(stop);
     }
+  } else if (item.kind === 'devenv') {
+    // panneau des services dans un dialogue (pas de menu dans le menu)
+    const { d } = item;
+    content.append(new Gtk.Image({ iconName: 'system-run-symbolic', pixelSize: 14 }));
+    content.append(new Gtk.Label({ label: d.name, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END }));
+    content.append(devenvStatusWidget(d, bar.project, bar.links));
+    main.tooltipText = 'Services devenv : état, démarrer, arrêter, logs';
+    main.connect('clicked', () => {
+      close();
+      openDevenvDialog(anchor, d, bar.project, bar.links);
+    });
+    devenvMenu(main, d, bar.project, bar.links, extra, host);
   } else {
     // même pastille que dans la barre (ouverture, navigateurs, copie, modifier, supprimer)
     const pill = LinkPill({ link: item.link, project: bar.project, dir: bar.dir, ctx: bar.links, extra, host });
@@ -151,6 +166,8 @@ function FolderPill(e: Extract<Entry, { kind: 'folder' }>, bar: BarContext): Gtk
   button.child = box;
   // nom accessible (lecteurs d'écran, tests) : celui de l'infobulle, porté par le bouton interne
   const toggle = button.get_first_child();
+  // le bouton à menu lui-même aussi : sinon son nom concatène le contenu du menu
+  button.update_property([Gtk.AccessibleProperty.LABEL], [button.tooltipText ?? '']);
   if (toggle !== null) toggle.update_property([Gtk.AccessibleProperty.LABEL], [button.tooltipText ?? folder.name]);
 
   const popover = new Gtk.Popover({ cssClasses: ['menu'] });
@@ -197,6 +214,14 @@ function FolderPill(e: Extract<Entry, { kind: 'folder' }>, bar: BarContext): Gtk
     askLink(button, bar.project, bar.dir(), bar.links, undefined, folder.folder);
   });
   adds.append(addL);
+  if (devenvInstalled()) {
+    const addD = new Gtk.Button({ child: new Adw.ButtonContent({ label: 'devenv', iconName: 'list-add-symbolic' }), tooltipText: `Ajouter un devenv dans « ${folder.name} »`, cssClasses: ['flat'] });
+    addD.connect('clicked', () => {
+      close();
+      askDevenv(button, bar.project, bar.links, undefined, folder.folder);
+    });
+    adds.append(addD);
+  }
   list.append(adds);
   popover.child = list;
   button.popover = popover;
@@ -225,10 +250,12 @@ function AddButton(project: Accessor<string | null>, bar: () => BarContext | nul
   action('terminal', (b) => askTerminal(button, b.project, b.ctx));
   action('link', (b) => askLink(button, b.project, b.dir(), b.links));
   action('folder', (b) => askFolder(button, b));
+  action('devenv', (b) => askDevenv(button, b.project, b.links));
   button.insert_action_group('bar', group);
   const menu = new Gio.Menu();
   if (zellijInstalled()) menu.append('Nouveau terminal persistant…', 'bar.terminal');
   menu.append('Nouveau lien…', 'bar.link');
+  if (devenvInstalled()) menu.append('Nouveau devenv (services)…', 'bar.devenv');
   menu.append('Nouveau dossier…', 'bar.folder');
   button.menuModel = menu;
   labelMenuButton(button);
@@ -249,10 +276,15 @@ export function ProjectBar({ project, ctx, directory }: { project: Accessor<stri
     const running = ctx.manager.running();
     const terminals = new Map((d.terminals[p] ?? []).map((t) => [t.id, t]));
     const links = new Map((d.links[p] ?? []).map((l) => [l.id, l]));
-    const resolve = (r: { terminal: string } | { link: string }): Item | null => {
+    const devenvs = new Map((d.devenvs[p] ?? []).map((x) => [x.id, x]));
+    const resolve = (r: ItemRef): Item | null => {
       if ('terminal' in r) {
         const t = terminals.get(r.terminal);
         return t === undefined || !terminalsOn ? null : { kind: 'terminal', t, running: running.has(t.id) };
+      }
+      if ('devenv' in r) {
+        const x = devenvs.get(r.devenv);
+        return x === undefined ? null : { kind: 'devenv', d: x };
       }
       const link = links.get(r.link);
       return link === undefined ? null : { kind: 'link', link };
@@ -297,6 +329,7 @@ export function ProjectBar({ project, ctx, directory }: { project: Accessor<stri
                   const key = entryKey(e);
                   let pill: Gtk.Widget;
                   if (e.kind === 'folder') pill = FolderPill(e, bar);
+                  else if (e.kind === 'devenv') pill = DevenvPill({ d: e.d, project: p, ctx: links, extra: () => moveMenu(bar, key, null) });
                   else if (e.kind === 'terminal') pill = TerminalPill({ t: e.t, project: p, running: e.running, ctx, extra: () => moveMenu(bar, key, null) });
                   else pill = LinkPill({ link: e.link, project: p, dir, ctx: links, extra: () => moveMenu(bar, key, null) });
                   reorderable(pill, key, {

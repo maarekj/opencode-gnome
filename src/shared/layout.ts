@@ -1,23 +1,24 @@
-// Disposition de la barre d'un projet (#145) : terminaux persistants et liens épinglés mélangés,
+// Disposition de la barre d'un projet (#145) : terminaux persistants, liens épinglés et devenv (#147) mélangés,
 // dans l'ordre choisi, rangés ou non dans des dossiers (un seul niveau). Les terminaux et les
 // liens restent dans leurs listes (réglages `terminals` et `links`) ; la disposition ne contient
 // que des références. Un élément absent de la disposition (créé par `ocg` ou avant elle) est
 // affiché à la fin ; une référence vers un élément supprimé est ignorée.
 import * as z from 'zod/mini';
 
-export const ItemRef = z.union([z.object({ terminal: z.string() }), z.object({ link: z.string() })]);
+export const ItemRef = z.union([z.object({ terminal: z.string() }), z.object({ link: z.string() }), z.object({ devenv: z.string() })]);
 export type ItemRef = z.output<typeof ItemRef>;
 
 export const FolderEntry = z.object({ folder: z.string(), name: z.string(), items: z.array(ItemRef) });
 export type FolderEntry = z.output<typeof FolderEntry>;
 
-export const LayoutEntry = z.union([z.object({ terminal: z.string() }), z.object({ link: z.string() }), FolderEntry]);
+export const LayoutEntry = z.union([z.object({ terminal: z.string() }), z.object({ link: z.string() }), z.object({ devenv: z.string() }), FolderEntry]);
 export type LayoutEntry = z.output<typeof LayoutEntry>;
 
-/** Clé d'une entrée : `terminal:id`, `link:id`, `folder:id`. */
+/** Clé d'une entrée : `terminal:id`, `link:id`, `devenv:id`, `folder:id`. */
 export function keyOf(e: LayoutEntry): string {
   if ('folder' in e) return `folder:${e.folder}`;
   if ('terminal' in e) return `terminal:${e.terminal}`;
+  if ('devenv' in e) return `devenv:${e.devenv}`;
   return `link:${e.link}`;
 }
 
@@ -28,6 +29,7 @@ export function refOf(key: string): ItemRef | null {
   if (id === '') return null;
   if (kind === 'terminal') return { terminal: id };
   if (kind === 'link') return { link: id };
+  if (kind === 'devenv') return { devenv: id };
   return null;
 }
 
@@ -35,10 +37,10 @@ const isFolder = (e: LayoutEntry): e is FolderEntry => 'folder' in e;
 
 /**
  * Disposition complète : références orphelines et doublons retirés, éléments manquants ajoutés
- * à la fin (terminaux puis liens, dans l'ordre de leurs listes).
+ * à la fin (terminaux, liens puis devenv, dans l'ordre de leurs listes).
  */
-export function normalizeLayout(layout: readonly LayoutEntry[] | undefined, terminals: readonly { id: string }[], links: readonly { id: string }[]): LayoutEntry[] {
-  const known = new Set([...terminals.map((t) => `terminal:${t.id}`), ...links.map((l) => `link:${l.id}`)]);
+export function normalizeLayout(layout: readonly LayoutEntry[] | undefined, terminals: readonly { id: string }[], links: readonly { id: string }[], devenvs: readonly { id: string }[] = []): LayoutEntry[] {
+  const known = new Set([...terminals.map((t) => `terminal:${t.id}`), ...links.map((l) => `link:${l.id}`), ...devenvs.map((d) => `devenv:${d.id}`)]);
   const seen = new Set<string>();
   const keep = (r: ItemRef): boolean => {
     const k = keyOf(r);
@@ -56,6 +58,7 @@ export function normalizeLayout(layout: readonly LayoutEntry[] | undefined, term
   }
   for (const t of terminals) if (keep({ terminal: t.id })) out.push({ terminal: t.id });
   for (const l of links) if (keep({ link: l.id })) out.push({ link: l.id });
+  for (const d of devenvs) if (keep({ devenv: d.id })) out.push({ devenv: d.id });
   return out;
 }
 
