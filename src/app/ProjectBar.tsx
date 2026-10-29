@@ -92,7 +92,8 @@ function askRemoveFolder(parent: Gtk.Widget, bar: BarContext, folder: FolderEntr
 }
 
 /** Ligne d'un terminal ou d'un lien dans le menu d'un dossier. */
-function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () => void): Gtk.Widget {
+function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () => void, anchor: Gtk.Widget): Gtk.Widget {
+  const host = { anchor, close };
   const key = itemKey(item);
   const extra = (): readonly (readonly MenuItem[])[] => moveMenu(bar, key, folder.folder);
   const row = new Gtk.Box({ spacing: 2, cssClasses: ['folder-row'] });
@@ -111,7 +112,7 @@ function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () =
       close();
       act.open();
     });
-    attachTerminalMenu(main, t, bar.project, bar.ctx, extra);
+    attachTerminalMenu(main, t, bar.project, bar.ctx, extra, host);
     if (running) {
       const restart = new Gtk.Button({ iconName: 'view-refresh-symbolic', tooltipText: 'Redémarrer', cssClasses: ['flat', 'circular'] });
       restart.connect('clicked', act.restart);
@@ -122,7 +123,7 @@ function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () =
     }
   } else {
     // même pastille que dans la barre (ouverture, navigateurs, copie, modifier, supprimer)
-    const pill = LinkPill({ link: item.link, project: bar.project, dir: bar.dir, ctx: bar.links, extra });
+    const pill = LinkPill({ link: item.link, project: bar.project, dir: bar.dir, ctx: bar.links, extra, host });
     pill.hexpand = true;
     if (pill instanceof Gtk.Button) pill.connect('clicked', close);
     row.remove(main);
@@ -155,14 +156,27 @@ function FolderPill(e: Extract<Entry, { kind: 'folder' }>, bar: BarContext): Gtk
   const popover = new Gtk.Popover({ cssClasses: ['menu'] });
   const list = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, marginTop: 4, marginBottom: 4, marginStart: 4, marginEnd: 4, widthRequest: 220 });
   const close = (): void => popover.popdown();
+  const drag = { active: false };
+  const leave = new Gtk.DropControllerMotion();
+  leave.connect('leave', () => {
+    if (drag.active) close();
+  });
+  list.add_controller(leave);
   const order = (): string[] => items.map((i) => itemKey(i));
   for (const item of items) {
-    const row = FolderRow(item, bar, folder, close);
-    // réordonner dans le dossier ; glissé hors du menu (fermé au début du glisser) : vers la barre
+    const row = FolderRow(item, bar, folder, close, button);
+    // réordonner dans le menu (il reste ouvert pendant le glisser) ; le pointeur sort du menu en
+    // glissant : il se ferme, pour déposer dans la barre (#146)
     reorderable(row, itemKey(item), {
+      vertical: true,
       order,
       move: (key, before) => bar.ctx.settings.updateLayout(bar.project, (l) => moveEntry(l, key, folder.folder, before)),
-      dragBegin: close,
+      dragBegin: () => {
+        drag.active = true;
+      },
+      dragEnd: () => {
+        drag.active = false;
+      },
     });
     list.append(row);
   }

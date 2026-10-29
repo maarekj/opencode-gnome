@@ -11,7 +11,7 @@ import { expandVariables, variablesOf, withScheme } from '../shared/direnv.ts';
 import { intercepted } from '../shared/sandbox.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { ProjectLink, Settings } from '../shared/settings.ts';
-import { attachContextMenu, labelMenuButton, type MenuItem } from './ContextMenu.ts';
+import { attachContextMenu, hosted, labelMenuButton, type MenuHost, type MenuItem } from './ContextMenu.ts';
 import { currentFolder, folderChooser } from './FolderChoice.ts';
 
 export interface Browser {
@@ -148,7 +148,7 @@ function askRemove(parent: Gtk.Widget, project: string, link: ProjectLink, ctx: 
   dialog.present(parent);
 }
 
-export function LinkPill({ link, project, dir, ctx, extra }: { link: ProjectLink; project: string; dir: () => string; ctx: LinkContext; extra?: () => readonly (readonly MenuItem[])[] }): Gtk.Widget {
+export function LinkPill({ link, project, dir, ctx, extra, host }: { link: ProjectLink; project: string; dir: () => string; ctx: LinkContext; extra?: () => readonly (readonly MenuItem[])[]; host?: MenuHost }): Gtk.Widget {
   const open = (browser: Browser | null): void => {
     openLink(link, dir(), browser).catch((e: unknown) => ctx.toast(`${link.name} : ${errorMessage(e)}`));
   };
@@ -162,7 +162,8 @@ export function LinkPill({ link, project, dir, ctx, extra }: { link: ProjectLink
   box.append(new Gtk.Label({ label: link.name }));
   button.child = box;
   button.connect('clicked', () => open(browserFor(ctx.settings, project)));
-  attachContextMenu(button, () => [
+  const anchor = host?.anchor ?? button;
+  attachContextMenu(button, () => hosted(host, [
     [
       { label: 'Ouvrir', activate: () => open(browserFor(ctx.settings, project)) },
       ...installedBrowsers().map((b) => ({ label: `Ouvrir dans ${b.name}`, activate: () => open(b) })),
@@ -179,11 +180,11 @@ export function LinkPill({ link, project, dir, ctx, extra }: { link: ProjectLink
             .catch((e: unknown) => ctx.toast(`${link.name} : ${errorMessage(e)}`));
         },
       },
-      { label: 'Modifier…', activate: () => askLink(button, project, dir(), ctx, link) },
-      { label: 'Supprimer…', activate: () => askRemove(button, project, link, ctx) },
+      { label: 'Modifier…', activate: () => askLink(anchor, project, dir(), ctx, link) },
+      { label: 'Supprimer…', activate: () => askRemove(anchor, project, link, ctx) },
     ],
     ...(extra?.() ?? []),
-  ]);
+  ]));
   return button;
 }
 

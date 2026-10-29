@@ -309,3 +309,44 @@ def test_dossier_signale_un_terminal_en_cours(run_app):
     app.click('button', 'veille')
     # terminal démarré : la pastille du dossier le signale
     app.find('toggle button', contains='1 terminal en cours', timeout=20)
+
+
+# ---------------------------------------------------------------- menu d'un dossier (#146)
+
+FOLDER = {
+    'links': {DIR: [{'id': f'l{i}', 'name': n, 'url': f'localhost:{3000 + i}'} for i, n in enumerate(['alpha', 'beta', 'gamma'])]},
+    'layout': {DIR: [{'folder': 'f1', 'name': 'outils', 'items': [{'link': 'l0'}, {'link': 'l1'}, {'link': 'l2'}]}]},
+}
+
+
+def test_modifier_un_lien_depuis_le_menu_d_un_dossier(run_app):
+    _, app = project(run_app, settings=FOLDER)
+    app.click('toggle button', contains='Dossier « outils »')
+    app.menu(app.find('button', 'beta'), 'Modifier…')
+    dialog = app.find('alert', 'Modifier le lien')
+    # menu du dossier fermé : le dialogue a le focus clavier (champ Nom), la saisie y arrive
+    wait_until(lambda: not app.has('button', 'alpha'), 5, 'menu du dossier fermé')
+    app.key('<Control>a')
+    app.type('bêta')
+    app.click('button', 'Enregistrer', within=dialog)
+    wait_until(lambda: [l['name'] for l in links(app)] == ['alpha', 'bêta', 'gamma'], 5, 'lien renommé au clavier')
+
+
+def test_reordonner_dans_le_menu_d_un_dossier(run_app):
+    from conftest import _OFFSET
+
+    _, app = project(run_app, settings=FOLDER)
+    app.click('toggle button', contains='Dossier « outils »')
+    src = app.find('button', 'gamma').get_extents(Atspi.CoordType.WINDOW)
+    dst = app.find('button', 'alpha').get_extents(Atspi.CoordType.WINDOW)
+    dx, dy = _OFFSET or (0, 0)
+    x = src.x + src.width // 2 + dx
+    y0 = src.y + src.height // 2 + dy
+    y1 = dst.y + dst.height // 4 + dy
+    # « gamma » glissé sur la moitié haute d'« alpha », sans quitter le menu (qui reste ouvert)
+    subprocess.run(['xdotool', 'mousemove', str(x), str(y0), 'mousedown', '1'], check=True)
+    for step in range(1, 16):
+        subprocess.run(['xdotool', 'mousemove', str(x), str(y0 + (y1 - y0) * step // 15)], check=True)
+        time.sleep(0.05)
+    subprocess.run(['xdotool', 'mouseup', '1'], check=True)
+    wait_until(lambda: order(app) == ['outils[link:l2,link:l0,link:l1]'], 5, 'ordre dans le dossier')

@@ -61,8 +61,11 @@ export interface ReorderOptions {
   readonly move: (key: string, before: string | null) => void;
   /** dossier : déposer au milieu de la pastille range `key` dedans ; false si refusé */
   readonly into?: (key: string) => boolean;
-  /** début du glisser (ex. fermer le menu d'un dossier) */
+  /** début et fin du glisser (ex. menu d'un dossier) */
   readonly dragBegin?: () => void;
+  readonly dragEnd?: () => void;
+  /** liste verticale (menu d'un dossier) : avant / après selon la moitié haute / basse */
+  readonly vertical?: boolean;
 }
 
 const TAG = 'pill:';
@@ -90,7 +93,10 @@ export function reorderable(widget: Gtk.Widget, key: string, opts: ReorderOption
     widget.add_css_class('dragging');
     opts.dragBegin?.();
   });
-  source.connect('drag-end', () => widget.remove_css_class('dragging'));
+  source.connect('drag-end', () => {
+    widget.remove_css_class('dragging');
+    opts.dragEnd?.();
+  });
   widget.add_controller(source);
   // la barre est dans une poignée de fenêtre (barre du haut d'Adw.ToolbarView) : au même seuil,
   // elle déplaçait la fenêtre avant que le glisser ne démarre. Un geste groupé avec la source
@@ -104,30 +110,34 @@ export function reorderable(widget: Gtk.Widget, key: string, opts: ReorderOption
   claim.group(source);
 
   const target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE);
-  const CLASSES = ['drop-before', 'drop-after', 'drop-into'];
-  const zone = (x: number): 'drop-before' | 'drop-after' | 'drop-into' => {
-    const w = widget.get_width();
-    if (opts.into !== undefined && x > w / 4 && x < (w * 3) / 4) return 'drop-into';
-    return x < w / 2 ? 'drop-before' : 'drop-after';
+  const CLASSES = ['drop-before', 'drop-after', 'drop-into', 'drop-above', 'drop-below'];
+  type Zone = 'drop-before' | 'drop-after' | 'drop-into';
+  const zone = (x: number, y: number): Zone => {
+    const pos = opts.vertical === true ? y : x;
+    const w = opts.vertical === true ? widget.get_height() : widget.get_width();
+    if (opts.into !== undefined && pos > w / 4 && pos < (w * 3) / 4) return 'drop-into';
+    return pos < w / 2 ? 'drop-before' : 'drop-after';
   };
+  /** classe du repère : trait à gauche / droite, ou en haut / bas d'une liste verticale */
+  const cls = (z: Zone): string => (opts.vertical === true && z !== 'drop-into' ? (z === 'drop-before' ? 'drop-above' : 'drop-below') : z);
   const clear = (): void => {
     for (const c of CLASSES) widget.remove_css_class(c);
   };
-  const mark = (x: number): Gdk.DragAction => {
-    const z = zone(x);
-    for (const c of CLASSES) if (c !== z) widget.remove_css_class(c);
-    widget.add_css_class(z);
+  const mark = (x: number, y: number): Gdk.DragAction => {
+    const c = cls(zone(x, y));
+    for (const other of CLASSES) if (other !== c) widget.remove_css_class(other);
+    widget.add_css_class(c);
     return Gdk.DragAction.MOVE;
   };
-  target.connect('enter', (_t: Gtk.DropTarget, x: number) => mark(x));
-  target.connect('motion', (_t: Gtk.DropTarget, x: number) => mark(x));
+  target.connect('enter', (_t: Gtk.DropTarget, x: number, y: number) => mark(x, y));
+  target.connect('motion', (_t: Gtk.DropTarget, x: number, y: number) => mark(x, y));
   target.connect('leave', clear);
-  target.connect('drop', (_t: Gtk.DropTarget, value: unknown, x: number) => {
+  target.connect('drop', (_t: Gtk.DropTarget, value: unknown, x: number, y: number) => {
     clear();
     if (typeof value !== 'string' || !value.startsWith(TAG)) return false;
     const moved = value.slice(TAG.length);
     if (moved === key) return false;
-    const z = zone(x);
+    const z = zone(x, y);
     if (z === 'drop-into') return opts.into?.(moved) ?? false;
     const ids = opts.order();
     const at = ids.indexOf(key);

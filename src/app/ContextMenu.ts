@@ -34,6 +34,30 @@ export function labelMenuButton(button: { readonly popover: Gtk.Popover | null }
   popover?.connect('show', () => labelMenuItems(popover));
 }
 
+/**
+ * Menu contextuel d'un élément affiché dans un autre menu (ex. menu d'un dossier) : ce menu est
+ * fermé avant chaque action, et les dialogues se rattachent à `anchor` (hors du menu) — sinon le
+ * menu garde le focus et le dialogue est inutilisable (#146).
+ */
+export interface MenuHost {
+  readonly anchor: Gtk.Widget;
+  readonly close: () => void;
+}
+
+/** Sections dont chaque action ferme d'abord le menu hôte. */
+export function hosted(host: MenuHost | undefined, sections: readonly (readonly MenuItem[])[]): readonly (readonly MenuItem[])[] {
+  if (host === undefined) return sections;
+  return sections.map((items) =>
+    items.map((i) => ({
+      label: i.label,
+      activate: () => {
+        host.close();
+        i.activate();
+      },
+    })),
+  );
+}
+
 /** menus ouverts, et fonctions à appeler quand ils sont tous refermés */
 const openMenus = new Set<Gtk.Popover>();
 const waiters: (() => void)[] = [];

@@ -7,7 +7,7 @@ import { errorMessage } from '../shared/errors.ts';
 import { prettyPath } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachArgv, cwdOf, terminalId, type TerminalManager } from '../shared/terminals.ts';
-import { attachContextMenu, type MenuItem } from './ContextMenu.ts';
+import { attachContextMenu, hosted, type MenuHost, type MenuItem } from './ContextMenu.ts';
 import { currentFolder, folderChooser } from './FolderChoice.ts';
 import type { TerminalDock } from './TerminalPanel.tsx';
 
@@ -112,9 +112,10 @@ export function terminalActions(t: ProjectTerminal, project: string, ctx: Termin
 }
 
 /** Menu contextuel d'un terminal (ouvrir, redémarrer / arrêter ou démarrer, modifier, supprimer). */
-export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, project: string, ctx: TerminalContext, extra: () => readonly (readonly MenuItem[])[] = () => []): void {
+export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, project: string, ctx: TerminalContext, extra: () => readonly (readonly MenuItem[])[] = () => [], host?: MenuHost): void {
   const act = terminalActions(t, project, ctx);
-  attachContextMenu(widget, () => [
+  const anchor = host?.anchor ?? widget;
+  attachContextMenu(widget, () => hosted(host, [
     [
       { label: 'Ouvrir', activate: act.open },
       ...(ctx.dock.enabled() ? [{ label: 'Ouvrir dans le terminal externe', activate: act.external }] : []),
@@ -126,11 +127,11 @@ export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, proje
         : [{ label: 'Démarrer en arrière-plan', activate: () => attempt(ctx, 'Démarrage impossible', () => ctx.manager.start(t, project)) }]),
     ],
     [
-      { label: 'Modifier…', activate: () => askTerminal(widget, project, ctx, t) },
-      { label: 'Supprimer…', activate: () => askRemoveTerminal(widget, project, t, ctx) },
+      { label: 'Modifier…', activate: () => askTerminal(anchor, project, ctx, t) },
+      { label: 'Supprimer…', activate: () => askRemoveTerminal(anchor, project, t, ctx) },
     ],
     ...extra(),
-  ]);
+  ]));
 }
 
 /**

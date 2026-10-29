@@ -412,6 +412,12 @@ row.unread .title {
 .drop-after {
   box-shadow: inset -3px 0 0 @accent_color;
 }
+.drop-above {
+  box-shadow: inset 0 3px 0 @accent_color;
+}
+.drop-below {
+  box-shadow: inset 0 -3px 0 @accent_color;
+}
 .drop-into {
   box-shadow: inset 0 0 0 2px @accent_color;
 }
