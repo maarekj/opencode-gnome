@@ -169,3 +169,45 @@ def test_ouvrir_dans_l_ide(run_app):
     btn = node if 'click' in node.actions else node.findChild(lambda n: 'click' in n.actions, retry=False)
     btn.doActionNamed('click')
     assert app.logged('IDE', DIR)
+
+
+# ---------------------------------------------------------------- ordre (glisser-déposer, #144)
+
+
+def drag(app, src, dst, right: bool) -> None:
+    """Glisse le nœud `src` sur la moitié gauche (ou droite) de `dst`, par petits pas."""
+    from conftest import _OFFSET
+
+    dx, dy = _OFFSET or (0, 0)
+    a = src.get_extents(Atspi.CoordType.WINDOW)
+    b = dst.get_extents(Atspi.CoordType.WINDOW)
+    y = a.y + a.height // 2 + dy
+    x0 = a.x + a.width // 2 + dx
+    x1 = b.x + (b.width * 3 // 4 if right else b.width // 4) + dx
+    subprocess.run(['xdotool', 'mousemove', str(x0), str(y), 'mousedown', '1'], check=True)
+    for step in range(1, 16):
+        subprocess.run(['xdotool', 'mousemove', str(x0 + (x1 - x0) * step // 15), str(y)], check=True)
+        time.sleep(0.05)
+    subprocess.run(['xdotool', 'mouseup', '1'], check=True)
+
+
+def test_reordonner_les_terminaux(run_app):
+    names = ['un', 'deux', 'trois']
+    settings = {'terminals': {DIR: [{'id': f't{i}', 'name': n, 'command': 'sleep 600'} for i, n in enumerate(names)]}}
+    _, app = project(run_app, settings=settings)
+    # « un » déposé sur la moitié droite de « deux » : après lui
+    drag(app, app.find('button', contains='un'), app.find('button', contains='deux'), right=True)
+    wait_until(lambda: [t['name'] for t in terminals(app)] == ['deux', 'un', 'trois'], 5, 'ordre enregistré')
+    # un simple clic ouvre toujours le terminal (pas de glisser)
+    assert app.find('button', contains='trois')
+
+
+def test_reordonner_les_liens(run_app):
+    names = ['alpha', 'beta', 'gamma']
+    settings = {'links': {DIR: [{'id': f'l{i}', 'name': n, 'url': f'localhost:{3000 + i}'} for i, n in enumerate(names)]}}
+    _, app = project(run_app, settings=settings)
+    # « gamma » déposé sur la moitié gauche d'« alpha » : en tête
+    drag(app, app.find('button', 'gamma'), app.find('button', 'alpha'), right=False)
+    wait_until(lambda: [l['name'] for l in links(app)] == ['gamma', 'alpha', 'beta'], 5, 'ordre enregistré')
+    app.click('button', 'beta')
+    assert app.logged('LIEN', 'localhost:3001')

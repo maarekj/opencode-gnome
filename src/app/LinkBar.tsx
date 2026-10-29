@@ -13,6 +13,7 @@ import { errorMessage } from '../shared/errors.ts';
 import type { ProjectLink, Settings } from '../shared/settings.ts';
 import { attachContextMenu, labelMenuButton } from './ContextMenu.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { pillScroller, reorderable } from './PillBar.ts';
 
 export interface Browser {
   readonly id: string;
@@ -243,14 +244,26 @@ export function LinkBar({ project, ctx, directory }: { project: Accessor<string 
   return (
     <Gtk.Box spacing={6} halign={Gtk.Align.END} hexpand visible={project((p) => p !== null)} cssClasses={['link-bar']}>
       <Gtk.Label label="Liens" cssClasses={['dim-label', 'caption']} visible={items((l) => l.length === 0)} />
-      <Gtk.ScrolledWindow hexpand={false} vscrollbarPolicy={Gtk.PolicyType.NEVER} hscrollbarPolicy={Gtk.PolicyType.AUTOMATIC} propagateNaturalWidth>
+      {pillScroller(
         <Gtk.Box
           spacing={6}
           $={(self: Gtk.Box) => {
-            onCleanup(keyedBox(self, items, (i) => `${i.project}|${i.link.id}|${i.link.name}|${i.link.url}`, (i) => LinkPill({ ...i, dir, ctx })));
+            onCleanup(
+              keyedBox(
+                self,
+                items,
+                (i) => `${i.project}|${i.link.id}|${i.link.name}|${i.link.url}`,
+                (i) => {
+                  const pill = LinkPill({ ...i, dir, ctx });
+                  // glisser-déposer : ordre des liens du projet (#144)
+                  reorderable(pill, 'link', i.link.id, () => items.peek().map((x) => x.link.id), (id, before) => ctx.settings.moveLink(i.project, id, before));
+                  return pill;
+                },
+              ),
+            );
           }}
-        />
-      </Gtk.ScrolledWindow>
+        />,
+      )}
       {BrowserButton({ project, ctx })}
       <Gtk.Button
         iconName="list-add-symbolic"

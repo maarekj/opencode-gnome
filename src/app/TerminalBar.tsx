@@ -10,6 +10,7 @@ import type { ProjectTerminal, Settings } from '../shared/settings.ts';
 import { attachArgv, cwdOf, terminalId, zellijInstalled, type TerminalManager } from '../shared/terminals.ts';
 import { attachContextMenu } from './ContextMenu.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { pillScroller, reorderable } from './PillBar.ts';
 import type { TerminalDock } from './TerminalPanel.tsx';
 
 export interface TerminalContext {
@@ -205,7 +206,7 @@ export function TerminalBar({ project, ctx }: { project: Accessor<string | null>
   ctx.manager.watch();
   return (
     <Gtk.Box spacing={6} cssClasses={['terminal-bar']} visible={project((p) => p !== null && zellijInstalled())}>
-      <Gtk.ScrolledWindow hexpand={false} vscrollbarPolicy={Gtk.PolicyType.NEVER} hscrollbarPolicy={Gtk.PolicyType.AUTOMATIC} propagateNaturalWidth>
+      {pillScroller(
         <Gtk.Box
           spacing={6}
           $={(self: Gtk.Box) => {
@@ -214,12 +215,17 @@ export function TerminalBar({ project, ctx }: { project: Accessor<string | null>
                 self,
                 items,
                 (i) => `${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.t.cwd ?? ''}|${i.running}`,
-                (i) => TerminalPill({ ...i, ctx }),
+                (i) => {
+                  const pill = TerminalPill({ ...i, ctx });
+                  // glisser-déposer : ordre des terminaux du projet (#144)
+                  reorderable(pill, 'terminal', i.t.id, () => items.peek().map((x) => x.t.id), (id, before) => ctx.settings.moveTerminal(i.project, id, before));
+                  return pill;
+                },
               ),
             );
           }}
-        />
-      </Gtk.ScrolledWindow>
+        />,
+      )}
       <Gtk.Button
         iconName="list-add-symbolic"
         tooltipText="Ajouter un terminal persistant (devenv up, pnpm dev…)"

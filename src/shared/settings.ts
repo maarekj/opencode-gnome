@@ -275,6 +275,15 @@ export class Settings {
     });
   }
 
+  /** Déplace un lien avant `before` (à la fin si null) : ordre de la barre des liens. */
+  moveLink(project: string, id: string, before: string | null): void {
+    this.update((d) => {
+      const list = d.links[project] ?? [];
+      const order = moveBefore(list.map((l) => l.id), id, before);
+      return { ...d, links: { ...d.links, [project]: order.map((x) => list.find((l) => l.id === x)).filter((l) => l !== undefined) } };
+    });
+  }
+
   removeLink(project: string, id: string): void {
     this.update((d) => {
       const { [project]: list = [], ...others } = d.links;
@@ -366,6 +375,15 @@ export class Settings {
       const list = d.terminals[project] ?? [];
       const next = list.some((t) => t.id === terminal.id) ? list.map((t) => (t.id === terminal.id ? terminal : t)) : [...list, terminal];
       return { ...d, terminals: { ...d.terminals, [project]: next } };
+    });
+  }
+
+  /** Déplace un terminal avant `before` (à la fin si null) : ordre de la barre des terminaux. */
+  moveTerminal(project: string, id: string, before: string | null): void {
+    this.update((d) => {
+      const list = d.terminals[project] ?? [];
+      const order = moveBefore(list.map((t) => t.id), id, before);
+      return { ...d, terminals: { ...d.terminals, [project]: order.map((x) => list.find((t) => t.id === x)).filter((t) => t !== undefined) } };
     });
   }
 

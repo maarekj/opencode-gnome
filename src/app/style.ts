@@ -403,4 +403,13 @@ row.unread .title {
 .terminal-scroll vte-terminal {
   padding: 2px 4px;
 }
+.dragging {
+  opacity: 0.4;
+}
+.drop-before {
+  box-shadow: inset 3px 0 0 @accent_color;
+}
+.drop-after {
+  box-shadow: inset -3px 0 0 @accent_color;
+}
 `;
