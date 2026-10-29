@@ -390,7 +390,7 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
     r.append(dot(kind));
     const labels = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
     labels.append(new Gtk.Label({ label: p.name, xalign: 0, ellipsize: Pango.EllipsizeMode.END }));
-    labels.append(new Gtk.Label({ label: `${phaseLabel(p.phase)}${p.restarts > 0 ? ` · ${p.restarts} redémarrage${p.restarts > 1 ? 's' : ''}` : ''}`, xalign: 0, cssClasses: ['caption', 'dim-label'] }));
+    labels.append(new Gtk.Label({ label: `${phaseLabel(p.phase)}${p.restarts > 0 ? ` · ${p.restarts} redémarrage${p.restarts > 1 ? 's' : ''}` : ''}${p.ports === undefined ? '' : ` · ${p.ports}`}`, xalign: 0, cssClasses: ['caption', 'dim-label'] }));
     r.append(labels);
     const button = (icon: string, tooltip: string, run: () => void, css: string[] = []): void => {
       const b = new Gtk.Button({ iconName: icon, tooltipText: tooltip, valign: Gtk.Align.CENTER, sensitive: idle, cssClasses: ['flat', 'circular', ...css] });

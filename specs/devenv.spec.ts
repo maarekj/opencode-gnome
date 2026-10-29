@@ -13,6 +13,15 @@ describe('devenv', () => {
     ]);
   });
 
+  it('lit les services qui exposent des ports (sortie réelle de devenv 2.4)', () => {
+    const out = 'mailpit                        ready restarts: 0 ports: smtp:17002, ui:17001\npostgres                       ready restarts: 0 ports: main:17003\nweb                            ready restarts: 0\n';
+    expect(parseProcessList(out)).toEqual([
+      { name: 'mailpit', phase: 'ready', restarts: 0, ports: 'smtp:17002, ui:17001' },
+      { name: 'postgres', phase: 'ready', restarts: 0, ports: 'main:17003' },
+      { name: 'web', phase: 'ready', restarts: 0 },
+    ]);
+  });
+
   it('nettoie les messages (couleurs, puces)', () => {
     expect(cleanMessage('  \u001B[31m×\u001B[0m No process manager is running. Start processes first with `devenv up -d`\n\n')).toBe('No process manager is running. Start processes first with `devenv up -d`');
   });

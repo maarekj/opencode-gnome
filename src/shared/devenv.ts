@@ -14,6 +14,8 @@ export interface DevenvProcess {
   /** phase brute de devenv : ready, running, starting, stopped, gave_up, failed, completed… */
   readonly phase: string;
   readonly restarts: number;
+  /** ports exposés, tels qu'affichés par devenv (« smtp:17002, ui:17001 ») ; absent sinon */
+  readonly ports?: string;
 }
 
 /** État du process manager : arrêté, en marche avec ses services, ou erreur (devenv absent…). */
@@ -48,13 +50,19 @@ const PHASE_LABEL: Readonly<Record<string, string>> = {
 
 export const phaseLabel = (phase: string): string => PHASE_LABEL[phase] ?? phase.replaceAll('_', ' ');
 
-/** Lit `devenv processes list` : une ligne « nom  phase restarts: N » par service. */
+/**
+ * Lit `devenv processes list` : une ligne « nom  phase [restarts: N] [ports: a:1, b:2] » par
+ * service ; tout autre texte en fin de ligne est toléré (#149).
+ */
 export function parseProcessList(out: string): DevenvProcess[] {
   const list: DevenvProcess[] = [];
   for (const line of out.split('\n')) {
-    const m = /^(\S+)\s+(\S+)(?:\s+restarts:\s*(\d+))?\s*$/u.exec(line.trim());
+    const m = /^(\S+)\s+([a-z_]+)\b(.*)$/u.exec(line.trim());
     if (m === null) continue;
-    list.push({ name: m[1] ?? '', phase: m[2] ?? '', restarts: Number(m[3] ?? 0) });
+    const rest = m[3] ?? '';
+    const restarts = /restarts:\s*(\d+)/u.exec(rest)?.[1];
+    const ports = /ports:\s*(.+?)\s*$/u.exec(rest)?.[1];
+    list.push({ name: m[1] ?? '', phase: m[2] ?? '', restarts: Number(restarts ?? 0), ...(ports === undefined ? {} : { ports }) });
   }
   return list;
 }

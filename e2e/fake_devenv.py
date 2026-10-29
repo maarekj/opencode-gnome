@@ -54,7 +54,8 @@ if not s['running']:
 name = rest[0] if rest else None
 if cmd == 'list':
     for k, v in s['processes'].items():
-        print(f'{k:<30} {v} restarts: {5 if v == "gave_up" else 0}')
+        ports = ' ports: main:5432' if k == 'postgres' else ''
+        print(f'{k:<30} {v} restarts: {5 if v == "gave_up" else 0}{ports}')
 elif cmd == 'down':
     s['running'] = False
 elif cmd in ('start', 'restart'):
