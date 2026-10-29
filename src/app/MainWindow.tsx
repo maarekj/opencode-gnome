@@ -15,6 +15,7 @@ import { reloadProjectConfig } from './ReloadConfig.ts';
 import { type TasksMonitor } from './TasksWindow.tsx';
 import { TerminalManager } from '../shared/terminals.ts';
 import { type TerminalContext } from './TerminalBar.tsx';
+import { devenvAction, devenvDir, devenvStatus, phaseKind } from '../shared/devenv.ts';
 import { TerminalDock } from './TerminalPanel.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { openSearch } from './SearchDialog.ts';
@@ -112,25 +113,70 @@ export interface WindowApi {
 /** Fenêtres dont la fermeture a été confirmée : leur prochaine `close-request` passe. */
 const closeConfirmed = new WeakSet<Gtk.Window>();
 
+/** Services devenv en marche : un par dossier (process manager), avec ses services actifs. */
+interface RunningDevenv {
+  readonly dir: string;
+  readonly label: string;
+}
+
+/** Process managers devenv des éléments de la barre (tous projets) qui ont des services actifs. */
+async function runningDevenvs(settings: Settings): Promise<RunningDevenv[]> {
+  const byDir = new Map<string, string>();
+  for (const [project, list] of Object.entries(settings.data.peek().devenvs))
+    for (const d of list) {
+      const dir = devenvDir(d, project);
+      if (!byDir.has(dir)) byDir.set(dir, `${d.name} — ${GLib.path_get_basename(project)}`);
+    }
+  const found = await Promise.all(
+    [...byDir].map(async ([dir, label]) => {
+      const state = await devenvStatus(dir).catch(() => null);
+      if (state?.kind !== 'running') return null;
+      const active = state.processes.filter((p) => phaseKind(p.phase) === 'ok' || phaseKind(p.phase) === 'busy').length;
+      return active === 0 ? null : { dir, label: `${label} (${active} service${active > 1 ? 's' : ''} devenv)` };
+    }),
+  );
+  return found.filter((x) => x !== null);
+}
+
 /**
- * Fermeture de la fenêtre : si des terminaux persistants tournent, propose de les arrêter
- * (Annuler / Laisser tourner / Tout arrêter) ; les terminaux intégrés ouverts (arrêtés avec la
- * fenêtre) sont signalés aussi. Renvoie true pour suspendre la fermeture.
+ * Fermeture de la fenêtre : si des terminaux persistants ou des services devenv tournent, propose
+ * de les arrêter (Annuler / Laisser tourner / Tout arrêter) ; les terminaux intégrés ouverts
+ * (arrêtés avec la fenêtre) sont signalés aussi. Renvoie true pour suspendre la fermeture.
  */
 function confirmClose(win: Adw.ApplicationWindow, settings: Settings, manager: TerminalManager, dock: TerminalDock): boolean {
   if (closeConfirmed.has(win)) return false;
+  const close = (): void => {
+    closeConfirmed.add(win);
+    win.close();
+  };
+  const hasDevenv = Object.values(settings.data.peek().devenvs).some((l) => l.length > 0);
+  if (!hasDevenv) return askClose(win, settings, manager, dock, [], close);
+  // état des process managers : lu avant de décider (quelques dizaines de ms par dossier)
+  void runningDevenvs(settings)
+    .catch(() => [])
+    .then((devenvs) => {
+      if (!askClose(win, settings, manager, dock, devenvs, close)) close();
+      return null;
+    });
+  return true;
+}
+
+/** Dialogue de fermeture ; false s'il n'y a rien à signaler (fermeture directe). */
+function askClose(win: Adw.ApplicationWindow, settings: Settings, manager: TerminalManager, dock: TerminalDock, devenvs: readonly RunningDevenv[], close: () => void): boolean {
   const running = Object.entries(settings.data.peek().terminals).flatMap(([project, list]) =>
     list.filter((t) => manager.isRunning(t.id)).map((t) => ({ t, label: `${t.name} — ${GLib.path_get_basename(project)}` })),
   );
   const integrated = dock.livingTabs().map((t) => `${t.title} — ${GLib.path_get_basename(t.project)}`);
-  if (running.length === 0 && integrated.length === 0) return false;
-  const n = running.length;
+  if (running.length === 0 && integrated.length === 0 && devenvs.length === 0) return false;
+  const n = running.length + devenvs.length;
+  const labels = [...running.map((r) => r.label), ...devenvs.map((d) => d.label)];
   const parts = [
-    n === 0 ? '' : `${running.map((r) => `• ${r.label}`).join('\n')}\n\nLes laisser tourner en arrière-plan ou les arrêter ?`,
+    n === 0 ? '' : `${labels.map((l) => `• ${l}`).join('\n')}\n\nLes laisser tourner en arrière-plan ou les arrêter ?`,
     integrated.length === 0 ? '' : `${n === 0 ? 'Ils seront arrêtés' : 'Terminaux intégrés, arrêtés'} avec la fenêtre :\n${integrated.map((l) => `• ${l}`).join('\n')}`,
   ].filter((x) => x !== '');
+  const what = running.length > 0 && devenvs.length > 0 ? 'Des terminaux et des services devenv tournent encore' : devenvs.length > 0 ? (devenvs.length === 1 ? 'Des services devenv tournent encore' : `Les services de ${devenvs.length} devenv tournent encore`) : n === 1 ? 'Un terminal tourne encore' : `${n} terminaux tournent encore`;
   const dialog = new Adw.AlertDialog({
-    heading: n === 0 ? 'Des terminaux intégrés sont ouverts' : n === 1 ? 'Un terminal tourne encore' : `${n} terminaux tournent encore`,
+    heading: n === 0 ? 'Des terminaux intégrés sont ouverts' : what,
     body: parts.join('\n\n'),
     defaultResponse: 'keep',
     closeResponse: 'cancel',
@@ -141,17 +187,13 @@ function confirmClose(win: Adw.ApplicationWindow, settings: Settings, manager: T
     dialog.add_response('stop', n === 1 ? 'Arrêter' : 'Tout arrêter');
     dialog.set_response_appearance('stop', Adw.ResponseAppearance.DESTRUCTIVE);
   }
-  const close = (): void => {
-    closeConfirmed.add(win);
-    win.close();
-  };
   dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
     if (response === 'cancel') return;
     if (response === 'keep') {
       close();
       return;
     }
-    void Promise.allSettled(running.map((r) => manager.stop(r.t))).then(close);
+    void Promise.allSettled([...running.map((r) => manager.stop(r.t)), ...devenvs.map((d) => devenvAction(d.dir, 'down'))]).then(close);
   });
   dialog.present(win);
   return true;

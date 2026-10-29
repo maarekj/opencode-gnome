@@ -97,3 +97,49 @@ def test_fermeture_avec_terminal_persistant(run_app):
     dialog = app.find('alert', 'Un terminal tourne encore')
     app.click('button', 'Arrêter', within=dialog)
     wait_until(lambda: app.proc.poll() is not None or not app.has('frame', 'opencode'), 15, 'fenêtre fermée')
+
+
+def devenv_env(tmp_path, running: bool):
+    """Faux `devenv` (e2e/fake_devenv.py) en tête du PATH, état dans tmp_path."""
+    import json
+    import os
+    import pathlib
+
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'devenv').symlink_to(pathlib.Path(__file__).parent / 'fake_devenv.py')
+    state = tmp_path / 'devenv.json'
+    state.write_text(json.dumps({'running': running, 'processes': {'postgres': 'ready', 'web': 'ready'}}))
+    return state, {'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'FAKE_DEVENV_STATE': str(state)}
+
+
+DEVENV = {'devenvs': {DIR: [{'id': 'd1', 'name': 'services'}]}}
+
+
+def test_fermeture_avec_services_devenv_laisses(run_app, tmp_path):
+    state, env = devenv_env(tmp_path, running=True)
+    _, app = run_app(scenario('demo'), settings=DEVENV, env=env)
+    app.find('frame', 'opencode').doActionNamed('window.close')
+    dialog = app.find('alert', 'Des services devenv tournent encore')
+    assert app.text_visible('services — demo (2 services devenv)')
+    app.click('button', 'Laisser tourner', within=dialog)
+    wait_until(lambda: app.proc.poll() is not None or not app.has('frame', 'opencode'), 10, 'fenêtre fermée')
+    assert 'processes down' not in (tmp_path / 'devenv.json.log').read_text()
+
+
+def test_fermeture_avec_services_devenv_arretes(run_app, tmp_path):
+    state, env = devenv_env(tmp_path, running=True)
+    _, app = run_app(scenario('demo'), settings=DEVENV, env=env)
+    app.find('frame', 'opencode').doActionNamed('window.close')
+    dialog = app.find('alert', 'Des services devenv tournent encore')
+    app.click('button', 'Arrêter', within=dialog)
+    wait_until(lambda: app.proc.poll() is not None or not app.has('frame', 'opencode'), 10, 'fenêtre fermée')
+    assert f'processes down @ {DIR}' in (tmp_path / 'devenv.json.log').read_text()
+
+
+def test_fermeture_sans_service_devenv_en_marche(run_app, tmp_path):
+    _, env = devenv_env(tmp_path, running=False)
+    _, app = run_app(scenario('demo'), settings=DEVENV, env=env)
+    app.find('frame', 'opencode').doActionNamed('window.close')
+    # rien à signaler : fermeture directe
+    wait_until(lambda: app.proc.poll() is not None or not app.has('frame', 'opencode'), 10, 'fenêtre fermée')
