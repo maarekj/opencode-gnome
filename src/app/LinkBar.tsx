@@ -6,14 +6,13 @@ import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
-import { createComputed, onCleanup, type Accessor } from 'gnim';
+import { onCleanup, type Accessor } from 'gnim';
 import { expandVariables, variablesOf, withScheme } from '../shared/direnv.ts';
 import { intercepted } from '../shared/sandbox.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { ProjectLink, Settings } from '../shared/settings.ts';
-import { attachContextMenu, labelMenuButton } from './ContextMenu.ts';
-import { keyedBox } from './KeyedBox.ts';
-import { pillScroller, reorderable } from './PillBar.ts';
+import { attachContextMenu, labelMenuButton, type MenuItem } from './ContextMenu.ts';
+import { currentFolder, folderChooser } from './FolderChoice.ts';
 
 export interface Browser {
   readonly id: string;
@@ -48,7 +47,7 @@ export function installedBrowsers(): Browser[] {
 }
 
 /** Navigateur du projet, sinon celui par défaut du système. */
-function browserFor(settings: Settings, project: string): Browser | null {
+export function browserFor(settings: Settings, project: string): Browser | null {
   const browsers = installedBrowsers();
   const own = settings.data.peek().browsers[project];
   return browsers.find((b) => b.id === own) ?? browsers[0] ?? null;
@@ -61,7 +60,7 @@ export interface LinkContext {
 }
 
 /** Ouvre un lien : variables résolues dans `dir`, puis navigateur choisi. */
-async function openLink(link: ProjectLink, dir: string, browser: Browser | null): Promise<void> {
+export async function openLink(link: ProjectLink, dir: string, browser: Browser | null): Promise<void> {
   const url = withScheme(await expandVariables(link.url.trim(), dir));
   if (intercepted('LIEN', `${browser?.id ?? 'défaut'} ${url}`)) return;
   if (browser === null) Gio.AppInfo.launch_default_for_uri(url, null);
@@ -70,13 +69,15 @@ async function openLink(link: ProjectLink, dir: string, browser: Browser | null)
 
 const nameFromUrl = (url: string): string => url.replace(/^[a-z]+:\/\//iu, '').replace(/\/$/u, '').slice(0, 30) || 'Lien';
 
-/** Dialogue d'ajout (`current` absent) ou de modification d'un lien. */
-function askLink(parent: Gtk.Widget, project: string, dir: string, ctx: LinkContext, current?: ProjectLink): void {
+/** Dialogue d'ajout (`current` absent) ou de modification d'un lien ; `folder` : comme askTerminal. */
+export function askLink(parent: Gtk.Widget, project: string, dir: string, ctx: LinkContext, current?: ProjectLink, folder: string | null = null): void {
   const name = new Adw.EntryRow({ title: 'Nom (vide : déduit de l’adresse)', text: current?.name ?? '' });
   const url = new Adw.EntryRow({ title: 'Adresse (ex. localhost:$PORT_WEB/admin)', text: current?.url ?? '' });
   const preview = new Adw.ActionRow({ title: 'Ouvrira', subtitle: '', cssClasses: ['property'] });
   const group = new Adw.PreferencesGroup();
   for (const r of [name, url, preview]) group.add(r);
+  const place = folderChooser(ctx.settings, project, current === undefined ? folder : currentFolder(ctx.settings, project, `link:${current.id}`));
+  if (place.row !== null) group.add(place.row);
   const dialog = new Adw.AlertDialog({
     heading: current === undefined ? 'Nouveau lien' : 'Modifier le lien',
     body: 'Variables possibles dans l’adresse ($PORT_WEB, ${HOST}…) : lues dans le direnv du dossier, donc différentes d’un worktree à l’autre.',
@@ -130,7 +131,7 @@ function askLink(parent: Gtk.Widget, project: string, dir: string, ctx: LinkCont
     const taken = new Set((ctx.settings.data.peek().links[project] ?? []).map((l) => l.id));
     let id = current?.id ?? `l${Date.now().toString(36)}`;
     while (!taken.has(current?.id ?? '') && taken.has(id)) id += 'x';
-    ctx.settings.saveLink(project, { id, name: name.text.trim() === '' ? nameFromUrl(text) : name.text.trim(), url: text });
+    ctx.settings.saveLink(project, { id, name: name.text.trim() === '' ? nameFromUrl(text) : name.text.trim(), url: text }, place.value());
   });
   dialog.present(parent);
   (current === undefined ? url : name).grab_focus();
@@ -147,7 +148,7 @@ function askRemove(parent: Gtk.Widget, project: string, link: ProjectLink, ctx: 
   dialog.present(parent);
 }
 
-function LinkPill({ link, project, dir, ctx }: { link: ProjectLink; project: string; dir: () => string; ctx: LinkContext }): Gtk.Widget {
+export function LinkPill({ link, project, dir, ctx, extra }: { link: ProjectLink; project: string; dir: () => string; ctx: LinkContext; extra?: () => readonly (readonly MenuItem[])[] }): Gtk.Widget {
   const open = (browser: Browser | null): void => {
     openLink(link, dir(), browser).catch((e: unknown) => ctx.toast(`${link.name} : ${errorMessage(e)}`));
   };
@@ -181,12 +182,13 @@ function LinkPill({ link, project, dir, ctx }: { link: ProjectLink; project: str
       { label: 'Modifier…', activate: () => askLink(button, project, dir(), ctx, link) },
       { label: 'Supprimer…', activate: () => askRemove(button, project, link, ctx) },
     ],
+    ...(extra?.() ?? []),
   ]);
   return button;
 }
 
 /** Bouton divisé du navigateur du projet : icône du navigateur ; flèche : choix pour ce projet. */
-function BrowserButton({ project, ctx }: { project: Accessor<string | null>; ctx: LinkContext }): Gtk.Widget {
+export function BrowserButton({ project, ctx }: { project: Accessor<string | null>; ctx: LinkContext }): Gtk.Widget {
   const button = new Adw.SplitButton({ valign: Gtk.Align.CENTER, cssClasses: ['flat', 'link-browser'] });
   const group = new Gio.SimpleActionGroup();
   button.insert_action_group('browser', group);
@@ -229,52 +231,3 @@ function BrowserButton({ project, ctx }: { project: Accessor<string | null>; ctx
   onCleanup(ctx.settings.data.subscribe(update));
   return button;
 }
-
-/**
- * Liens du projet `project`. `directory` : dossier dont le direnv résout les variables (dossier de
- * la session, son worktree), par défaut celui du projet.
- */
-export function LinkBar({ project, ctx, directory }: { project: Accessor<string | null>; ctx: LinkContext; directory?: () => string | null }): JSX.Element {
-  const items = createComputed(() => {
-    const p = project();
-    if (p === null) return [];
-    return (ctx.settings.data().links[p] ?? []).map((link) => ({ link, project: p }));
-  });
-  const dir = (): string => directory?.() ?? project.peek() ?? GLib.get_home_dir();
-  return (
-    <Gtk.Box spacing={6} halign={Gtk.Align.END} hexpand visible={project((p) => p !== null)} cssClasses={['link-bar']}>
-      <Gtk.Label label="Liens" cssClasses={['dim-label', 'caption']} visible={items((l) => l.length === 0)} />
-      {pillScroller(
-        <Gtk.Box
-          spacing={6}
-          $={(self: Gtk.Box) => {
-            onCleanup(
-              keyedBox(
-                self,
-                items,
-                (i) => `${i.project}|${i.link.id}|${i.link.name}|${i.link.url}`,
-                (i) => {
-                  const pill = LinkPill({ ...i, dir, ctx });
-                  // glisser-déposer : ordre des liens du projet (#144)
-                  reorderable(pill, 'link', i.link.id, () => items.peek().map((x) => x.link.id), (id, before) => ctx.settings.moveLink(i.project, id, before));
-                  return pill;
-                },
-              ),
-            );
-          }}
-        />,
-      )}
-      {BrowserButton({ project, ctx })}
-      <Gtk.Button
-        iconName="list-add-symbolic"
-        tooltipText="Épingler un lien (app locale, admin, documentation…)"
-        cssClasses={['flat', 'circular', 'terminal-add']}
-        onClicked={(self: Gtk.Button) => {
-          const p = project.peek();
-          if (p !== null) askLink(self, p, dir(), ctx);
-        }}
-      />
-    </Gtk.Box>
-  );
-}
-

@@ -412,4 +412,31 @@ row.unread .title {
 .drop-after {
   box-shadow: inset -3px 0 0 @accent_color;
 }
+.drop-into {
+  box-shadow: inset 0 0 0 2px @accent_color;
+}
+/* dossier : bouton à menu, la pastille est son bouton interne */
+menubutton.folder-pill {
+  padding: 0;
+  min-height: 0;
+  background: none;
+}
+menubutton.folder-pill > button {
+  border-radius: 999px;
+  padding: 2px 12px;
+  min-height: 26px;
+  font-size: 0.9em;
+  background: alpha(currentColor, 0.08);
+}
+menubutton.folder-pill > button:hover {
+  background: alpha(currentColor, 0.14);
+}
+/* terminal en cours dans le dossier */
+menubutton.folder-pill.running > button {
+  background: alpha(var(--success-color), 0.20);
+  box-shadow: inset 0 0 0 1px alpha(var(--success-color), 0.6);
+}
+.folder-row {
+  border-radius: 8px;
+}
 `;

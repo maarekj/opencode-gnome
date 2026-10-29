@@ -51,14 +51,21 @@ Le bouton git de l'en-tête ouvre une fenêtre séparée : fichiers modifiés (d
 
 ## Terminaux
 
+- **Barre du projet**, sous l'en-tête : terminaux persistants et liens épinglés, mélangés dans
+  l'ordre choisi par glisser-déposer, et **dossiers** (ex. un par worktree, « utilitaires »). Le
+  bouton **+** ajoute un terminal, un lien ou un dossier.
 - **Terminaux persistants** par projet (zellij) : `devenv up`, `pnpm dev`… tournent en
-  arrière-plan ; leurs pastilles, dans la barre des terminaux du projet, permettent de les rouvrir, redémarrer
-  ou arrêter.
+  arrière-plan ; leurs pastilles permettent de les rouvrir, redémarrer ou arrêter.
+- **Dossiers** : un clic ouvre la liste de leurs terminaux et liens ; un dossier contenant un
+  terminal en cours est coloré et affiche leur nombre. Glisser une pastille au milieu d'un dossier
+  l'y range ; clic droit → « Déplacer dans… » / « Sortir du dossier » ; clic droit sur un dossier :
+  renommer, supprimer (son contenu reste dans la barre).
 - **Terminal intégré** : **Ctrl+Maj+J** ouvre ou ferme le panneau à onglets du projet (shell,
   terminaux persistants, `opencode attach`). Copier / coller : **Ctrl+Maj+C** / **Ctrl+Maj+V** ;
   zoom : **Ctrl+plus**, **Ctrl+moins**, **Ctrl+0**.
-- **Liens épinglés** par projet (à droite de la barre des terminaux) : adresses web, avec les
-  variables `$VAR` du direnv du projet.
+- **Liens épinglés** par projet : adresses web, avec les variables `$VAR` du direnv du projet ;
+  le navigateur du projet se choisit à droite de la barre.
+- En ligne de commande : `ocg terminal`, `ocg link` (option `--folder`) et `ocg folder`.
 - Le projet s'ouvre aussi dans un **IDE** (en-tête ou menu du projet).
 
 ## Tâches planifiées

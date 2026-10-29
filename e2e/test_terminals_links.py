@@ -41,8 +41,14 @@ def links(app) -> list:
 needs_zellij = pytest.mark.skipif(shutil.which('zellij') is None, reason='zellij absent')
 
 
+def add_menu(app, entry: str) -> None:
+    """Bouton « + » de la barre du projet, puis l'entrée `entry` de son menu."""
+    app.click('toggle button', contains='Ajouter un terminal, un lien ou un dossier')
+    app.find('menu item', entry).doActionNamed('click')
+
+
 def add_terminal(app, name='Serveur', command='sleep 600'):
-    app.click('button', contains='Ajouter un terminal persistant')
+    add_menu(app, 'Nouveau terminal persistant…')
     dialog = app.find('alert', 'Nouveau terminal')
     fill(app, dialog, [name, command])
     app.click('button', 'Ajouter', within=dialog)
@@ -113,7 +119,7 @@ def test_terminal_externe_si_le_terminal_integre_est_desactive(run_app):
 # ---------------------------------------------------------------- liens
 
 def add_link(app, name: str, url: str):
-    app.click('button', contains='Épingler un lien')
+    add_menu(app, 'Nouveau lien…')
     dialog = app.find('alert', 'Nouveau lien')
     fill(app, dialog, [name, url])
     return dialog
@@ -191,13 +197,25 @@ def drag(app, src, dst, right: bool) -> None:
     subprocess.run(['xdotool', 'mouseup', '1'], check=True)
 
 
+def order(app) -> list[str]:
+    """Disposition de la barre du projet (clés), dossiers avec leur contenu entre crochets."""
+    out = []
+    for e in app.settings().get('layout', {}).get(DIR, []):
+        if 'folder' in e:
+            inner = ','.join(f"{'terminal:' + i['terminal'] if 'terminal' in i else 'link:' + i['link']}" for i in e['items'])
+            out.append(f"{e['name']}[{inner}]")
+        else:
+            out.append('terminal:' + e['terminal'] if 'terminal' in e else 'link:' + e['link'])
+    return out
+
+
 def test_reordonner_les_terminaux(run_app):
     names = ['un', 'deux', 'trois']
     settings = {'terminals': {DIR: [{'id': f't{i}', 'name': n, 'command': 'sleep 600'} for i, n in enumerate(names)]}}
     _, app = project(run_app, settings=settings)
     # « un » déposé sur la moitié droite de « deux » : après lui
     drag(app, app.find('button', contains='un'), app.find('button', contains='deux'), right=True)
-    wait_until(lambda: [t['name'] for t in terminals(app)] == ['deux', 'un', 'trois'], 5, 'ordre enregistré')
+    wait_until(lambda: order(app) == ['terminal:t1', 'terminal:t0', 'terminal:t2'], 5, 'ordre enregistré')
     # un simple clic ouvre toujours le terminal (pas de glisser)
     assert app.find('button', contains='trois')
 
@@ -208,6 +226,86 @@ def test_reordonner_les_liens(run_app):
     _, app = project(run_app, settings=settings)
     # « gamma » déposé sur la moitié gauche d'« alpha » : en tête
     drag(app, app.find('button', 'gamma'), app.find('button', 'alpha'), right=False)
-    wait_until(lambda: [l['name'] for l in links(app)] == ['gamma', 'alpha', 'beta'], 5, 'ordre enregistré')
+    wait_until(lambda: order(app) == ['link:l2', 'link:l0', 'link:l1'], 5, 'ordre enregistré')
     app.click('button', 'beta')
     assert app.logged('LIEN', 'localhost:3001')
+
+
+# ---------------------------------------------------------------- barre mélangée et dossiers (#145)
+
+
+def test_melanger_terminaux_et_liens_et_ranger_dans_un_dossier(run_app):
+    settings = {
+        'terminals': {DIR: [{'id': 't0', 'name': 'serveur', 'command': 'sleep 600'}]},
+        'links': {DIR: [{'id': 'l0', 'name': 'admin', 'url': 'localhost:3000'}]},
+        'layout': {DIR: [{'terminal': 't0'}, {'link': 'l0'}, {'folder': 'f1', 'name': 'worktree 1', 'items': []}]},
+    }
+    _, app = project(run_app, settings=settings)
+    # lien glissé avant le terminal : mélangés dans la même barre
+    drag(app, app.find('button', 'admin'), app.find('button', contains='serveur'), right=False)
+    wait_until(lambda: order(app)[:2] == ['link:l0', 'terminal:t0'], 5, 'lien avant le terminal')
+    # terminal déposé au milieu du dossier : rangé dedans
+    folder = app.find('toggle button', contains='Dossier « worktree 1 »')
+    drag_into(app, app.find('button', contains='serveur'), folder)
+    wait_until(lambda: order(app) == ['link:l0', 'worktree 1[terminal:t0]'], 5, 'terminal dans le dossier')
+    # menu du dossier : le terminal y est ; « Sortir du dossier » par son menu contextuel
+    app.click('toggle button', contains='Dossier « worktree 1 »')
+    row = app.find('button', 'serveur')
+    app.menu(row, 'Sortir du dossier')
+    wait_until(lambda: order(app) == ['link:l0', 'worktree 1[]', 'terminal:t0'], 5, 'sorti du dossier')
+
+
+def drag_into(app, src, dst) -> None:
+    """Glisse `src` au milieu de `dst` (dossier)."""
+    from conftest import _OFFSET
+
+    dx, dy = _OFFSET or (0, 0)
+    a = src.get_extents(Atspi.CoordType.WINDOW)
+    b = dst.get_extents(Atspi.CoordType.WINDOW)
+    y = a.y + a.height // 2 + dy
+    x0 = a.x + a.width // 2 + dx
+    x1 = b.x + b.width // 2 + dx
+    subprocess.run(['xdotool', 'mousemove', str(x0), str(y), 'mousedown', '1'], check=True)
+    for step in range(1, 16):
+        subprocess.run(['xdotool', 'mousemove', str(x0 + (x1 - x0) * step // 15), str(y)], check=True)
+        time.sleep(0.05)
+    subprocess.run(['xdotool', 'mouseup', '1'], check=True)
+
+
+def test_creer_renommer_supprimer_un_dossier(run_app):
+    settings = {'links': {DIR: [{'id': 'l0', 'name': 'admin', 'url': 'localhost:3000'}]}}
+    _, app = project(run_app, settings=settings)
+    add_menu(app, 'Nouveau dossier…')
+    dialog = app.find('alert', 'Nouveau dossier')
+    fill(app, dialog, ['utilitaires'])
+    app.click('button', 'Créer', within=dialog)
+    wait_until(lambda: order(app) == ['link:l0', 'utilitaires[]'], 5, 'dossier créé')
+    # lien rangé par son menu contextuel
+    app.menu(app.find('button', 'admin'), 'Déplacer dans « utilitaires »')
+    wait_until(lambda: order(app) == ['utilitaires[link:l0]'], 5, 'lien rangé')
+    folder = app.find('toggle button', contains='Dossier « utilitaires »')
+    app.menu(folder, 'Renommer…')
+    dialog = app.find('alert', 'Renommer le dossier')
+    fill(app, dialog, ['outils'])
+    app.click('button', 'Renommer', within=dialog)
+    wait_until(lambda: order(app) == ['outils[link:l0]'], 5, 'dossier renommé')
+    app.menu(app.find('toggle button', contains='Dossier « outils »'), 'Supprimer le dossier…')
+    dialog = app.find('alert', 'Supprimer le dossier ?')
+    app.click('button', 'Supprimer', within=dialog)
+    # contenu remis dans la barre
+    wait_until(lambda: order(app) == ['link:l0'], 5, 'dossier supprimé')
+
+
+@needs_zellij
+def test_dossier_signale_un_terminal_en_cours(run_app):
+    settings = {
+        'terminals': {DIR: [{'id': 'og-e2e-folder', 'name': 'veille', 'command': 'sleep 600'}]},
+        'layout': {DIR: [{'folder': 'f1', 'name': 'worktree 1', 'items': [{'terminal': 'og-e2e-folder'}]}]},
+        'terminalIntegrated': False,
+    }
+    _, app = project(run_app, settings=settings)
+    app.find('toggle button', contains='Dossier « worktree 1 » : 1 élément')
+    app.click('toggle button', contains='Dossier « worktree 1 »')
+    app.click('button', 'veille')
+    # terminal démarré : la pastille du dossier le signale
+    app.find('toggle button', contains='1 terminal en cours', timeout=20)

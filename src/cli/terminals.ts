@@ -3,6 +3,7 @@
 import { Settings, type ProjectTerminal } from '../shared/settings.ts';
 import { TerminalManager, cwdOf, terminalId, zellijInstalled } from '../shared/terminals.ts';
 import { parseArgs, UsageError } from './args.ts';
+import { folderName, folderOption } from './folders.ts';
 import { projectDir } from './project.ts';
 
 export const TERMINAL_HELP = `ocg terminal — terminaux persistants d'un projet
@@ -13,8 +14,8 @@ barre « Terminaux » du projet (ouvrir, redémarrer, arrêter).
 
 Usage :
   ocg terminal list [--project DIR] [--all] [--json]   terminaux du projet (--all : tous les projets) et leur état
-  ocg terminal add --name NOM [--command CMD] [--cwd SOUS-DOSSIER] [--start] [--project DIR]
-  ocg terminal edit <terminal> [--name NOM] [--command CMD] [--cwd SOUS-DOSSIER] [--project DIR]
+  ocg terminal add --name NOM [--command CMD] [--cwd SOUS-DOSSIER] [--folder DOSSIER] [--start] [--project DIR]
+  ocg terminal edit <terminal> [--name NOM] [--command CMD] [--cwd SOUS-DOSSIER] [--folder DOSSIER] [--project DIR]
   ocg terminal rm <terminal> [--project DIR]         (arrête la session si elle tourne)
   ocg terminal start | stop | restart <terminal> [--project DIR]
 
@@ -22,6 +23,8 @@ Options :
   --project DIR   projet (défaut : racine git du dossier courant, sinon le dossier courant)
   --command CMD   commande lancée par le shell de l'utilisateur ; vide : simple shell
   --cwd DIR       répertoire de lancement, relatif au projet (défaut : racine du projet)
+  --folder NOM    range le terminal dans ce dossier de la barre (créé s'il n'existe pas) ;
+                  '' : le sort de son dossier (voir ocg folder help)
   --start         démarre le terminal juste après l'avoir ajouté
 
 <terminal> : identifiant (og-projet-nom) ou nom.
@@ -42,7 +45,7 @@ function find(settings: Settings, project: string, ref: string | undefined): Pro
   return t;
 }
 
-const describe = (t: ProjectTerminal, project: string, running: boolean): Record<string, unknown> => ({ ...t, project, cwd: cwdOf(t, project), running });
+const describe = (settings: Settings, t: ProjectTerminal, project: string, running: boolean): Record<string, unknown> => ({ ...t, project, cwd: cwdOf(t, project), running, folder: folderName(settings, project, `terminal:${t.id}`) });
 
 export async function terminalCommand(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -61,10 +64,10 @@ export async function terminalCommand(argv: readonly string[]): Promise<number> 
     case 'list': {
       const all = settings.data.peek().terminals;
       const entries = args.flags.has('all') ? Object.entries(all) : [[project, all[project] ?? []] as const];
-      const rows = entries.flatMap(([p, list]) => list.map((t) => describe(t, p, manager.isRunning(t.id))));
+      const rows = entries.flatMap(([p, list]) => list.map((t) => describe(settings, t, p, manager.isRunning(t.id))));
       if (json) print(JSON.stringify(rows, null, 2));
       else if (rows.length === 0) print(`Aucun terminal dans ${project}. Ajoute-en un : ocg terminal add --name web --command "pnpm dev"`);
-      else for (const r of rows) print(`${String(r['id'])}  ${String(r['name'])}  ${r['running'] === true ? '● en cours' : '○ arrêté'}\n    ${String(r['command']) === '' ? '(shell)' : String(r['command'])}  ·  ${String(r['cwd'])}`);
+      else for (const r of rows) print(`${String(r['id'])}  ${String(r['name'])}  ${r['running'] === true ? '● en cours' : '○ arrêté'}${typeof r['folder'] === 'string' ? `  📁 ${r['folder']}` : ''}\n    ${String(r['command']) === '' ? '(shell)' : String(r['command'])}  ·  ${String(r['cwd'])}`);
       return 0;
     }
     case 'add': {
@@ -73,9 +76,9 @@ export async function terminalCommand(argv: readonly string[]): Promise<number> 
       const taken = Object.values(settings.data.peek().terminals).flat().map((t) => t.id);
       const cwd = args.options.get('cwd')?.trim();
       const t: ProjectTerminal = { id: terminalId(project, name, taken), name, command: args.options.get('command')?.trim() ?? '', ...(cwd === undefined || cwd === '' ? {} : { cwd }) };
-      settings.saveTerminal(project, t);
+      settings.saveTerminal(project, t, folderOption(settings, project, args.options.get('folder')));
       if (args.flags.has('start')) await manager.start(t, project);
-      if (json) print(JSON.stringify(describe(t, project, manager.isRunning(t.id)), null, 2));
+      if (json) print(JSON.stringify(describe(settings, t, project, manager.isRunning(t.id)), null, 2));
       else print(`Terminal « ${t.name} » ajouté (${t.id})${args.flags.has('start') ? ', démarré' : ` : ocg terminal start ${t.id}`}`);
       return 0;
     }
@@ -91,7 +94,7 @@ export async function terminalCommand(argv: readonly string[]): Promise<number> 
         if (cwd.trim() === '') delete next.cwd;
         else next.cwd = cwd.trim();
       }
-      settings.saveTerminal(project, next);
+      settings.saveTerminal(project, next, folderOption(settings, project, args.options.get('folder')));
       print(`Terminal « ${next.name} » modifié${manager.isRunning(t.id) ? ' (redémarre-le pour appliquer : ocg terminal restart ' + t.id + ')' : ''}`);
       return 0;
     }

@@ -54,17 +54,41 @@ export function pillScroller(child: unknown): Gtk.ScrolledWindow {
   return sw;
 }
 
+export interface ReorderOptions {
+  /** clés des pastilles de la même liste, dans l'ordre affiché */
+  readonly order: () => readonly string[];
+  /** déplace `key` avant `before` (à la fin si null) dans cette liste */
+  readonly move: (key: string, before: string | null) => void;
+  /** dossier : déposer au milieu de la pastille range `key` dedans ; false si refusé */
+  readonly into?: (key: string) => boolean;
+  /** début du glisser (ex. fermer le menu d'un dossier) */
+  readonly dragBegin?: () => void;
+}
+
+const TAG = 'pill:';
+
+/** Accepte les dépôts en fin de liste sur `widget` (zone vide après les pastilles). */
+export function dropAtEnd(widget: Gtk.Widget, move: (key: string) => void): void {
+  const target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE);
+  target.connect('drop', (_t: Gtk.DropTarget, value: unknown) => {
+    if (typeof value !== 'string' || !value.startsWith(TAG)) return false;
+    move(value.slice(TAG.length));
+    return true;
+  });
+  widget.add_controller(target);
+}
+
 /**
- * Pastille réordonnable : glissée sur une autre pastille de la même barre (`kind`), elle se place
- * avant elle (moitié gauche) ou après (moitié droite). `move(id, avant)` : avant null = à la fin.
+ * Pastille réordonnable (clé `key`) : glissée sur une autre pastille, elle se place avant elle
+ * (moitié gauche) ou après (moitié droite) ; sur un dossier (`into`), le milieu la range dedans.
  */
-export function reorderable(widget: Gtk.Widget, kind: string, id: string, order: () => readonly string[], move: (id: string, before: string | null) => void): void {
-  const tag = `${kind}:`;
+export function reorderable(widget: Gtk.Widget, key: string, opts: ReorderOptions): void {
   const source = new Gtk.DragSource({ actions: Gdk.DragAction.MOVE, propagationPhase: Gtk.PropagationPhase.CAPTURE });
-  source.connect('prepare', () => Gdk.ContentProvider.new_for_value(tag + id));
+  source.connect('prepare', () => Gdk.ContentProvider.new_for_value(TAG + key));
   source.connect('drag-begin', () => {
     source.set_icon(Gtk.WidgetPaintable.new(widget), 20, 10);
     widget.add_css_class('dragging');
+    opts.dragBegin?.();
   });
   source.connect('drag-end', () => widget.remove_css_class('dragging'));
   widget.add_controller(source);
@@ -80,30 +104,36 @@ export function reorderable(widget: Gtk.Widget, kind: string, id: string, order:
   claim.group(source);
 
   const target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE);
+  const CLASSES = ['drop-before', 'drop-after', 'drop-into'];
+  const zone = (x: number): 'drop-before' | 'drop-after' | 'drop-into' => {
+    const w = widget.get_width();
+    if (opts.into !== undefined && x > w / 4 && x < (w * 3) / 4) return 'drop-into';
+    return x < w / 2 ? 'drop-before' : 'drop-after';
+  };
   const clear = (): void => {
-    widget.remove_css_class('drop-before');
-    widget.remove_css_class('drop-after');
+    for (const c of CLASSES) widget.remove_css_class(c);
   };
   const mark = (x: number): Gdk.DragAction => {
-    const before = x < widget.get_width() / 2;
-    widget.add_css_class(before ? 'drop-before' : 'drop-after');
-    widget.remove_css_class(before ? 'drop-after' : 'drop-before');
+    const z = zone(x);
+    for (const c of CLASSES) if (c !== z) widget.remove_css_class(c);
+    widget.add_css_class(z);
     return Gdk.DragAction.MOVE;
   };
-  target.connect('accept', (_t: Gtk.DropTarget, drop: Gdk.Drop) => drop.formats.contain_gtype(GObject.TYPE_STRING));
   target.connect('enter', (_t: Gtk.DropTarget, x: number) => mark(x));
   target.connect('motion', (_t: Gtk.DropTarget, x: number) => mark(x));
   target.connect('leave', clear);
   target.connect('drop', (_t: Gtk.DropTarget, value: unknown, x: number) => {
     clear();
-    if (typeof value !== 'string' || !value.startsWith(tag)) return false;
-    const moved = value.slice(tag.length);
-    if (moved === id) return false;
-    const ids = order();
-    const at = ids.indexOf(id);
+    if (typeof value !== 'string' || !value.startsWith(TAG)) return false;
+    const moved = value.slice(TAG.length);
+    if (moved === key) return false;
+    const z = zone(x);
+    if (z === 'drop-into') return opts.into?.(moved) ?? false;
+    const ids = opts.order();
+    const at = ids.indexOf(key);
     // moitié droite : avant la pastille suivante (sans compter celle déplacée)
-    const before = x < widget.get_width() / 2 ? id : (ids.slice(at + 1).find((x2) => x2 !== moved) ?? null);
-    move(moved, before);
+    const before = z === 'drop-before' ? key : (ids.slice(at + 1).find((k) => k !== moved) ?? null);
+    opts.move(moved, before);
     return true;
   });
   widget.add_controller(target);

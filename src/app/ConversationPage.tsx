@@ -12,14 +12,14 @@ import type { Session } from '../shared/schemas.ts';
 import { builtinCommands } from './Builtins.ts';
 import { Composer } from './Composer.tsx';
 import { IdeButton } from './Ide.ts';
-import { LinkBar } from './LinkBar.tsx';
+import { ProjectBar } from './ProjectBar.tsx';
 import { reviewTarget } from './SessionsPage.tsx';
 import { openFolder } from './OpenFolder.ts';
 import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
 import { openGitWindow } from './GitWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
-import { TerminalBar, type TerminalContext } from './TerminalBar.tsx';
+import { type TerminalContext } from './TerminalBar.tsx';
 import { integratedAvailable } from './TerminalPanel.tsx';
 import { TodoPanel } from './TodoPanel.tsx';
 
@@ -300,8 +300,7 @@ export function createConversationPage(opts: {
             <Gtk.Box $type="end">{IdeButton({ project: projectPath, settings, toast, directory: dir })}</Gtk.Box>
           </Adw.HeaderBar>
           <Gtk.Box $type="top" visible={!child}>
-            <TerminalBar project={projectPath} ctx={terminals} />
-            <LinkBar project={projectPath} ctx={{ settings, toast }} directory={dir} />
+            <ProjectBar project={projectPath} ctx={terminals} directory={dir} />
           </Gtk.Box>
           <ConversationView
             conversation={conversation}

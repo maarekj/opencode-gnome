@@ -2,6 +2,7 @@
 import { DirenvError, expandVariables, withScheme } from '../shared/direnv.ts';
 import { Settings, type ProjectLink } from '../shared/settings.ts';
 import { parseArgs, UsageError } from './args.ts';
+import { folderName, folderOption } from './folders.ts';
 import { projectDir } from './project.ts';
 
 export const LINK_HELP = `ocg link — liens web épinglés d'un projet
@@ -13,8 +14,8 @@ même lien marche dans chaque worktree, avec ses propres ports.
 
 Usage :
   ocg link list [--project DIR] [--all] [--json]   liens et adresses résolues
-  ocg link add --url ADRESSE [--name NOM] [--project DIR]
-  ocg link edit <lien> [--url ADRESSE] [--name NOM] [--project DIR]
+  ocg link add --url ADRESSE [--name NOM] [--folder DOSSIER] [--project DIR]
+  ocg link edit <lien> [--url ADRESSE] [--name NOM] [--folder DOSSIER] [--project DIR]
   ocg link rm <lien> [--project DIR]
   ocg link resolve <lien | ADRESSE> [--project DIR]  adresse finale (variables remplacées)
 
@@ -22,6 +23,8 @@ Options :
   --project DIR   projet (défaut : racine git du dossier courant, sinon le dossier courant)
   --url ADRESSE   ex. localhost:$PORT_WEB/admin (http:// ajouté si besoin)
   --name NOM      défaut : déduit de l'adresse
+  --folder NOM    range le lien dans ce dossier de la barre (créé s'il n'existe pas) ;
+                  '' : le sort de son dossier (voir ocg folder help)
 
 <lien> : identifiant ou nom.
 
@@ -71,13 +74,13 @@ export async function linkCommand(argv: readonly string[]): Promise<number> {
         entries.flatMap(([p, list]) =>
           list.map(async (l) => {
             const r = await resolve(l.url, p);
-            return { ...l, project: p, ...('url' in r ? { resolved: r.url } : r) };
+            return { ...l, project: p, folder: folderName(settings, p, `link:${l.id}`), ...('url' in r ? { resolved: r.url } : r) };
           }),
         ),
       );
       if (json) print(JSON.stringify(rows, null, 2));
       else if (rows.length === 0) print(`Aucun lien dans ${project}. Ajoute-en un : ocg link add --name Admin --url 'localhost:$PORT/admin'`);
-      else for (const r of rows) print(`${r.id}  ${r.name}\n    ${r.url}${'resolved' in r ? (r.resolved === withScheme(r.url) ? '' : `  →  ${r.resolved}`) : `  (⚠ ${r.error})`}`);
+      else for (const r of rows) print(`${r.id}  ${r.name}${r.folder === null ? '' : `  📁 ${r.folder}`}\n    ${r.url}${'resolved' in r ? (r.resolved === withScheme(r.url) ? '' : `  →  ${r.resolved}`) : `  (⚠ ${r.error})`}`);
       return 0;
     }
     case 'add': {
@@ -88,7 +91,7 @@ export async function linkCommand(argv: readonly string[]): Promise<number> {
       while (taken.has(id)) id += 'x';
       const name = args.options.get('name')?.trim();
       const link: ProjectLink = { id, name: name === undefined || name === '' ? nameFromUrl(url) : name, url };
-      settings.saveLink(project, link);
+      settings.saveLink(project, link, folderOption(settings, project, args.options.get('folder')));
       const r = await resolve(url, project);
       if (json) print(JSON.stringify({ ...link, project, ...('url' in r ? { resolved: r.url } : r) }, null, 2));
       else print(`Lien « ${link.name} » ajouté (${id}) → ${'url' in r ? r.url : `⚠ ${r.error}`}`);
@@ -101,7 +104,7 @@ export async function linkCommand(argv: readonly string[]): Promise<number> {
       if (name !== undefined) next.name = name.trim() === '' ? nameFromUrl(next.url) : name.trim();
       const url = args.options.get('url');
       if (url !== undefined) next.url = url.trim();
-      settings.saveLink(project, next);
+      settings.saveLink(project, next, folderOption(settings, project, args.options.get('folder')));
       print(`Lien « ${next.name} » modifié`);
       return 0;
     }

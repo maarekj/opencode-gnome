@@ -1,16 +1,14 @@
-// Pastilles des terminaux persistants d'un projet (zellij) + bouton d'ajout.
+// Terminaux persistants d'un projet (zellij) : pastille, actions, menu, dialogues (barre : ProjectBar).
 // Premier clic : démarre la commande et ouvre le terminal ; ensuite : rouvre la session en cours.
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
-import { createComputed, onCleanup, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { prettyPath } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
-import { attachArgv, cwdOf, terminalId, zellijInstalled, type TerminalManager } from '../shared/terminals.ts';
-import { attachContextMenu } from './ContextMenu.ts';
-import { keyedBox } from './KeyedBox.ts';
-import { pillScroller, reorderable } from './PillBar.ts';
+import { attachArgv, cwdOf, terminalId, type TerminalManager } from '../shared/terminals.ts';
+import { attachContextMenu, type MenuItem } from './ContextMenu.ts';
+import { currentFolder, folderChooser } from './FolderChoice.ts';
 import type { TerminalDock } from './TerminalPanel.tsx';
 
 export interface TerminalContext {
@@ -25,13 +23,18 @@ const attempt = (ctx: TerminalContext, what: string, fn: () => Promise<void>): v
   fn().catch((e: unknown) => ctx.toast(`${what} : ${errorMessage(e)}`));
 };
 
-/** Dialogue d'ajout (`current` absent) ou de modification d'un terminal. */
-function askTerminal(parent: Gtk.Widget, project: string, ctx: TerminalContext, current?: ProjectTerminal): void {
+/**
+ * Dialogue d'ajout (`current` absent) ou de modification d'un terminal ; `folder` : dossier
+ * proposé pour un nouveau terminal.
+ */
+export function askTerminal(parent: Gtk.Widget, project: string, ctx: TerminalContext, current?: ProjectTerminal, folder: string | null = null): void {
   const name = new Adw.EntryRow({ title: 'Nom', text: current?.name ?? '' });
   const command = new Adw.EntryRow({ title: 'Commande (vide : simple shell)', text: current?.command ?? '' });
   const cwd = new Adw.EntryRow({ title: 'Répertoire, relatif au projet (optionnel, ex. packages/web)', text: current?.cwd ?? '' });
   const group = new Adw.PreferencesGroup();
   for (const row of [name, command, cwd]) group.add(row);
+  const place = folderChooser(ctx.settings, project, current === undefined ? folder : currentFolder(ctx.settings, project, `terminal:${current.id}`));
+  if (place.row !== null) group.add(place.row);
   const dialog = new Adw.AlertDialog({
     heading: current === undefined ? 'Nouveau terminal' : 'Modifier le terminal',
     body: `La commande tourne dans une session zellij : fermer son onglet ou la fenêtre du terminal ne l’arrête pas. Elle est lancée depuis ${prettyPath(project)}, ou depuis le sous-dossier indiqué (chemin absolu ou ~/… aussi acceptés).`,
@@ -58,13 +61,13 @@ function askTerminal(parent: Gtk.Widget, project: string, ctx: TerminalContext, 
       name: name.text.trim(),
       command: command.text.trim(),
       ...(dir === '' ? {} : { cwd: dir }),
-    });
+    }, place.value());
   });
   dialog.present(parent);
   name.grab_focus();
 }
 
-function askRemove(parent: Gtk.Widget, project: string, t: ProjectTerminal, ctx: TerminalContext): void {
+export function askRemoveTerminal(parent: Gtk.Widget, project: string, t: ProjectTerminal, ctx: TerminalContext): void {
   const dialog = new Adw.AlertDialog({
     heading: 'Supprimer le terminal ?',
     body: `« ${t.name} » sera retiré du projet${ctx.manager.isRunning(t.id) ? ' et sa commande arrêtée' : ''}.`,
@@ -109,7 +112,7 @@ export function terminalActions(t: ProjectTerminal, project: string, ctx: Termin
 }
 
 /** Menu contextuel d'un terminal (ouvrir, redémarrer / arrêter ou démarrer, modifier, supprimer). */
-export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, project: string, ctx: TerminalContext): void {
+export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, project: string, ctx: TerminalContext, extra: () => readonly (readonly MenuItem[])[] = () => []): void {
   const act = terminalActions(t, project, ctx);
   attachContextMenu(widget, () => [
     [
@@ -124,8 +127,9 @@ export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, proje
     ],
     [
       { label: 'Modifier…', activate: () => askTerminal(widget, project, ctx, t) },
-      { label: 'Supprimer…', activate: () => askRemove(widget, project, t, ctx) },
+      { label: 'Supprimer…', activate: () => askRemoveTerminal(widget, project, t, ctx) },
     ],
+    ...extra(),
   ]);
 }
 
@@ -155,14 +159,14 @@ export function TerminalTreeRow({ t, project, last, ctx }: { t: ProjectTerminal;
   return row;
 }
 
-function TerminalPill({ t, project, running, ctx }: { t: ProjectTerminal; project: string; running: boolean; ctx: TerminalContext }): Gtk.Widget {
+export function TerminalPill({ t, project, running, ctx, extra }: { t: ProjectTerminal; project: string; running: boolean; ctx: TerminalContext; extra?: () => readonly (readonly MenuItem[])[] }): Gtk.Widget {
   const { open, restart, stop } = terminalActions(t, project, ctx);
   const widget = (
     <Gtk.Button
       cssClasses={running ? ['terminal-pill', 'running'] : ['terminal-pill']}
       tooltipText={`${t.command === '' ? 'Shell' : t.command}\n${running ? 'En cours : clic pour ouvrir le terminal' : 'Arrêté : clic pour démarrer'}`}
       onClicked={open}
-      $={(self: Gtk.Button) => attachTerminalMenu(self, t, project, ctx)}
+      $={(self: Gtk.Button) => attachTerminalMenu(self, t, project, ctx, extra)}
     >
       <Gtk.Box spacing={6}>
         <Gtk.Image iconName="utilities-terminal-symbolic" pixelSize={14} />
@@ -193,49 +197,4 @@ function TerminalPill({ t, project, running, ctx }: { t: ProjectTerminal; projec
   );
   if (!(split instanceof Gtk.Widget)) throw new TypeError('widget attendu');
   return split;
-}
-
-/** Barre des terminaux du projet `project` (masquée sans projet ou sans zellij). */
-export function TerminalBar({ project, ctx }: { project: Accessor<string | null>; ctx: TerminalContext }): JSX.Element {
-  const items = createComputed(() => {
-    const p = project();
-    if (p === null) return [];
-    const running = ctx.manager.running();
-    return (ctx.settings.data().terminals[p] ?? []).map((t) => ({ t, project: p, running: running.has(t.id) }));
-  });
-  ctx.manager.watch();
-  return (
-    <Gtk.Box spacing={6} cssClasses={['terminal-bar']} visible={project((p) => p !== null && zellijInstalled())}>
-      {pillScroller(
-        <Gtk.Box
-          spacing={6}
-          $={(self: Gtk.Box) => {
-            onCleanup(
-              keyedBox(
-                self,
-                items,
-                (i) => `${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.t.cwd ?? ''}|${i.running}`,
-                (i) => {
-                  const pill = TerminalPill({ ...i, ctx });
-                  // glisser-déposer : ordre des terminaux du projet (#144)
-                  reorderable(pill, 'terminal', i.t.id, () => items.peek().map((x) => x.t.id), (id, before) => ctx.settings.moveTerminal(i.project, id, before));
-                  return pill;
-                },
-              ),
-            );
-          }}
-        />,
-      )}
-      <Gtk.Button
-        iconName="list-add-symbolic"
-        tooltipText="Ajouter un terminal persistant (devenv up, pnpm dev…)"
-        cssClasses={['flat', 'circular', 'terminal-add']}
-        onClicked={(self: Gtk.Button) => {
-          const p = project.peek();
-          if (p !== null) askTerminal(self, p, ctx);
-        }}
-      />
-      <Gtk.Label label="Terminaux" cssClasses={['dim-label', 'caption']} visible={items((l) => l.length === 0)} />
-    </Gtk.Box>
-  );
 }

@@ -5,6 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { createState, type Accessor } from 'gnim';
 import * as z from 'zod/mini';
+import { LayoutEntry, moveEntry, normalizeLayout } from './layout.ts';
 import { withLock } from './lock.ts';
 import { moveChild } from './projecttree.ts';
 
@@ -71,6 +72,8 @@ export type ProjectLink = z.output<typeof ProjectLink>;
 export const SettingsData = z.object({
   /** liens épinglés : chemin du projet -> liens */
   links: z.prefault(z.record(z.string(), z.array(ProjectLink)), {}),
+  /** disposition de la barre de chaque projet : terminaux et liens mélangés, dossiers (#145) */
+  layout: z.prefault(z.record(z.string(), z.array(LayoutEntry)), {}),
   /** navigateur de chaque projet (identifiant .desktop) ; absent = navigateur par défaut */
   browsers: z.prefault(z.record(z.string(), z.string()), {}),
   /** IDE de chaque projet : chemin du projet -> identifiant .desktop */
@@ -129,7 +132,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { links: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { links: {}, layout: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -174,6 +177,15 @@ export function moveBefore(list: readonly string[], item: string, before: string
   const rest = list.filter((x) => x !== item);
   const at = before === null ? -1 : rest.indexOf(before);
   return at < 0 ? [...rest, item] : [...rest.slice(0, at), item, ...rest.slice(at)];
+}
+
+/** Disposition complète du projet dans `d` (terminaux et liens actuels). */
+export const layoutOf = (d: SettingsData, project: string): LayoutEntry[] => normalizeLayout(d.layout[project], d.terminals[project] ?? [], d.links[project] ?? []);
+
+/** `d` avec la disposition du projet modifiée par `fn` (puis normalisée). */
+function withLayout(d: SettingsData, project: string, fn: (layout: LayoutEntry[]) => LayoutEntry[]): SettingsData {
+  const next = normalizeLayout(fn(layoutOf(d, project)), d.terminals[project] ?? [], d.links[project] ?? []);
+  return { ...d, layout: { ...d.layout, [project]: next } };
 }
 
 export class Settings {
@@ -266,21 +278,16 @@ export class Settings {
     });
   }
 
-  /** Ajoute ou remplace (même id) un lien du projet. */
-  saveLink(project: string, link: ProjectLink): void {
+  /**
+   * Ajoute ou remplace (même id) un lien du projet ; `folder` : rangé dans ce dossier (null : au
+   * premier niveau), absent : place inchangée (à la fin pour un nouveau lien).
+   */
+  saveLink(project: string, link: ProjectLink, folder?: string | null): void {
     this.update((d) => {
       const list = d.links[project] ?? [];
       const next = list.some((l) => l.id === link.id) ? list.map((l) => (l.id === link.id ? link : l)) : [...list, link];
-      return { ...d, links: { ...d.links, [project]: next } };
-    });
-  }
-
-  /** Déplace un lien avant `before` (à la fin si null) : ordre de la barre des liens. */
-  moveLink(project: string, id: string, before: string | null): void {
-    this.update((d) => {
-      const list = d.links[project] ?? [];
-      const order = moveBefore(list.map((l) => l.id), id, before);
-      return { ...d, links: { ...d.links, [project]: order.map((x) => list.find((l) => l.id === x)).filter((l) => l !== undefined) } };
+      const saved = { ...d, links: { ...d.links, [project]: next } };
+      return folder === undefined ? saved : withLayout(saved, project, (l) => moveEntry(l, `link:${link.id}`, folder, null));
     });
   }
 
@@ -369,22 +376,19 @@ export class Settings {
     if (this.data.peek().showTools !== show) this.update((d) => ({ ...d, showTools: show }));
   }
 
-  /** Ajoute ou remplace (même id) un terminal du projet. */
-  saveTerminal(project: string, terminal: ProjectTerminal): void {
+  /** Ajoute ou remplace (même id) un terminal du projet ; `folder` : comme pour saveLink. */
+  saveTerminal(project: string, terminal: ProjectTerminal, folder?: string | null): void {
     this.update((d) => {
       const list = d.terminals[project] ?? [];
       const next = list.some((t) => t.id === terminal.id) ? list.map((t) => (t.id === terminal.id ? terminal : t)) : [...list, terminal];
-      return { ...d, terminals: { ...d.terminals, [project]: next } };
+      const saved = { ...d, terminals: { ...d.terminals, [project]: next } };
+      return folder === undefined ? saved : withLayout(saved, project, (l) => moveEntry(l, `terminal:${terminal.id}`, folder, null));
     });
   }
 
-  /** Déplace un terminal avant `before` (à la fin si null) : ordre de la barre des terminaux. */
-  moveTerminal(project: string, id: string, before: string | null): void {
-    this.update((d) => {
-      const list = d.terminals[project] ?? [];
-      const order = moveBefore(list.map((t) => t.id), id, before);
-      return { ...d, terminals: { ...d.terminals, [project]: order.map((x) => list.find((t) => t.id === x)).filter((t) => t !== undefined) } };
-    });
+  /** Modifie la disposition de la barre du projet (complétée avec les terminaux et liens actuels). */
+  updateLayout(project: string, fn: (layout: LayoutEntry[]) => LayoutEntry[]): void {
+    this.update((d) => withLayout(d, project, fn));
   }
 
   removeTerminal(project: string, id: string): void {

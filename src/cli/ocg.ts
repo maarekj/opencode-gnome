@@ -5,6 +5,7 @@ import system from 'system';
 import { errorMessage } from '../shared/errors.ts';
 import { readGuide, repoRoot } from '../shared/help.ts';
 import { UsageError } from './args.ts';
+import { FOLDER_HELP, folderCommand } from './folders.ts';
 import { LINK_HELP, linkCommand } from './links.ts';
 import { notify } from './notify.ts';
 import { TASK_HELP, taskCommand } from './tasks.ts';
@@ -19,8 +20,9 @@ agents opencode comme par l'utilisateur.
 Usage :
   ocg terminal …   terminaux persistants d'un projet (serveurs de dev, watchers ; sessions zellij)
   ocg link …       liens web épinglés d'un projet (variables direnv : $PORT_WEB…)
+  ocg folder …     dossiers de la barre du projet (terminaux et liens regroupés)
   ocg task …       tâches planifiées (prompts envoyés à heures régulières ou à la main)
-  ocg help [terminal | link | task | all | guide]   (guide : guide d'utilisation de l'application)
+  ocg help [terminal | link | folder | task | all | guide]   (guide : guide d'utilisation de l'application)
 
 Options communes : --project DIR (défaut : projet du dossier courant), --json, -h / --help.
 
@@ -41,8 +43,8 @@ function main(argv: readonly string[]): Promise<number> | number {
       return 0;
     case 'help': {
       const topic = rest[0];
-      const all = [HELP, TERMINAL_HELP, LINK_HELP, TASK_HELP];
-      const by: Record<string, string> = { terminal: TERMINAL_HELP, link: LINK_HELP, task: TASK_HELP, all: all.join(`\n\n${'─'.repeat(72)}\n\n`), guide: readGuide(repoRoot(import.meta.url)) };
+      const all = [HELP, TERMINAL_HELP, LINK_HELP, FOLDER_HELP, TASK_HELP];
+      const by: Record<string, string> = { terminal: TERMINAL_HELP, link: LINK_HELP, folder: FOLDER_HELP, task: TASK_HELP, all: all.join(`\n\n${'─'.repeat(72)}\n\n`), guide: readGuide(repoRoot(import.meta.url)) };
       print(topic === undefined ? HELP : (by[topic] ?? HELP));
       return 0;
     }
@@ -52,6 +54,9 @@ function main(argv: readonly string[]): Promise<number> | number {
     case 'link':
     case 'links':
       return linkCommand(rest);
+    case 'folder':
+    case 'folders':
+      return folderCommand(rest);
     case 'task':
     case 'tasks':
       return taskCommand(rest);
