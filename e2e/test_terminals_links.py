@@ -440,3 +440,19 @@ def test_devenv_ajoute_par_le_menu_dans_un_dossier(run_app, tmp_path):
     did = app.settings()['devenvs'][DIR][0]['id']
     wait_until(lambda: order(app) == [f'worktree 1[devenv:{did}]'], 5, f'devenv rangé dans le dossier : {order(app)}')
     assert app.settings()['devenvs'][DIR][0]['cwd'] == 'sous-dossier'
+
+
+def test_dossier_signale_un_devenv_en_marche(run_app, tmp_path):
+    _, env = fake_devenv(tmp_path, running=True)
+    settings = {'devenvs': {DIR: [{'id': 'd1', 'name': 'services'}]}, 'layout': {DIR: [{'folder': 'f1', 'name': 'worktree 1', 'items': [{'devenv': 'd1'}]}]}}
+    _, app = project(run_app, settings=settings, env=env)
+    app.find('toggle button', contains='1 devenv avec des services en marche', timeout=15)
+
+
+def test_dossier_sans_devenv_en_marche(run_app, tmp_path):
+    _, env = fake_devenv(tmp_path, running=False)
+    settings = {'devenvs': {DIR: [{'id': 'd1', 'name': 'services'}]}, 'layout': {DIR: [{'folder': 'f1', 'name': 'worktree 1', 'items': [{'devenv': 'd1'}]}]}}
+    _, app = project(run_app, settings=settings, env=env)
+    app.find('toggle button', 'Dossier « worktree 1 » : 1 élément')
+    time.sleep(2)
+    assert not app.has('toggle button', contains='en marche')

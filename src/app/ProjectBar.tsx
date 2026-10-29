@@ -9,11 +9,11 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, onCleanup, type Accessor } from 'gnim';
 import { addFolder, folderId, moveEntry, removeFolder, renameFolder, type FolderEntry, type ItemRef } from '../shared/layout.ts';
-import { devenvInstalled } from '../shared/devenv.ts';
+import { devenvDir, devenvInstalled, phaseKind } from '../shared/devenv.ts';
 import { layoutOf, type ProjectDevenv, type ProjectLink, type ProjectTerminal } from '../shared/settings.ts';
 import { zellijInstalled } from '../shared/terminals.ts';
 import { attachContextMenu, labelMenuButton, type MenuItem } from './ContextMenu.ts';
-import { askDevenv, DevenvPill, devenvMenu, devenvStatusWidget, openDevenvDialog } from './DevenvItem.tsx';
+import { askDevenv, DevenvPill, devenvMenu, devenvStatusWidget, openDevenvDialog, watchWhileMapped } from './DevenvItem.tsx';
 import { foldersOf } from './FolderChoice.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { askLink, BrowserButton, LinkPill, type LinkContext } from './LinkBar.tsx';
@@ -150,25 +150,46 @@ function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () =
 /** Pastille d'un dossier : menu de ses terminaux et liens, terminaux en cours signalés. */
 function FolderPill(e: Extract<Entry, { kind: 'folder' }>, bar: BarContext): Gtk.Widget {
   const { folder, items, running } = e;
-  const button = new Gtk.MenuButton({
-    cssClasses: running > 0 ? ['folder-pill', 'running'] : ['folder-pill'],
-    tooltipText: `Dossier « ${folder.name} » : ${items.length} élément${items.length > 1 ? 's' : ''}${running > 0 ? ` — ${running} terminal${running > 1 ? 'aux' : ''} en cours` : ''}`,
-    valign: Gtk.Align.CENTER,
-  });
+  const button = new Gtk.MenuButton({ valign: Gtk.Align.CENTER });
   const box = new Gtk.Box({ spacing: 6 });
   box.append(new Gtk.Image({ iconName: 'folder-symbolic', pixelSize: 14 }));
   box.append(new Gtk.Label({ label: folder.name }));
-  if (running > 0) {
-    box.append(new Gtk.Box({ cssClasses: ['terminal-dot'], valign: Gtk.Align.CENTER }));
-    box.append(new Gtk.Label({ label: String(running), cssClasses: ['caption'] }));
-  }
+  const dot = new Gtk.Box({ cssClasses: ['terminal-dot'], valign: Gtk.Align.CENTER });
+  const count = new Gtk.Label({ cssClasses: ['caption'] });
+  box.append(dot);
+  box.append(count);
   box.append(new Gtk.Image({ iconName: 'pan-down-symbolic', pixelSize: 12 }));
   button.child = box;
   // nom accessible (lecteurs d'écran, tests) : celui de l'infobulle, porté par le bouton interne
   const toggle = button.get_first_child();
-  // le bouton à menu lui-même aussi : sinon son nom concatène le contenu du menu
-  button.update_property([Gtk.AccessibleProperty.LABEL], [button.tooltipText ?? '']);
-  if (toggle !== null) toggle.update_property([Gtk.AccessibleProperty.LABEL], [button.tooltipText ?? folder.name]);
+
+  // devenv du dossier dont des services tournent (lus en arrière-plan, comme leur pastille)
+  const devenvsOn = new Map<string, boolean>();
+  const show = (): void => {
+    const services = [...devenvsOn.values()].filter(Boolean).length;
+    const active = running + services;
+    button.cssClasses = active > 0 ? ['folder-pill', 'running'] : ['folder-pill'];
+    dot.visible = active > 0;
+    count.visible = active > 0;
+    count.label = String(active);
+    const what = [
+      running > 0 ? `${running} terminal${running > 1 ? 'aux' : ''} en cours` : '',
+      services > 0 ? `${services} devenv avec des services en marche` : '',
+    ].filter((x) => x !== '');
+    button.tooltipText = `Dossier « ${folder.name} » : ${items.length} élément${items.length > 1 ? 's' : ''}${what.length > 0 ? ` — ${what.join(', ')}` : ''}`;
+    // le bouton à menu lui-même aussi : sinon son nom concatène le contenu du menu
+    button.update_property([Gtk.AccessibleProperty.LABEL], [button.tooltipText]);
+    toggle?.update_property([Gtk.AccessibleProperty.LABEL], [button.tooltipText]);
+  };
+  for (const item of items) {
+    if (item.kind !== 'devenv') continue;
+    const dir = devenvDir(item.d, bar.project);
+    watchWhileMapped(button, dir, (s) => {
+      devenvsOn.set(dir, s?.kind === 'running' && s.processes.some((p) => phaseKind(p.phase) === 'ok' || phaseKind(p.phase) === 'busy'));
+      show();
+    });
+  }
+  show();
 
   const popover = new Gtk.Popover({ cssClasses: ['menu'] });
   const list = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, marginTop: 4, marginBottom: 4, marginStart: 4, marginEnd: 4, widthRequest: 220 });

@@ -95,7 +95,7 @@ export function watchDevenv(dir: string): { state: Accessor<DevenvState | null>;
 }
 
 /** Suivi lié à la vie d'un widget : actif tant qu'il est affiché. */
-function watchWhileMapped(widget: Gtk.Widget, dir: string, onState: (s: DevenvState | null) => void): { fast: (on: boolean) => void; refresh: () => void } {
+export function watchWhileMapped(widget: Gtk.Widget, dir: string, onState: (s: DevenvState | null) => void): { fast: (on: boolean) => void; refresh: () => void } {
   let current: ReturnType<typeof watchDevenv> | null = null;
   let unsubscribe: (() => void) | null = null;
   let fast = false;
@@ -459,8 +459,11 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
 /** Panneau dans un dialogue (depuis le menu d'un dossier). */
 export function openDevenvDialog(parent: Gtk.Widget, d: ProjectDevenv, project: string, ctx: DevenvContext): void {
   const panel = DevenvPanel(d, project, ctx);
-  const dialog = new Adw.Dialog({ title: d.name, contentWidth: 420 });
-  const toolbar = new Adw.ToolbarView({ content: panel.widget });
+  const dialog = new Adw.Dialog({ title: d.name, contentWidth: 560 });
+  // marges : le panneau est conçu pour un popover, collé aux bords dans un dialogue
+  const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, marginStart: 18, marginEnd: 18, marginBottom: 18 });
+  body.append(panel.widget);
+  const toolbar = new Adw.ToolbarView({ content: body });
   toolbar.add_top_bar(new Adw.HeaderBar());
   dialog.child = toolbar;
   panel.visible(true);
