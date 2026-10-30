@@ -64,6 +64,35 @@ function stepLabel(step: Step, color: string): Gtk.Label {
   return label;
 }
 
+/** espace sous le texte pour la barre de défilement horizontale (élargie au survol) */
+const SCROLLBAR_SPACE = 24;
+
+/**
+ * Défilement horizontal d'un texte sans retour à la ligne automatique (commande, sortie) : la
+ * hauteur suit le contenu ; s'il déborde, un espace est réservé dessous pour la barre de
+ * défilement, qui ne recouvre plus la dernière ligne (#151) ; aucun espace sinon.
+ */
+export function horizontalScroller(child: Gtk.Widget): Gtk.ScrolledWindow {
+  const scroller = new Gtk.ScrolledWindow({ child, hscrollbarPolicy: Gtk.PolicyType.AUTOMATIC, vscrollbarPolicy: Gtk.PolicyType.NEVER, propagateNaturalHeight: true, hexpand: true });
+  const adj = scroller.get_hadjustment();
+  let queued = false;
+  const reserve = (): void => {
+    if (queued) return;
+    queued = true;
+    // différé : changer une marge pendant l'allocation la fausse
+    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      queued = false;
+      const margin = adj.upper > adj.pageSize + 1 ? SCROLLBAR_SPACE : 0;
+      if (child.marginBottom !== margin) child.marginBottom = margin;
+      return GLib.SOURCE_REMOVE;
+    });
+  };
+  adj.connect('changed', reserve);
+  adj.connect('notify::upper', reserve);
+  adj.connect('notify::page-size', reserve);
+  return scroller;
+}
+
 const OP_LABEL: Readonly<Record<string, string>> = { '': '', '&&': '&&', '||': '||', ';': ';', '|': '|', '|&': '|&', '&': '&' };
 
 /**
@@ -79,8 +108,7 @@ export function ShellCommand(command: string): Gtk.Widget | null {
   }
   if (steps.length === 0 || (steps.length === 1 && !(steps[0]?.words ?? []).some((w) => isLong(w)))) return null;
   const color = accent();
-  // marge basse : la barre de défilement horizontale ne recouvre pas la dernière ligne
-  const structured = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, marginBottom: 6 });
+  const structured = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 });
   for (const step of steps) {
     const piped = step.op === '|' || step.op === '|&';
     const row = new Gtk.Box({ spacing: 8, marginStart: piped ? 18 : 0 });
@@ -91,13 +119,7 @@ export function ShellCommand(command: string): Gtk.Widget | null {
   const raw = new Gtk.Label({ label: `$ ${command}`, xalign: 0, hexpand: true, selectable: true, wrap: true, wrapMode: Pango.WrapMode.CHAR, cssClasses: ['monospace'] });
   const stack = new Gtk.Stack({ hhomogeneous: false, vhomogeneous: false, interpolateSize: true });
   // lignes longues : défilement horizontal, la hauteur suit le contenu (pas de défilement vertical)
-  const scroller = new Gtk.ScrolledWindow({
-    child: structured,
-    hscrollbarPolicy: Gtk.PolicyType.AUTOMATIC,
-    vscrollbarPolicy: Gtk.PolicyType.NEVER,
-    propagateNaturalHeight: true,
-    hexpand: true,
-  });
+  const scroller = horizontalScroller(structured);
   stack.add_named(scroller, 'structured');
   stack.add_named(raw, 'raw');
   const toggle = new Gtk.ToggleButton({ iconName: 'utilities-terminal-symbolic', tooltipText: 'Commande brute', valign: Gtk.Align.START, cssClasses: ['flat', 'circular', 'shell-raw'] });

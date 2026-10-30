@@ -15,7 +15,7 @@ import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { openFile } from './OpenFolder.ts';
 import { ReadButton } from './Voice.ts';
-import { ShellCommand } from './ShellCommand.ts';
+import { horizontalScroller, ShellCommand } from './ShellCommand.ts';
 import { MarkdownView } from './Markdown.tsx';
 import { AnsweredQuestions, PermissionCard, QuestionCard, type RequestActions } from './Requests.tsx';
 import { todosOfCall, TodoRows, todoSummary } from './TodoPanel.tsx';
@@ -165,6 +165,17 @@ function StatusIcon({ status }: { status: string }): JSX.Element {
   }
 }
 
+/**
+ * Sortie d'une commande (outil bash) : lignes telles quelles, sans retour à la ligne automatique,
+ * dans un défilement horizontal (même présentation que la commande structurée).
+ */
+function ScrolledOutput(text: string, css: string[]): Gtk.Widget {
+  const label = new Gtk.Label({ label: text, xalign: 0, selectable: true, cssClasses: ['monospace', 'tool-output-text', ...css] });
+  const box = new Gtk.Box({ cssClasses: ['tool-output'] });
+  box.append(horizontalScroller(label));
+  return box;
+}
+
 function ToolDetails({ part }: { part: Part }): JSX.Element {
   const state = part.state;
   const input = state?.input;
@@ -179,8 +190,8 @@ function ToolDetails({ part }: { part: Part }): JSX.Element {
         // enchaînements, pipes, arguments longs : vue structurée (#143)
         (ShellCommand(command) ?? <Code text={`$ ${command}`} />)
       )}
-      {output === '' ? null : <Code text={truncate(output)} />}
-      {error === '' ? null : <Code text={truncate(error)} css={['error']} />}
+      {output === '' ? null : command === undefined ? <Code text={truncate(output)} /> : ScrolledOutput(truncate(output), [])}
+      {error === '' ? null : command === undefined ? <Code text={truncate(error)} css={['error']} /> : ScrolledOutput(truncate(error), ['error'])}
     </Gtk.Box>
   );
 }

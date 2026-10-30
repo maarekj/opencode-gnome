@@ -18,6 +18,10 @@ export const STYLESHEET = `
   padding: 6px 10px;
   font-size: 0.9em;
 }
+/* sortie dans un défilement horizontal : même taille que les sorties repliées à la largeur */
+.tool-output-text {
+  font-size: 0.9em;
+}
 .reasoning > title {
   opacity: 0.7;
 }

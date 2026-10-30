@@ -187,7 +187,7 @@
         "command": "git add -A && git commit -q -m \"Conversation : 20 messages chargés à l'ouverture et à l'actualisation (au lieu de 30). Closes #142\" && git fetch -q && git rebase origin/main 2>&1 | tail -1 && pnpm check >/dev/null 2>&1; echo check=$?",
         "description": "Commit et vérification"
        },
-       "output": "La branche courante issue-142 est à jour.\ncheck=0",
+       "output": "** WARNING: connection is not using a post-quantum key exchange algorithm. This session may be vulnerable to \"store now, decrypt later\" attacks.\nLa branche courante issue-142 est à jour.\ncheck=0",
        "title": "Commit et vérification"
       },
       "messageID": "msg_002",
