@@ -672,7 +672,6 @@ export function MainWindow({
               allProjects,
               terminals,
               unseenFailures: tasks.unseen,
-              tasks: tasks.tasks,
               actions: {
                 showList: (key) => {
                   select(key);

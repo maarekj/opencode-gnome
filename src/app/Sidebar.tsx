@@ -1,4 +1,4 @@
-// Barre latérale : projets (favoris ou tous), sessions ouvertes, terminaux et tâches dessous.
+// Barre latérale : projets (favoris ou tous) et leurs sessions ouvertes ; terminaux et services devenv comptés sur le projet.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
@@ -12,15 +12,16 @@ import { errorMessage } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type SessionView, type Store } from '../shared/store.ts';
-import type { ProjectTerminal, Settings } from '../shared/settings.ts';
+import type { Settings } from '../shared/settings.ts';
 import { attachContextMenu, labelMenuButton } from './ContextMenu.ts';
 import { projectTree } from '../shared/projecttree.ts';
 import { openFolder } from './OpenFolder.ts';
 import { ideFor, installedIdes, openInIde } from './Ide.ts';
 import { keyedListBox } from './KeyedBox.ts';
-import { openEditor, taskIcon, taskMenu, taskRunButton, taskState, type EditorContext, type TaskRowContext, type TaskView } from './TasksWindow.tsx';
-import { describeSchedule } from '../shared/tasks.ts';
-import { TerminalTreeRow, terminalActions, type TerminalContext } from './TerminalBar.tsx';
+import { openEditor, type EditorContext } from './TasksWindow.tsx';
+import type { TerminalContext } from './TerminalBar.tsx';
+import { devenvDir, devenvInstalled, phaseKind, type DevenvState } from '../shared/devenv.ts';
+import { watchWhileMapped } from './DevenvItem.tsx';
 import { askDelete, askRename, type SessionActions } from './SessionMenu.ts';
 import { intercepted } from '../shared/sandbox.ts';
 
@@ -68,6 +69,8 @@ function ProjectRow({
   sessions,
   expanded,
   unread,
+  terminals,
+  devenvDirs,
   actions,
 }: {
   project: ProjectView;
@@ -76,8 +79,12 @@ function ProjectRow({
   unread: number;
   /** nombre de sessions ouvertes du projet */
   sessions: number;
-  /** nombre de lignes enfants : sessions ouvertes et terminaux en cours */
+  /** nombre de lignes enfants : sessions ouvertes et sous-projets */
   open: number;
+  /** terminaux persistants en cours */
+  terminals: number;
+  /** dossiers des process managers devenv du projet (services comptés en arrière-plan) */
+  devenvDirs: readonly string[];
   expanded: boolean;
   actions: ProjectActions;
 }): JSX.Element {
@@ -137,6 +144,7 @@ function ProjectRow({
           tooltipText={plural(project.waiting, 'session attend ta réponse', 'sessions attendent ta réponse')}
         />
       ) : null}
+      <Gtk.Box $type="suffix" accessibleRole={Gtk.AccessibleRole.STATUS} valign={Gtk.Align.CENTER} $={(self: Gtk.Box) => runningBadge(self, terminals, devenvDirs)} />
       {unread > 0 ? (
         <Gtk.Label
           $type="suffix"
@@ -215,32 +223,41 @@ function ideMenuItem(path: string, actions: ProjectActions): { label: string; ac
   ];
 }
 
-/** Lance / interrompt une action sur une tâche, erreur affichée. */
+/** Services devenv actifs (en marche ou en démarrage). */
+const activeServices = (s: DevenvState | null): number => (s?.kind === 'running' ? s.processes.filter((p) => phaseKind(p.phase) === 'ok' || phaseKind(p.phase) === 'busy').length : 0);
+
 /**
- * Tâche planifiée, sous son projet : état du dernier run (spinner pendant un run), prochaine
- * exécution en infobulle, ▶ / ■ au survol, menu contextuel. Clic : session du dernier run.
+ * Pastille « en marche » d'un projet : terminaux en cours et services devenv actifs (relus en
+ * arrière-plan tant que la ligne est affichée), détail en infobulle. Masquée à zéro.
  */
-function TaskTreeRow({ view, last, actions }: { view: TaskView; last: boolean; actions: ProjectActions }): JSX.Element {
-  const { task } = view;
-  const ctx: TaskRowContext = { editor: actions.tasks, openSession: actions.openSession, openTasksWindow: actions.openTasksWindow };
-  const state = taskState(view);
-  const error = view.last?.error === undefined ? '' : `\n${view.last.error}`;
-  return (
-    <Gtk.ListBoxRow
-      name={`k:${task.id}`}
-      cssClasses={[...(last ? ['session-tree-row', 'last'] : ['session-tree-row']), ...(task.enabled ? [] : ['dim-label'])]}
-      tooltipText={`${task.name} · ${describeSchedule(task.schedule)}\n${state.when === '' ? 'Lancée à la main uniquement' : state.when}\n${state.last}${error}`}
-      $={(self: Gtk.ListBoxRow) => attachContextMenu(self, () => taskMenu(view, self, ctx))}
-    >
-      <Gtk.Box spacing={8} marginStart={34} marginEnd={4} cssClasses={['session-tree-inner']}>
-        <Gtk.Box widthRequest={16} valign={Gtk.Align.CENTER}>
-          {taskIcon(view)}
-        </Gtk.Box>
-        <Gtk.Label label={task.name} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['session-title']} />
-        {taskRunButton(view, ctx, ['flat', 'circular', 'close-button'])}
-      </Gtk.Box>
-    </Gtk.ListBoxRow>
-  );
+function runningBadge(box: Gtk.Box, terminals: number, devenvDirs: readonly string[]): void {
+  const label = new Gtk.Label();
+  box.append(new Gtk.Image({ iconName: 'utilities-terminal-symbolic', pixelSize: 12 }));
+  box.append(label);
+  box.spacing = 4;
+  box.cssClasses = ['running-badge'];
+  const services = new Map<string, number>();
+  const show = (): void => {
+    const n = [...services.values()].reduce((a, b) => a + b, 0);
+    const total = terminals + n;
+    box.visible = total > 0;
+    label.label = String(total);
+    const what = [terminals > 0 ? plural(terminals, 'terminal en cours', 'terminaux en cours') : '', n > 0 ? plural(n, 'service devenv en marche', 'services devenv en marche') : ''].filter((x) => x !== '');
+    box.tooltipText = what.join('\n');
+    box.update_property([Gtk.AccessibleProperty.LABEL], [what.join(', ')]);
+  };
+  show();
+  if (!devenvInstalled() || devenvDirs.length === 0) return;
+  // suivi lié à la ligne du projet : la pastille, masquée à zéro, n'est jamais affichée sinon
+  GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+    const host = box.get_ancestor(Gtk.ListBoxRow.$gtype) ?? box;
+    for (const dir of devenvDirs)
+      watchWhileMapped(host, dir, (s) => {
+        services.set(dir, activeServices(s));
+        show();
+      });
+    return GLib.SOURCE_REMOVE;
+  });
 }
 
 /** Indicateur d'activité compact d'une session de l'arbre. */
@@ -360,7 +377,7 @@ function enableReorder(list: Gtk.ListBox, settings: Settings, projects: Accessor
         const first = list.get_row_at_index(over.get_index() + 1);
         if (first?.name.startsWith('s:') !== true) return false;
         settings.moveOpenSession(id, first.name.slice(2));
-      } else return false; // terminal, tâche : refusé
+      } else return false;
       return true;
     }
     return false;
@@ -378,12 +395,12 @@ type TreeItem = (
       readonly sessions: number;
       readonly expanded: boolean;
       readonly unread: number;
+      readonly terminals: number;
+      readonly devenvDirs: readonly string[];
       /** chemin du projet parent (sous-projet), null au premier niveau */
       readonly parent: string | null;
     }
   | { readonly kind: 'session'; readonly view: SessionView; readonly last: boolean }
-  | { readonly kind: 'terminal'; readonly t: ProjectTerminal; readonly project: string; readonly last: boolean }
-  | { readonly kind: 'task'; readonly view: TaskView; readonly last: boolean }
 ) & {
   /** niveau du projet de la ligne (sous-projets : indentés) */
   readonly depth: number;
@@ -395,12 +412,8 @@ const SUBPROJECT_INDENT = 22;
 const treeKey = (i: TreeItem): string =>
   `${i.depth}|` +
   (i.kind === 'project'
-    ? `p|${i.parent ?? ''}|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.unread}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}`
-    : i.kind === 'session'
-      ? `s|${i.view.session.id}|${i.view.activity}|${i.view.unread}|${i.view.session.title}|${i.last}`
-      : i.kind === 'terminal'
-        ? `t|${i.project}|${i.t.id}|${i.t.name}|${i.t.command}|${i.last}`
-        : `k|${i.view.task.id}|${i.view.task.name}|${i.view.task.enabled}|${i.view.running}|${i.view.last?.run ?? ''}|${i.view.last?.status ?? ''}|${i.view.next ?? ''}|${i.last}`);
+    ? `p|${i.parent ?? ''}|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.unread}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}|${i.terminals}|${i.devenvDirs.join(':')}`
+    : `s|${i.view.session.id}|${i.view.activity}|${i.view.unread}|${i.view.session.title}|${i.last}`);
 
 function startServer(): void {
   // captures et tests : le serveur partagé de l'utilisateur n'est pas touché
@@ -422,14 +435,11 @@ export function Sidebar({
   allProjects,
   terminals,
   unseenFailures,
-  tasks,
 }: {
   store: Store;
   settings: Settings;
   /** runs de tâches planifiées en échec, pas encore vus */
   unseenFailures: Accessor<number>;
-  /** tâches planifiées (affichées sous leur projet) */
-  tasks: Accessor<readonly TaskView[]>;
   projects: Accessor<readonly ProjectView[]>;
   select: (key: string) => void;
   actions: ProjectActions;
@@ -437,7 +447,7 @@ export function Sidebar({
   shown: Accessor<string>;
   /** tous les projets (la recherche ignore le mode Favoris / Tous) */
   allProjects: Accessor<readonly ProjectView[]>;
-  /** terminaux persistants : ceux qui tournent apparaissent sous leur projet */
+  /** terminaux persistants : ceux qui tournent sont comptés sur leur projet */
   terminals: TerminalContext;
 }): JSX.Element {
   const conn = store.connection;
@@ -571,28 +581,16 @@ export function Sidebar({
               onRowActivated={(_self: Gtk.ListBox, row: Gtk.ListBoxRow) => {
                 const name = row.name;
                 if (name.startsWith('s:')) actions.openSession(name.slice(2));
-                else if (name.startsWith('t:')) {
-                  const [project = '', id] = name.slice(2).split('\n');
-                  const t = terminals.settings.data.peek().terminals[project]?.find((x) => x.id === id);
-                  if (t !== undefined) terminalActions(t, project, terminals).open();
-                }
                 else if (name.startsWith('p:')) select(name.slice(2));
-                else if (name.startsWith('k:')) {
-                  // tâche : session de son dernier run, sinon l'éditeur
-                  const view = tasks.peek().find((v) => v.task.id === name.slice(2));
-                  if (view?.last?.session !== undefined) actions.openSession(view.last.session);
-                  else if (view !== undefined) openEditor(row, actions.tasks, view.task);
-                }
               }}
               $={(self: Gtk.ListBox) => {
                 // arbre aplati : chaque projet, puis s'il est déplié ses sessions ouvertes (ordre
-                // d'ouverture, puis celui choisi par glisser-déposer), ses terminaux en cours et ses tâches
+                // d'ouverture, puis celui choisi par glisser-déposer)
                 terminals.manager.watch();
                 const items = createComputed((): TreeItem[] => {
-                  const { openSessions, collapsed, terminals: configured, subprojects } = settings.data();
+                  const { openSessions, collapsed, terminals: configured, subprojects, devenvs } = settings.data();
                   const running = terminals.manager.running();
                   const favs = favorites();
-                  const allTasks = tasks();
                   const out: TreeItem[] = [];
                   const shownProjects = projects();
                   const byPath = new Map(shownProjects.map((p) => [p.path, p]));
@@ -618,36 +616,29 @@ export function Sidebar({
                       const v = byID.get(id);
                       return v === undefined ? [] : [v];
                     });
-                    const terms = (configured[p.path] ?? []).filter((t) => running.has(t.id));
-                    const own = allTasks.filter((t) => t.task.directory === p.path);
-                    const children = open.length + terms.length + own.length;
+                    const terms = (configured[p.path] ?? []).filter((t) => running.has(t.id)).length;
+                    const devenvDirs = [...new Set((devenvs[p.path] ?? []).map((d) => devenvDir(d, p.path)))];
+                    const children = open.length;
                     const expanded = !collapsed.includes(p.key);
                     if (!expanded) hidden.add(p.path);
                     // non lues : celles qui n'apparaissent pas dessous (repliées ou non ouvertes)
                     const shownBelow = new Set(expanded ? open.map((v) => v.session.id) : []);
                     const unread = p.sessions.filter((v) => v.unread && !shownBelow.has(v.session.id)).length;
                     // repli possible aussi pour un projet qui n'a que des sous-projets
-                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children + (subCount.get(p.path) ?? 0), sessions: open.length, expanded, unread, parent: node.parent, depth });
+                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children + (subCount.get(p.path) ?? 0), sessions: open.length, expanded, unread, terminals: terms, devenvDirs, parent: node.parent, depth });
                     if (!expanded) continue;
-                    // sessions ouvertes, terminaux en cours, puis tâches planifiées du projet (ses sous-projets suivent)
+                    // sessions ouvertes du projet (ses sous-projets suivent)
                     for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1, depth });
-                    for (const [n, t] of terms.entries()) out.push({ kind: 'terminal', t, project: p.path, last: open.length + n === children - 1, depth });
-                    for (const [n, view] of own.entries()) out.push({ kind: 'task', view, last: open.length + terms.length + n === children - 1, depth });
                   }
                   return out;
                 });
                 onCleanup(
                   keyedListBox(self, items, treeKey, (i) => {
-                    const row =
-                      i.kind === 'terminal'
-                        ? TerminalTreeRow({ t: i.t, project: i.project, last: i.last, ctx: terminals })
-                        : asWidget(
-                            i.kind === 'project'
-                              ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, unread: i.unread, actions })
-                              : i.kind === 'session'
-                                ? SessionTreeRow({ view: i.view, last: i.last, actions })
-                                : TaskTreeRow({ view: i.view, last: i.last, actions }),
-                          );
+                    const row = asWidget(
+                      i.kind === 'project'
+                        ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, unread: i.unread, terminals: i.terminals, devenvDirs: i.devenvDirs, actions })
+                        : SessionTreeRow({ view: i.view, last: i.last, actions }),
+                    );
                     // sous-projet : la ligne et ses enfants sont indentés
                     if (i.depth > 0) row.marginStart = i.depth * SUBPROJECT_INDENT;
                     return row;

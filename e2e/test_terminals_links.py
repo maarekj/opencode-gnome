@@ -68,11 +68,12 @@ def test_demarrer_puis_arreter_un_terminal(run_app):
     _, app = project(run_app)
     add_terminal(app)
     app.menu(app.find('button', contains='Serveur'), 'Démarrer en arrière-plan')
-    # en cours : point « En cours », boutons Redémarrer / Arrêter, ligne sous le projet
+    # en cours : point « En cours », boutons Redémarrer / Arrêter, compteur sur le projet
     app.find(None, 'Arrêter', timeout=20)
-    app.find('list item', contains='Serveur')
+    app.find(None, '1 terminal en cours')
     app.click(None, 'Arrêter')
     wait_until(lambda: not app.has(None, 'Arrêter'), 20, 'terminal arrêté')
+    wait_until(lambda: not app.has(None, '1 terminal en cours'), 5, 'compteur retiré')
 
 
 def test_modifier_puis_supprimer_un_terminal(run_app):
@@ -447,6 +448,8 @@ def test_dossier_signale_un_devenv_en_marche(run_app, tmp_path):
     settings = {'devenvs': {DIR: [{'id': 'd1', 'name': 'services'}]}, 'layout': {DIR: [{'folder': 'f1', 'name': 'worktree 1', 'items': [{'devenv': 'd1'}]}]}}
     _, app = project(run_app, settings=settings, env=env)
     app.find('toggle button', contains='1 devenv avec des services en marche', timeout=15)
+    # barre latérale : services actifs comptés sur le projet (worker en échec exclu)
+    app.find(None, '2 services devenv en marche')
 
 
 def test_dossier_sans_devenv_en_marche(run_app, tmp_path):

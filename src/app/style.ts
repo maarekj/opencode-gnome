@@ -258,8 +258,7 @@ export const STYLESHEET = `
   padding: 2px 8px;
   min-width: 0;
 }
-.terminal-split > .terminal-stop:hover,
-.terminal-tree-row .terminal-stop:hover {
+.terminal-split > .terminal-stop:hover {
   color: var(--error-color);
 }
 /* séparateur discret entre les parties du bouton divisé */
@@ -295,6 +294,14 @@ export const STYLESHEET = `
 .unread .session-title,
 row.unread .title {
   font-weight: bold;
+}
+.running-badge {
+  color: var(--success-color);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 0.85em;
+  font-weight: bold;
+  background: color-mix(in srgb, var(--success-color) 15%, transparent);
 }
 .unread-badge {
   background: var(--accent-bg-color);
@@ -350,14 +357,7 @@ row.unread .title {
   min-height: 22px;
   padding: 0;
 }
-.terminal-tree-row .terminal-dot {
-  margin: 0 4px;
-}
 /* terminal : le point vert cède la place aux boutons au survol */
-.terminal-tree-row:hover .terminal-dot,
-.terminal-tree-row:selected .terminal-dot {
-  opacity: 0;
-}
 .session-tree-row:hover .close-button,
 .session-tree-row:selected .close-button,
 .session-tree-row .close-button:focus-visible {

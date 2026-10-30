@@ -115,6 +115,7 @@ export function watchWhileMapped(widget: Gtk.Widget, dir: string, onState: (s: D
   widget.connect('map', start);
   widget.connect('unmap', stop);
   widget.connect('destroy', stop);
+  if (widget.get_mapped()) start();
   return {
     fast: (on) => {
       fast = on;

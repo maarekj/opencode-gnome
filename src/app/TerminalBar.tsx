@@ -2,7 +2,6 @@
 // Premier clic : démarre la commande et ouvre le terminal ; ensuite : rouvre la session en cours.
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
-import Pango from 'gi://Pango';
 import { errorMessage } from '../shared/errors.ts';
 import { prettyPath } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
@@ -132,32 +131,6 @@ export function attachTerminalMenu(widget: Gtk.Widget, t: ProjectTerminal, proje
     ],
     ...extra(),
   ]));
-}
-
-/**
- * Terminal en cours, sous son projet dans la barre latérale : nom, pastille verte, redémarrer /
- * arrêter au survol. Activer la ligne (nom `t:<projet>\n<id>`) ouvre le terminal.
- */
-export function TerminalTreeRow({ t, project, last, ctx }: { t: ProjectTerminal; project: string; last: boolean; ctx: TerminalContext }): Gtk.Widget {
-  const act = terminalActions(t, project, ctx);
-  const row = (
-    <Gtk.ListBoxRow
-      name={`t:${project}\n${t.id}`}
-      cssClasses={last ? ['session-tree-row', 'terminal-tree-row', 'last'] : ['session-tree-row', 'terminal-tree-row']}
-      tooltipText={`${t.name} : ${t.command === '' ? 'shell' : t.command}\nEn cours : clic pour ouvrir le terminal`}
-      $={(self: Gtk.ListBoxRow) => attachTerminalMenu(self, t, project, ctx)}
-    >
-      <Gtk.Box spacing={8} marginStart={34} marginEnd={4} cssClasses={['session-tree-inner']}>
-        <Gtk.Image iconName="utilities-terminal-symbolic" pixelSize={16} valign={Gtk.Align.CENTER} />
-        <Gtk.Label label={t.name} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['session-title']} />
-        <Gtk.Box cssClasses={['terminal-dot']} valign={Gtk.Align.CENTER} tooltipText="En cours" />
-        <Gtk.Button iconName="view-refresh-symbolic" tooltipText="Redémarrer" valign={Gtk.Align.CENTER} cssClasses={['flat', 'circular', 'close-button']} onClicked={act.restart} />
-        <Gtk.Button iconName="media-playback-stop-symbolic" tooltipText="Arrêter" valign={Gtk.Align.CENTER} cssClasses={['flat', 'circular', 'close-button', 'terminal-stop']} onClicked={act.stop} />
-      </Gtk.Box>
-    </Gtk.ListBoxRow>
-  );
-  if (!(row instanceof Gtk.Widget)) throw new TypeError('widget attendu');
-  return row;
 }
 
 export function TerminalPill({ t, project, running, ctx, extra }: { t: ProjectTerminal; project: string; running: boolean; ctx: TerminalContext; extra?: () => readonly (readonly MenuItem[])[] }): Gtk.Widget {

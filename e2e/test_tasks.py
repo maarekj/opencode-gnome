@@ -167,13 +167,13 @@ def test_echec_non_vu_signale_dans_le_menu(run_app):
     wait_until(lambda: not app.has(None, contains='tâche planifiée en échec'), 5, 'échec marqué vu')
 
 
-def test_taches_sur_la_page_du_projet_et_dans_la_barre_laterale(run_app):
+def test_taches_sur_la_page_du_projet_pas_dans_la_barre_laterale(run_app):
     _, app = run_app(scenario('composer'), files=with_tasks())
     app.click('list item', 'demo')
     app.find('list item', contains='Revue quotidienne')
     rows = app.all('button', 'Lancer maintenant')
-    # barre latérale et page du projet
-    assert len(rows) == 2
+    # page du projet seulement : la barre latérale n'affiche que les sessions
+    assert len(rows) == 1
     rows[-1].doActionNamed('click')
     assert app.logged('SYSTEMCTL', 'start --no-block opencode-gnome-task-revue.service')
 
