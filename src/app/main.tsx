@@ -170,6 +170,12 @@ toggleTools.connect('activate', () => {
 app.add_action(toggleTools);
 app.set_accels_for_action('app.toggle-tools', ['<Control><Shift>o']);
 
+/** app.aside : panneau de la question annexe de la session affichée (Ctrl+Maj+A, #153) */
+const asideAction = new Gio.SimpleAction({ name: 'aside' });
+asideAction.connect('activate', () => api?.toggleAside());
+app.add_action(asideAction);
+app.set_accels_for_action('app.aside', ['<Control><Shift>a']);
+
 /** app.close-session : ferme la session affichée (Ctrl+W) */
 const closeSession = new Gio.SimpleAction({ name: 'close-session' });
 closeSession.connect('activate', () => api?.closeCurrent());

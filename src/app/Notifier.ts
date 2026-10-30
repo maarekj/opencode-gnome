@@ -54,7 +54,8 @@ export class Notifier {
   constructor(o: NotifierOptions) {
     this.#o = o;
     this.#stops.push(o.store.projects.subscribe(() => this.#diff()));
-    this.#stops.push(o.store.onSessionError((id, message) => this.#notify(id, 'Erreur', message, 'error')));
+    // question annexe (#153) : erreur visible dans son panneau, pas de notification
+    this.#stops.push(o.store.onSessionError((id, message) => (o.store.isHidden(id) ? undefined : this.#notify(id, 'Erreur', message, 'error'))));
   }
 
   dispose(): void {

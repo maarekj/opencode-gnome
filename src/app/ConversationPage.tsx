@@ -10,7 +10,8 @@ import { errorMessage } from '../shared/errors.ts';
 import { gitStatus, type GitStatus } from '../shared/git.ts';
 import type { Session } from '../shared/schemas.ts';
 import { builtinCommands } from './Builtins.ts';
-import { Composer } from './Composer.tsx';
+import { AsidePanel } from './AsidePanel.tsx';
+import { Composer, type Choice, type ComposerProps } from './Composer.tsx';
 import { IdeButton } from './Ide.ts';
 import { ProjectBar } from './ProjectBar.tsx';
 import { reviewTarget } from './SessionsPage.tsx';
@@ -171,13 +172,7 @@ export function createConversationPage(opts: {
     const dir = (): string => conversation.directory ?? view.peek()?.session.directory ?? GLib.get_home_dir();
 
 
-    // sous-agent : lecture seule, pas de compositeur (ni chargement des modèles et commandes : #86)
-    const composer = child
-      ? null
-      : Composer({
-          busy,
-          ...(opts.draft === undefined ? {} : { initialText: opts.draft }),
-          initial: () => {
+    const initial = (): Choice => {
             const own = view.peek()?.session;
             const s = own?.model === undefined && opts.draftFrom !== undefined ? { ...opts.draftFrom, ...(own?.agent === undefined ? {} : { agent: own.agent }) } : own;
             // variante : celle de la session, sinon celle du dernier tour de l'assistant
@@ -187,14 +182,31 @@ export function createConversationPage(opts: {
               ...(s?.model === undefined ? {} : { model: { providerID: s.model.providerID, modelID: s.model.id } }),
               ...(variant === undefined ? {} : { variant }),
             };
-          },
-          loadChoices: async () => {
+          };
+    const loadChoices: ComposerProps['loadChoices'] = async () => {
             const [agents, providers, config] = await Promise.all([client.agents(dir()), client.providers(dir()), client.config(dir()).catch(() => null)]);
             const { defaultModel, defaultVariant } = settings.data.peek();
             // modèle d'une session sans modèle : préférence de l'app > config opencode > défaut des fournisseurs
             const defaults = [defaultModel, config?.model ?? undefined].filter((m): m is string => m !== undefined && m !== '');
             return { agents, providers, defaults, ...(defaultModel === undefined || defaultVariant === undefined ? {} : { defaultVariant }) };
-          },
+          };
+    const findFiles: ComposerProps['findFiles'] = async (query, cancellable) => {
+            // fichiers et dossiers : les dossiers permettent de descendre dans l'arborescence
+            const [files, dirs] = await Promise.all([
+              client.findFiles(dir(), query, { limit: 20, cancellable }),
+              client.findFiles(dir(), query, { type: 'directory', limit: 5, cancellable }),
+            ]);
+            return query.endsWith('/') ? [...dirs, ...files] : [...files.slice(0, 15), ...dirs, ...files.slice(15)];
+          };
+
+    // sous-agent : lecture seule, pas de compositeur (ni chargement des modèles et commandes : #86)
+    const composer = child
+      ? null
+      : Composer({
+          busy,
+          ...(opts.draft === undefined ? {} : { initialText: opts.draft }),
+          initial,
+          loadChoices,
           send: (text, choice, payload) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { ...payload, ...choice })),
           loadCommands: () => client.commands(dir()),
           runCommand: (name, args, choice, payload) => attempt(toast, `/${name}`, () => client.command(sessionID, dir(), name, args, { ...payload, ...choice })),
@@ -213,14 +225,7 @@ export function createConversationPage(opts: {
               return page;
             },
           }),
-          findFiles: async (query, cancellable) => {
-            // fichiers et dossiers : les dossiers permettent de descendre dans l'arborescence
-            const [files, dirs] = await Promise.all([
-              client.findFiles(dir(), query, { limit: 20, cancellable }),
-              client.findFiles(dir(), query, { type: 'directory', limit: 5, cancellable }),
-            ]);
-            return query.endsWith('/') ? [...dirs, ...files] : [...files.slice(0, 15), ...dirs, ...files.slice(15)];
-          },
+          findFiles,
           history: () => conversation.userMessages().map((m) => m.text),
           toast,
           context: conversation.context,
@@ -240,6 +245,22 @@ export function createConversationPage(opts: {
     };
 
     const showTools = settings.data((d) => d.showTools);
+    // question annexe (#153) : panneau à droite, fork caché de la session
+    const aside = child
+      ? null
+      : AsidePanel({
+          store,
+          settings,
+          parentID: sessionID,
+          parent: view((v) => v?.session ?? null),
+          dir,
+          toast,
+          initial,
+          loadChoices,
+          findFiles,
+          showTools,
+          openSession: opts.openSession,
+        });
     const openDiff = (self: Gtk.Button): void =>
       openGitWindow(self, {
         directory: dir(),
@@ -279,6 +300,17 @@ export function createConversationPage(opts: {
               tooltipText="Git : modifications, journal, branches"
               onClicked={openDiff}
             />
+            {aside === null ? null : (
+              <Gtk.ToggleButton
+                $type="end"
+                iconName="sidebar-show-right-symbolic"
+                tooltipText="Question annexe (Ctrl+Maj+A) : poser une question sur cette session sans l'interrompre"
+                active={aside.shown}
+                onToggled={(self: Gtk.ToggleButton) => {
+                  if (self.active !== aside.shown.peek()) aside.toggle();
+                }}
+              />
+            )}
             <Gtk.Box $type="end" visible={!child}>
               {terminals.dock.toggleButton()}
             </Gtk.Box>
@@ -302,6 +334,23 @@ export function createConversationPage(opts: {
           <Gtk.Box $type="top" visible={!child}>
             <ProjectBar project={projectPath} ctx={terminals} directory={dir} />
           </Gtk.Box>
+          <Gtk.Paned
+            orientation={Gtk.Orientation.HORIZONTAL}
+            shrinkEndChild={false}
+            resizeEndChild={false}
+            shrinkStartChild={false}
+            $={(self: Gtk.Paned) => {
+              if (aside === null) return;
+              self.endChild = aside.widget;
+              aside.widget.visible = aside.shown.peek();
+              // largeur initiale du panneau : 420 px (ou 40 % d'une fenêtre étroite)
+              aside.shown.subscribe(() => {
+                aside.widget.visible = aside.shown.peek();
+                if (aside.shown.peek()) self.position = Math.max(self.get_width() - Math.min(420, Math.round(self.get_width() * 0.4)), 0);
+              });
+            }}
+          >
+          <Gtk.Box $type="start" orientation={Gtk.Orientation.VERTICAL}>
           <ConversationView
             conversation={conversation}
             revealed={revealed}
@@ -336,10 +385,12 @@ export function createConversationPage(opts: {
               if (composer instanceof Gtk.Widget) find(composer.get_first_child())?.grab_focus();
             }}
           />
-          <Gtk.Box $type="bottom" orientation={Gtk.Orientation.VERTICAL}>
+          <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
             <TodoPanel todos={conversation.todos} />
             {composer}
           </Gtk.Box>
+          </Gtk.Box>
+          </Gtk.Paned>
         </Adw.ToolbarView>
       </Adw.NavigationPage>
     );
@@ -370,7 +421,9 @@ export function createConversationPage(opts: {
     return {
       page,
       reveal: (messageID, partID) => revealMessage?.(messageID, partID),
+      toggleAside: () => aside?.toggle(),
       dispose: () => {
+        aside?.dispose();
         for (const u of unsubscribeGit) u();
         unsubscribeRevert();
         if (activeWindow !== null) activeWindow.disconnect(activeHandler);
@@ -386,6 +439,8 @@ export interface ConversationPageHandle {
   readonly page: Adw.NavigationPage;
   /** défile jusqu'au message et le met en évidence (résultat de recherche) */
   readonly reveal: (messageID: string, partID?: string) => void;
+  /** ouvre / ferme le panneau de la question annexe (Ctrl+Maj+A) */
+  readonly toggleAside: () => void;
   /** libère la page (session fermée ou supprimée) */
   readonly dispose: () => void;
 }

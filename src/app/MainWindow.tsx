@@ -108,6 +108,8 @@ export interface WindowApi {
   currentDirectory: () => string | null;
   /** recherche dans toutes les conversations (Ctrl+Maj+F) */
   openSearch: () => void;
+  /** panneau de la question annexe de la session affichée (Ctrl+Maj+A) */
+  toggleAside: () => void;
 }
 
 /** Fenêtres dont la fermeture a été confirmée : leur prochaine `close-request` passe. */
@@ -411,6 +413,12 @@ export function MainWindow({
       delete: () =>
         run('Suppression impossible', async () => {
           await store.client.deleteSession(session.id, session.directory);
+          // sa question annexe (fork caché) disparaît avec elle
+          const aside = settings.data.peek().asides[session.id];
+          if (aside !== undefined) {
+            settings.setAside(session.id, null);
+            store.client.deleteSession(aside.id, session.directory).catch((e: unknown) => console.error(e));
+          }
           if (nav.find_page(sessionTag(session.id)) !== null) nav.pop_to_tag('sessions');
           settings.closeSessions([session.id]);
           disposePage(session.id);
@@ -521,6 +529,10 @@ export function MainWindow({
       else if ((nav.visiblePage?.tag ?? '').startsWith('subagent:')) nav.pop();
     },
     shownSession,
+    toggleAside: () => {
+      const id = shownSession();
+      if (id !== null) pages.get(id)?.toggleAside();
+    },
     openSearch: () => {
       if (win === null) return;
       openSearch(win, {
@@ -556,7 +568,11 @@ export function MainWindow({
     if (id !== null) settings.setUnread(id, false);
   };
   nav.connect('notify::visible-page', markSeen);
-  const syncUnread = (): void => store.setUnread(new Set(settings.data.peek().unread));
+  const syncUnread = (): void => {
+    store.setUnread(new Set(settings.data.peek().unread));
+    // questions annexes (#153) : forks cachés partout
+    store.setHidden(new Set(Object.values(settings.data.peek().asides).map((a) => a.id)));
+  };
   syncUnread();
   onCleanup(settings.data.subscribe(syncUnread));
   let previous: Map<string, string> | null = null;

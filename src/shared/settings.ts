@@ -80,7 +80,17 @@ export const ProjectDevenv = z.object({
 });
 export type ProjectDevenv = z.output<typeof ProjectDevenv>;
 
+/** Question annexe d'une session (#153) : fork caché, et l'instant du fork (contexte en retard). */
+export const AsideRef = z.object({
+  id: z.string(),
+  /** création du fork (ms) */
+  at: z.number(),
+});
+export type AsideRef = z.output<typeof AsideRef>;
+
 export const SettingsData = z.object({
+  /** questions annexes : session -> son fork caché */
+  asides: z.prefault(z.record(z.string(), AsideRef), {}),
   /** process managers devenv : chemin du projet -> éléments devenv de la barre */
   devenvs: z.prefault(z.record(z.string(), z.array(ProjectDevenv)), {}),
   /** liens épinglés : chemin du projet -> liens */
@@ -145,7 +155,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { asides: {}, links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -349,6 +359,16 @@ export class Settings {
   setUnread(id: string, unread: boolean): void {
     if (this.data.peek().unread.includes(id) === unread) return;
     this.update((d) => ({ ...d, unread: unread ? [...d.unread, id] : d.unread.filter((x) => x !== id) }));
+  }
+
+  /** Question annexe de la session `parent` ; null : retirée. */
+  setAside(parent: string, aside: AsideRef | null): void {
+    const current = this.data.peek().asides[parent];
+    if (current?.id === aside?.id && current?.at === aside?.at) return;
+    this.update((d) => {
+      const { [parent]: _old, ...rest } = d.asides;
+      return { ...d, asides: aside === null ? rest : { ...rest, [parent]: aside } };
+    });
   }
 
   openSession(id: string): void {

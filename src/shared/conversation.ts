@@ -18,6 +18,8 @@ export interface ContextUsage {
   readonly variant?: string;
   /** coût cumulé des messages chargés */
   readonly cost: number;
+  /** tokens lus depuis le cache du fournisseur au dernier tour */
+  readonly cacheRead: number;
 }
 
 /** Tokens du contexte d'un tour : entrée (y compris cache) + sortie, comme le TUI d'opencode. */
@@ -172,7 +174,7 @@ export class Conversation {
     [this.loadingOlder, this.#setLoadingOlder] = createState(false);
     [this.todos, this.#setTodos] = createState<readonly Todo[]>([], { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
     [this.context, this.#setContext] = createState<ContextUsage | null>(null, {
-      equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.variant === b?.variant && a?.cost === b?.cost,
+      equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.variant === b?.variant && a?.cost === b?.cost && a?.cacheRead === b?.cacheRead,
     });
   }
 
@@ -445,6 +447,7 @@ export class Conversation {
       modelID: last.modelID ?? '',
       ...(last.variant === undefined ? {} : { variant: last.variant }),
       cost,
+      cacheRead: last.tokens?.cache?.read ?? 0,
     });
   }
 

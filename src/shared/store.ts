@@ -93,6 +93,8 @@ export class Store {
   #childrenSignature = '';
   /** sessions non lues (tenu par l'app, persistant dans ses réglages) */
   #unread: ReadonlySet<string> = new Set();
+  /** sessions cachées (questions annexes) : absentes des projets */
+  #hidden: ReadonlySet<string> = new Set();
   /** numéro du dernier rechargement (les réponses des précédents sont ignorées) */
   #reloadGen = 0;
   /** sessions changées par un événement pendant le rechargement en cours */
@@ -226,6 +228,17 @@ export class Store {
     if (ids.size === this.#unread.size && [...ids].every((id) => this.#unread.has(id))) return;
     this.#unread = ids;
     this.#publish();
+  }
+
+  /** Sessions cachées (questions annexes, #153). */
+  setHidden(ids: ReadonlySet<string>): void {
+    if (ids.size === this.#hidden.size && [...ids].every((id) => this.#hidden.has(id))) return;
+    this.#hidden = ids;
+    this.#publish();
+  }
+
+  isHidden(sessionID: string): boolean {
+    return this.#hidden.has(sessionID);
   }
 
   /** Appelé à chaque reconnexion au flux d'événements (pas à la première connexion). */
@@ -418,6 +431,7 @@ export class Store {
   #publish(): void {
     const groups = new Map<string, { path: string; vcs: boolean; name: string; sessions: SessionView[] }>();
     for (const s of this.#sessions.values()) {
+      if (this.#hidden.has(s.id)) continue;
       const p = this.#projectOf(s);
       let g = groups.get(p.key);
       if (g === undefined) {

@@ -60,6 +60,7 @@ export const SHORTCUTS: readonly (readonly [string, readonly (readonly [string, 
     'Conversation',
     [
       ["Afficher / masquer les appels d'outils", '<Control><Shift>o'],
+      ['Question annexe (panneau à droite)', '<Control><Shift>a'],
       ['Envoyer le prompt', '<Control>Return'],
       ['Niveau de raisonnement suivant', '<Control>t'],
       ['Prompt précédent / suivant (historique)', 'Up Down'],

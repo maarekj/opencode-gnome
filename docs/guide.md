@@ -31,6 +31,13 @@ opencode-gnome affiche et pilote, en direct, les mêmes projets et sessions qu'o
   affiche tous d'un coup.
 - Les messages plus anciens se chargent en remontant dans la conversation.
 - Au survol d'un message, un bouton permet de **forker** la session à partir de ce message.
+- **Question annexe** (**Ctrl+Maj+A** ou le bouton du panneau droit dans l'en-tête) : un
+  panneau à droite pour poser une question secondaire sur la session (« pourquoi ce choix
+  d'architecture ? ») avec exactement le même contexte, même pendant que l'agent travaille, sans
+  l'interrompre ni toucher à la conversation. C'est un fork caché de la session, gardé jusqu'à
+  sa suppression ; on peut le **supprimer**, **actualiser le contexte** (repartir de l'état
+  actuel de la session) ou le **garder comme session** normale. L'agent est celui de la session
+  (ce qui réutilise le cache du fournisseur) ; choisir `plan` pour une lecture seule.
 - Les **questions** et **permissions** de l'agent s'affichent sous forme de cartes dans la
   conversation : y répondre directement.
 
