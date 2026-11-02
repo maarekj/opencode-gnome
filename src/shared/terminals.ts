@@ -80,7 +80,9 @@ export function layoutArg(id: string): string {
   return path;
 }
 
-export const zellijInstalled = (): boolean => GLib.find_program_in_path('zellij') !== null;
+/** zellij installé : recherché une fois (PATH long sous nix, #160) */
+let zellijFound: boolean | null = null;
+export const zellijInstalled = (): boolean => (zellijFound ??= GLib.find_program_in_path('zellij') !== null);
 
 /** Sessions zellij vivantes (les sessions « EXITED » ne comptent pas). */
 async function liveSessions(): Promise<Set<string>> {
@@ -101,9 +103,13 @@ export class TerminalManager {
   readonly #layout: () => string;
   #timer = 0;
 
-  constructor(choice: () => TerminalChoice, layout: () => string = () => 'bare') {
+  /** des terminaux persistants sont configurés : sinon pas de relecture de zellij */
+  readonly #wanted: () => boolean;
+
+  constructor(choice: () => TerminalChoice, layout: () => string = () => 'bare', wanted: () => boolean = () => true) {
     this.#choice = choice;
     this.#layout = layout;
+    this.#wanted = wanted;
     [this.running, this.#set] = createState<ReadonlySet<string>>(new Set(), { equals: (a, b) => a.size === b.size && [...a].every((x) => b.has(x)) });
   }
 
@@ -112,7 +118,9 @@ export class TerminalManager {
     if (this.#timer !== 0) return;
     void this.refresh();
     this.#timer = GLib.timeout_add(GLib.PRIORITY_LOW, POLL_MS, () => {
-      void this.refresh();
+      // aucun terminal configuré : rien à suivre (#160) ; état vidé une fois
+      if (this.#wanted()) void this.refresh();
+      else if (this.running.peek().size > 0) this.#set(new Set());
       return GLib.SOURCE_CONTINUE;
     });
   }

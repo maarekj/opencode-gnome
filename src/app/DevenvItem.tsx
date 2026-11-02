@@ -64,7 +64,8 @@ function schedule(dir: string, w: Watch): void {
 export function watchDevenv(dir: string): { state: Accessor<DevenvState | null>; fast: (on: boolean) => void; refresh: () => void; release: () => void } {
   let w = watches.get(dir);
   if (w === undefined) {
-    const [state, set] = createState<DevenvState | null>(null);
+    // état inchangé d'une relecture à l'autre : pas de notification (pastilles non retouchées : #160)
+    const [state, set] = createState<DevenvState | null>(null, { equals: (x, y) => JSON.stringify(x) === JSON.stringify(y) });
     w = { state, set, subs: new Map(), timer: 0, ms: 0, reading: false };
     watches.set(dir, w);
     void read(dir, w);

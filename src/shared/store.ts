@@ -135,6 +135,8 @@ export class Store {
           this.#connectedOnce = true;
         } else this.#setConnection({ state: 'error', message: error ?? 'déconnecté' });
       },
+      // messages d'une session sans conversation ouverte : ignorés avant analyse (#160)
+      (_type, sessionID) => !this.#messageListeners.has(sessionID),
     );
   }
 

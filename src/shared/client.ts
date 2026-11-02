@@ -378,14 +378,18 @@ export class OpencodeClient {
    * `onState(true)` à chaque connexion : l'appelant doit alors recharger l'état complet.
    * Retourne une fonction d'arrêt.
    */
-  listen(onEvent: (e: AppEventEnvelope) => void, onState: (connected: boolean, error?: string) => void): () => void {
+  /**
+   * `skip` : événement de streaming à ignorer sans l'analyser (JSON + zod), par exemple les
+   * messages d'une session qu'aucune conversation ouverte ne suit (#160).
+   */
+  listen(onEvent: (e: AppEventEnvelope) => void, onState: (connected: boolean, error?: string) => void, skip: ((type: string, sessionID: string) => boolean) | null = null): () => void {
     const cancellable = new Gio.Cancellable();
     let retry = 0;
 
     // une connexion, puis reconnexion après un délai croissant (1 à 5 s)
     const connect = async (): Promise<void> => {
       try {
-        await this.#readStream(cancellable, onEvent, () => {
+        await this.#readStream(cancellable, onEvent, skip, () => {
           retry = 0;
           onState(true);
         });
@@ -407,7 +411,7 @@ export class OpencodeClient {
    * 10 s ; sans aucune ligne pendant WATCHDOG_MS (connexion à moitié ouverte après une mise en
    * veille ou un changement de réseau), la lecture est annulée et le flux reconnecté (#61).
    */
-  async #readStream(outer: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, onOpen: () => void): Promise<void> {
+  async #readStream(outer: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, skip: ((type: string, sessionID: string) => boolean) | null, onOpen: () => void): Promise<void> {
     const cancellable = new Gio.Cancellable();
     const relay = outer.connect(() => cancellable.cancel());
     let watchdog = 0;
@@ -421,7 +425,7 @@ export class OpencodeClient {
     };
     try {
       arm();
-      await this.#readEvents(cancellable, onEvent, onOpen, arm);
+      await this.#readEvents(cancellable, onEvent, skip, onOpen, arm);
     } catch (e) {
       // délai du chien de garde dépassé (flux annulé, pas l'appelant) : simple fin de flux
       if (!cancellable.is_cancelled() || outer.is_cancelled()) throw e;
@@ -431,7 +435,7 @@ export class OpencodeClient {
     }
   }
 
-  async #readEvents(cancellable: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, onOpen: () => void, alive: () => void): Promise<void> {
+  async #readEvents(cancellable: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, skip: ((type: string, sessionID: string) => boolean) | null, onOpen: () => void, alive: () => void): Promise<void> {
     const msg = Soup.Message.new('GET', this.#uri('/global/event'));
     if (msg === null) throw new Error(`URL invalide : ${this.url}`);
     msg.get_request_headers().append('Accept', 'text/event-stream');
@@ -450,7 +454,7 @@ export class OpencodeClient {
         alive();
         const line = decoder.decode(bytes).replace(/\r$/u, '');
         if (line === '') {
-          if (data.length > 0) dispatch(data.join('\n'), onEvent);
+          if (data.length > 0) dispatch(data.join('\n'), onEvent, skip);
           data = [];
         } else if (line.startsWith('data:')) {
           data.push(line.slice(5).trimStart());
@@ -462,7 +466,16 @@ export class OpencodeClient {
   }
 }
 
-function dispatch(raw: string, onEvent: (e: AppEventEnvelope) => void): void {
+/** Type des événements à haute fréquence (streaming), filtrables avant analyse. */
+// en tête de la charge utile seulement (`{"payload":{"id"?,"type":…,"properties":{"sessionID":…`) : un
+// objet imbriqué du même nom ne peut pas faire ignorer un autre événement
+const STREAM_TYPE = /"payload":\{(?:"id":"[^"]*",)?"type":"(message\.[a-z.]+|session\.diff|todo\.updated)","properties":\{"sessionID":"([^"]+)"/u;
+
+function dispatch(raw: string, onEvent: (e: AppEventEnvelope) => void, skip: ((type: string, sessionID: string) => boolean) | null): void {
+  if (skip !== null) {
+    const m = STREAM_TYPE.exec(raw);
+    if (m?.[1] !== undefined && m[2] !== undefined && skip(m[1], m[2])) return;
+  }
   let json: unknown;
   try {
     json = JSON.parse(raw);

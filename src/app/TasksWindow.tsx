@@ -15,7 +15,7 @@ import {
   describeSchedule,
   isManual,
   isFailure,
-  loadRuns,
+  cachedRuns,
   loadTasks,
   markFailuresSeen,
   newTaskId,
@@ -189,7 +189,8 @@ export class TasksMonitor {
     const seq = (this.#seq += 1);
     try {
       const tasks = loadTasks();
-      const runs = loadRuns();
+      // journal relu seulement s'il a changé (#160)
+      const runs = cachedRuns();
       const states = await Promise.all(tasks.map((t) => timerState(t)));
       if (seq !== this.#seq) return;
       this.#setTasks(
@@ -655,7 +656,7 @@ export function openTasksWindow(o: TasksWindowOptions): void {
   /** Historique : relu à chaque modification du journal des runs ou du filtre. */
   const renderRuns = (): void => {
     const tasks = loadTasks();
-    const runs = loadRuns();
+    const runs = cachedRuns();
     for (const r of runRows.splice(0)) runsGroup.remove(r);
     const names = new Map(tasks.map((t) => [t.id, t.name]));
     const shown = runs.filter((r) => !failedOnly.active || isFailure(r)).slice(0, 100);

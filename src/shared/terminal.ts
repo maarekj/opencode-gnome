@@ -18,7 +18,9 @@ const TERMINALS: Readonly<Record<string, readonly string[]>> = {
 
 export const KNOWN_TERMINALS: readonly string[] = Object.keys(TERMINALS);
 
-export const installedTerminals = (): string[] => KNOWN_TERMINALS.filter((t) => GLib.find_program_in_path(t) !== null);
+/** terminaux installés : recherchés une fois par processus (PATH long sous nix, #160) */
+let installed: string[] | null = null;
+export const installedTerminals = (): string[] => [...(installed ??= KNOWN_TERMINALS.filter((t) => GLib.find_program_in_path(t) !== null))];
 
 /** Échappe une chaîne pour le shell. */
 export const shq = (s: string): string => (/^[\w@%+=:,./-]+$/u.test(s) ? s : `'${s.replaceAll("'", String.raw`'\''`)}'`);

@@ -85,7 +85,9 @@ const NOT_RUNNING = /No process manager is running/u;
 /** Dossier du devenv (contenant devenv.nix). */
 export const devenvDir = (d: ProjectDevenv, project: string): string => resolveCwd(d.cwd, project);
 
-export const devenvInstalled = (): boolean => GLib.find_program_in_path('devenv') !== null;
+/** devenv installé : recherché une fois (PATH long sous nix, #160) */
+let devenvFound: boolean | null = null;
+export const devenvInstalled = (): boolean => (devenvFound ??= GLib.find_program_in_path('devenv') !== null);
 
 interface Result {
   readonly ok: boolean;

@@ -11,6 +11,11 @@ import GtkSource from 'gi://GtkSource?version=5';
 import Pango from 'gi://Pango';
 import { atAnchor, parsePatch, selectionOf, type DiffAnchor, type DiffKind as Kind, type DiffLine, type DiffSelection } from '../shared/diff.ts';
 
+/** Au-delà, le diff est tronqué (#160). */
+const MAX_LINES = 20_000;
+/** Au-delà, pas de coloration syntaxique (#160). */
+const HIGHLIGHT_LINES = 5000;
+
 /** Marge : numéro ancien, numéro nouveau, signe. */
 const NumbersRenderer = GObject.registerClass(
   class NumbersRenderer extends GtkSource.GutterRendererText {
@@ -136,12 +141,15 @@ export function createDiffView({ inline = false }: { inline?: boolean } = {}): D
   let shownLines: readonly (DiffLine | null)[] = [];
   let annotationsOf: (file: string) => readonly DiffAnnotation[] = noAnnotations;
   const show = (filename: string, patch: string, keepPosition = false): void => {
-    const diffLines = parsePatch(patch);
+    const parsed = parsePatch(patch);
+    // très gros diff (fichier généré, lockfile…) : affichage plafonné (#160)
+    const diffLines = parsed.length > MAX_LINES ? [...parsed.slice(0, MAX_LINES), { kind: 'hunk' as const, text: `… ${parsed.length - MAX_LINES} lignes de plus non affichées (diff trop volumineux)` }] : parsed;
     const notes = annotationsOf(filename);
     const rows: (DiffLine | null)[] = [];
     const rowNotes = new Map<number, DiffAnnotation[]>();
     for (const l of diffLines) {
       rows.push(l);
+      if (notes.length === 0) continue;
       const here = notes.filter((n) => atAnchor(l, n.end));
       if (here.length > 0) {
         rows.push(null);
@@ -154,7 +162,8 @@ export function createDiffView({ inline = false }: { inline?: boolean } = {}): D
     shownPatch = patch;
     shownLines = lines;
     buffer.language = GtkSource.LanguageManager.get_default().guess_language(filename, null);
-    buffer.highlightSyntax = buffer.language !== null;
+    // coloration syntaxique coûteuse sur un gros diff : désactivée au-delà de HIGHLIGHT_LINES
+    buffer.highlightSyntax = buffer.language !== null && lines.length <= HIGHLIGHT_LINES;
     buffer.set_text(lines.map((l) => l?.text ?? '').join('\n'), -1);
     // commentaires : un widget ancré sur leur ligne (vide), sous la ligne commentée
     for (const [i, list] of rowNotes) {

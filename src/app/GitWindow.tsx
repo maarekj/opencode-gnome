@@ -21,6 +21,13 @@ import { askComment, ReviewController, reviewPanel, type ReviewTarget } from './
 import type { ReviewComment, ReviewOrigin } from '../shared/review.ts';
 import type { DiffAnchor } from '../shared/diff.ts';
 
+/** Empreinte rapide d'un texte (FNV-1a 32 bits), sans copie. */
+function fingerprint(text: string): string {
+  let h = 0x81_1c_9d_c5;
+  for (let i = 0; i < text.length; i += 1) h = Math.imul(h ^ (text.codePointAt(i) ?? 0), 0x01_00_01_93);
+  return `${text.length}:${(h >>> 0).toString(36)}`;
+}
+
 const LOG_PAGE = 300;
 
 const STATUS: Readonly<Record<string, { icon: string; label: string; css: string }>> = {
@@ -352,7 +359,8 @@ function changesTab(source: GitSource, review: ReviewController, select: (c: Rev
     try {
       const diffs = (await source.load()).toSorted((a, b) => a.file.localeCompare(b.file));
       // rien de changé : on garde la vue (défilement du diff)
-      const key = JSON.stringify(diffs);
+      // clé légère (pas de JSON de tous les patchs toutes les 800 ms pendant que l'agent travaille : #160)
+      const key = diffs.map((d) => `${d.file}|${d.status ?? ''}|${d.additions}|${d.deletions}|${fingerprint(d.patch ?? '')}`).join('\n');
       if (loaded && key === last) return;
       last = key;
       const files = diffs.map((d): GitFileChange => ({ path: d.file, status: SERVER_STATUS[d.status ?? 'modified'] ?? 'M', additions: d.additions, deletions: d.deletions }));

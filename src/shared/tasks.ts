@@ -395,6 +395,29 @@ export function recordRun(r: RunRecord): void {
   });
 }
 
+/** Dernière lecture du journal, réutilisée tant que le fichier n'a pas changé (taille, date : #160). */
+let runsCache: { path: string; stamp: string; runs: RunRecord[] } | null = null;
+
+function runsStamp(path: string): string | null {
+  try {
+    const info = Gio.File.new_for_path(path).query_info('standard::size,time::modified,time::modified-usec', Gio.FileQueryInfoFlags.NONE, null);
+    return `${info.get_size()}:${info.get_modification_date_time()?.to_unix_usec() ?? 0}`;
+  } catch {
+    return null; // absent
+  }
+}
+
+/** Runs du plus récent au plus ancien, sans relire ni analyser le journal s'il n'a pas changé. */
+export function cachedRuns(): readonly RunRecord[] {
+  const path = runsPath();
+  const stamp = runsStamp(path);
+  if (stamp === null) return [];
+  if (runsCache?.path === path && runsCache.stamp === stamp) return runsCache.runs;
+  const runs = loadRuns();
+  runsCache = { path, stamp, runs };
+  return runs;
+}
+
 /** Runs du plus récent au plus ancien. */
 export function loadRuns(taskID?: string): RunRecord[] {
   const text = readText(runsPath());
@@ -419,7 +442,7 @@ const FAILED: ReadonlySet<RunStatus> = new Set(['error', 'timeout', 'skipped']);
 export const isFailure = (r: RunRecord): boolean => FAILED.has(r.status);
 
 /** Runs en échec terminés après le dernier passage dans l'historique. */
-export function unseenFailures(runs: readonly RunRecord[] = loadRuns()): RunRecord[] {
+export function unseenFailures(runs: readonly RunRecord[] = cachedRuns()): RunRecord[] {
   // fichier corrompu (NaN) : 0, tous les échecs sont signalés plutôt qu'aucun (#99)
   const seen = Number(readText(seenPath()) ?? '0') || 0;
   return runs.filter((r) => isFailure(r) && (r.end ?? r.start) > seen);
