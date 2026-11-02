@@ -93,6 +93,8 @@ function makeSidebarResizable(split: Adw.NavigationSplitView, settings: Settings
   split.add_controller(drag);
 }
 
+const TIMING = GLib.getenv('OPENCODE_GNOME_TIMING') !== null;
+
 /** Listes réutilisées tant que leurs éléments sont les mêmes : pas de recalcul en aval (#157). */
 const sameList = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
@@ -267,6 +269,7 @@ export function MainWindow({
     if (handle === undefined) return;
     pages.delete(sessionID);
     if (nav.find_page(sessionTag(sessionID)) !== null) nav.pop_to_tag('sessions');
+    nav.remove(handle.page);
     handle.dispose();
   };
 
@@ -463,6 +466,7 @@ export function MainWindow({
       void create();
     },
     openSession: (sessionID) => {
+      const t0 = Date.now();
       const project = store.projects.peek().find((p) => p.sessions.some((v) => v.session.id === sessionID));
       if (project !== undefined) {
         setSelected(project.key);
@@ -476,11 +480,24 @@ export function MainWindow({
         drafts.delete(sessionID);
         handle = createConversationPage({ ...pageOptions(), sessionID, ...(draft === undefined ? {} : { draft: draft.text, ...(draft.from === undefined ? {} : { draftFrom: draft.from }) }) });
         pages.set(sessionID, handle);
+        // ajoutée une fois pour toutes : la page reste dans la vue (réalisée) quand on en sort,
+        // pas de détachement / rattachement complet à chaque changement de session (#158)
+        nav.add(handle.page);
       }
       if (nav.visiblePage === handle.page) return;
       // pile : liste du projet, puis la session (la page précédente est retirée mais conservée)
       const root = nav.find_page('sessions');
+      const t1 = Date.now();
       nav.replace(root === null ? [handle.page] : [root, handle.page]);
+      if (TIMING) {
+        const t2 = Date.now();
+        // première image dessinée après le changement
+        const clock = nav.get_frame_clock();
+        const id = clock?.connect('after-paint', () => {
+          if (id !== undefined) clock?.disconnect(id);
+          console.log(`TIMING ouverture session ${sessionID} préparation=${t1 - t0} ms replace=${t2 - t1} ms image=${Date.now() - t0} ms`);
+        });
+      }
     },
   };
 

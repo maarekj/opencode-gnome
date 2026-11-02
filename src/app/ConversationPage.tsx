@@ -110,6 +110,8 @@ export function createConversationPage(opts: {
     // chargement réseau immédiat (non bloquant) ; widgets construits après l'animation d'entrée
     void conversation.start();
     const [revealed, setRevealed] = createState(false);
+    /** page affichée à l'écran (sinon pas de rendu du markdown en direct : #158) */
+    const [active, setActive] = createState(true);
 
     if (child) store.loadChild(sessionID).catch((e: unknown) => toast(`Sous-agent introuvable : ${errorMessage(e)}`));
     // vue de la session : objet réutilisé par le store tant qu'il ne change pas, donc pas de
@@ -186,7 +188,8 @@ export function createConversationPage(opts: {
             };
           };
     const loadChoices: ComposerProps['loadChoices'] = async () => {
-            const [agents, providers, config] = await Promise.all([client.agents(dir()), client.providers(dir()), client.config(dir()).catch(() => null)]);
+            // partagés par les pages du même dossier (#158)
+            const { agents, providers, config } = await client.cachedChoices(dir());
             const { defaultModel, defaultVariant } = settings.data.peek();
             // modèle d'une session sans modèle : préférence de l'app > config opencode > défaut des fournisseurs
             const defaults = [defaultModel, config?.model ?? undefined].filter((m): m is string => m !== undefined && m !== '');
@@ -210,7 +213,7 @@ export function createConversationPage(opts: {
           initial,
           loadChoices,
           send: (text, choice, payload) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { ...payload, ...choice })),
-          loadCommands: () => client.commands(dir()),
+          loadCommands: () => client.cachedCommands(dir()),
           runCommand: (name, args, choice, payload) => attempt(toast, `/${name}`, () => client.command(sessionID, dir(), name, args, { ...payload, ...choice })),
           builtins: builtinCommands({
             client,
@@ -356,6 +359,7 @@ export function createConversationPage(opts: {
           <ConversationView
             conversation={conversation}
             revealed={revealed}
+            active={active}
             actions={requestActions}
             showTools={showTools}
             maxWidth={settings.data((d) => d.maxWidth)}
@@ -412,8 +416,16 @@ export function createConversationPage(opts: {
         if (root.isActive && page.get_mapped()) refreshGit();
       });
     });
+    page.connect('hidden', () => setActive(false));
+    let gitShownAt = 0;
     page.connect('shown', () => {
-      refreshGit();
+      setActive(true);
+      // retour sur la page : relu au plus toutes les 5 s (fin de tour et modifications de fichiers
+      // le relisent déjà)
+      if (Date.now() - gitShownAt > 5000) {
+        gitShownAt = Date.now();
+        refreshGit();
+      }
       if (revealed.peek()) return;
       GLib.timeout_add(GLib.PRIORITY_DEFAULT, REVEAL_DELAY_MS, () => {
         setRevealed(true);

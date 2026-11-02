@@ -53,10 +53,41 @@ async function forkPoint(o: AsideOptions): Promise<string | undefined> {
   return messages.find((m) => m.info.role === 'assistant' && m.info.time.completed === undefined)?.info.id;
 }
 
+/**
+ * Panneau de la question annexe, construit à sa première ouverture : rien (ni compositeur, ni
+ * chargement des agents et modèles) tant qu'il n'a pas servi (#158).
+ */
 export function AsidePanel(o: AsideOptions): AsideHandle {
+  const [shown, setShown] = createState(false);
+  const host = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
+  let inner: { dispose: () => void } | null = null;
+  const unsubscribe = shown.subscribe(() => {
+    if (!shown.peek() || inner !== null) return;
+    inner = createRoot((dispose) => {
+      const built = buildAside(o, shown, setShown);
+      host.append(built.widget);
+      return {
+        dispose: () => {
+          built.dispose();
+          dispose();
+        },
+      };
+    });
+  });
+  return {
+    widget: host,
+    shown,
+    toggle: () => setShown(!shown.peek()),
+    dispose: () => {
+      unsubscribe();
+      inner?.dispose();
+    },
+  };
+}
+
+function buildAside(o: AsideOptions, shown: Accessor<boolean>, setShown: (v: boolean) => void): { widget: Gtk.Widget; dispose: () => void } {
   const { store, settings, parentID, toast } = o;
   const client = store.client;
-  const [shown, setShown] = createState(false);
   /** fork caché de la session (réglages) */
   const ref = settings.data((d) => d.asides[parentID] ?? null);
   /** conversation de la question annexe chargée dans le panneau */
@@ -180,7 +211,7 @@ export function AsidePanel(o: AsideOptions): AsideHandle {
     initial: o.initial,
     loadChoices: o.loadChoices,
     send: (text, choice, payload) => send((id) => client.prompt(id, o.dir(), text, { ...payload, ...choice })),
-    loadCommands: () => client.commands(o.dir()),
+    loadCommands: () => client.cachedCommands(o.dir()),
     runCommand: (name, args, choice, payload) => send((id) => client.command(id, o.dir(), name, args, { ...payload, ...choice })),
     builtins: [],
     findFiles: o.findFiles,
@@ -254,11 +285,11 @@ export function AsidePanel(o: AsideOptions): AsideHandle {
   const unsubscribe = shown.subscribe(() => {
     if (shown.peek()) open();
   });
+  // construit à la première ouverture : déjà affiché
+  if (shown.peek()) open();
 
   return {
     widget,
-    shown,
-    toggle: () => setShown(!shown.peek()),
     dispose: () => {
       unsubscribe();
       disposeView?.();

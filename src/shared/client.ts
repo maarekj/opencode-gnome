@@ -50,6 +50,9 @@ const filePath = (uri: string): string => {
   }
 };
 
+/** Durée de vie du cache des agents, modèles et commandes (ms). */
+const CACHE_MS = 60_000;
+
 export class OpencodeClient {
   readonly url: string;
   // libsoup limite les connexions par hôte (2 par défaut) : relevé, et le flux SSE (connexion
@@ -62,6 +65,8 @@ export class OpencodeClient {
 
   /** mot de passe HTTP Basic du serveur (accès réseau protégé), ou vide */
   #auth = '';
+  /** réponses partagées par les pages d'un même dossier (agents, modèles, commandes : #158) */
+  readonly #cache = new Map<string, { at: number; value: Promise<unknown> }>();
 
   constructor(url: string, password = serverPassword()) {
     this.url = url.replace(/\/+$/u, '');
@@ -311,11 +316,42 @@ export class OpencodeClient {
 
   /** Libère l'instance du répertoire : sa configuration (opencode.json, MCP…) est relue ensuite. */
   async disposeInstance(directory: string): Promise<void> {
+    for (const k of this.#cache.keys()) if (k.endsWith(`\n${directory}`)) this.#cache.delete(k);
     await this.request('POST', '/instance/dispose', z.unknown(), { query: { directory }, long: true });
   }
 
   skills(directory: string): Promise<Skill[]> {
     return this.get('/skill', z.array(Skill), { directory });
+  }
+
+  /**
+   * Réponse mise en cache par dossier pendant `CACHE_MS` (même promesse pour les appels
+   * simultanés) ; une erreur n'est pas gardée.
+   */
+  #cached<T>(what: string, directory: string, load: () => Promise<T>): Promise<T> {
+    const key = `${what}\n${directory}`;
+    const hit = this.#cache.get(key);
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- même clé, même type
+    if (hit !== undefined && Date.now() - hit.at < CACHE_MS) return hit.value as Promise<T>;
+    const value = load();
+    this.#cache.set(key, { at: Date.now(), value });
+    value.catch(() => {
+      if (this.#cache.get(key)?.value === value) this.#cache.delete(key);
+    });
+    return value;
+  }
+
+  /** Agents, modèles et config du dossier, en cache (compositeurs des conversations). */
+  cachedChoices(directory: string): Promise<{ agents: Agent[]; providers: Providers; config: OpencodeConfig | null }> {
+    return this.#cached('choices', directory, async () => {
+      const [agents, providers, config] = await Promise.all([this.agents(directory), this.providers(directory), this.config(directory).catch(() => null)]);
+      return { agents, providers, config };
+    });
+  }
+
+  /** Commandes du dossier, en cache. */
+  cachedCommands(directory: string): Promise<Command[]> {
+    return this.#cached('commands', directory, () => this.commands(directory));
   }
 
   config(directory: string): Promise<OpencodeConfig> {

@@ -327,7 +327,7 @@ export function reviewTarget(store: Store, project: string, preferred: string | 
 
 export function SessionsPage({
   store,
-  current,
+  current: liveCurrent,
   actions,
   terminals,
   tasks,
@@ -338,6 +338,15 @@ export function SessionsPage({
   terminals: TerminalContext;
   tasks: ProjectTasksContext;
 }): JSX.Element {
+  // page cachée (une conversation est affichée) : le projet n'est suivi qu'à son retour, pas de
+  // reconstruction de la liste, de la barre et de la section git à chaque changement de session (#158)
+  const [current, setCurrent] = createState(liveCurrent.peek());
+  let visible = true;
+  onCleanup(
+    liveCurrent.subscribe(() => {
+      if (visible) setCurrent(liveCurrent.peek());
+    }),
+  );
   const projectPath = current((p) => p?.path ?? null);
   /** fenêtre git du projet, ou d'un de ses worktrees */
   const openGit = (self: Gtk.Widget, directory?: string): void => {
@@ -381,6 +390,13 @@ export function SessionsPage({
           }),
         );
         self.add_controller(keys);
+        self.connect('showing', () => {
+          visible = true;
+          setCurrent(liveCurrent.peek());
+        });
+        self.connect('hidden', () => {
+          visible = false;
+        });
         // changement de projet : recherche réinitialisée
         onCleanup(
           key.subscribe(() => {

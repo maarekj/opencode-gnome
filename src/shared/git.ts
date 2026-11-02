@@ -5,8 +5,12 @@ import GLib from 'gi://GLib';
 Gio._promisify(Gio.Subprocess.prototype, 'communicate_async', 'communicate_finish');
 
 /** Lance `git -C <dossier> …` ; `null` si git échoue (pas un dépôt, git absent). */
+/** git installé (recherché une fois : le PATH est long sous nix, #158) */
+let gitFound: boolean | null = null;
+
 export async function git(directory: string, args: readonly string[]): Promise<string | null> {
-  if (GLib.find_program_in_path('git') === null) return null;
+  gitFound ??= GLib.find_program_in_path('git') !== null;
+  if (!gitFound) return null;
   const launcher = new Gio.SubprocessLauncher({ flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE });
   // pas d'éditeur, de pager ni de verrou d'index pour une lecture
   launcher.setenv('GIT_OPTIONAL_LOCKS', '0', true);

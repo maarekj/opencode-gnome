@@ -74,6 +74,8 @@ interface FlowContext {
   readonly subagents: SubagentContext | undefined;
   /** fork de la session à partir d'un message de l'utilisateur */
   readonly fork: ((messageID: string, text: string) => void) | undefined;
+  /** page affichée : sinon le markdown en cours d'écriture n'est pas redessiné (#158) */
+  readonly active: Accessor<boolean>;
 }
 
 /**
@@ -355,11 +357,23 @@ function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold
     if (info !== null) return <ReadToolLine part={p} info={info} open={open} />;
   }
   const waiting = p.tool === 'question' && (p.state?.status === 'running' || p.state?.status === 'pending');
+  // détails (entrée, commande, sortie) construits au dépliage : la plupart des outils restent
+  // repliés, et leur sortie peut être longue (#158)
+  const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+  let built = false;
+  const build = (): void => {
+    if (built) return;
+    built = true;
+    const details = ToolDetails({ part: p });
+    if (details instanceof Gtk.Widget) body.append(details);
+  };
+  if (open.value) build();
   return (
     <Gtk.Expander
       expanded={open.value}
       onNotifyExpanded={(self: Gtk.Expander) => {
         open.value = self.expanded;
+        if (self.expanded) build();
       }}
     >
       <Gtk.Box $type="label" spacing={8}>
@@ -373,7 +387,7 @@ function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold
           cssClasses={['dim-label', 'monospace']}
         />
       </Gtk.Box>
-      <ToolDetails part={p} />
+      {body}
     </Gtk.Expander>
   );
 }
@@ -579,7 +593,7 @@ function copyText(widget: Gtk.Widget, value: string): void {
  * espacé selon la longueur (≈ 1 ms par 10 caractères, de 80 ms à 1 s) ; la dernière valeur est
  * toujours affichée (#75).
  */
-function throttled(source: Accessor<string>): Accessor<string> {
+function throttled(source: Accessor<string>, active: Accessor<boolean>): Accessor<string> {
   const [shown, setShown] = createState(source.peek());
   let timer = 0;
   let last = 0;
@@ -588,8 +602,12 @@ function throttled(source: Accessor<string>): Accessor<string> {
     last = GLib.get_monotonic_time() / 1000;
     setShown(source.peek());
   };
+  // page cachée : rattrapage au retour (dernière valeur seulement)
+  const unsubscribeActive = active.subscribe(() => {
+    if (active.peek() && timer === 0 && shown.peek() !== source.peek()) apply();
+  });
   const unsubscribe = source.subscribe(() => {
-    if (timer !== 0) return;
+    if (timer !== 0 || !active.peek()) return;
     const delay = Math.min(1000, Math.max(80, source.peek().length / 10));
     const wait = Math.max(0, last + delay - GLib.get_monotonic_time() / 1000);
     if (wait === 0) apply();
@@ -601,6 +619,7 @@ function throttled(source: Accessor<string>): Accessor<string> {
   });
   onCleanup(() => {
     unsubscribe();
+    unsubscribeActive();
     if (timer !== 0) GLib.source_remove(timer);
   });
   return shown;
@@ -610,7 +629,7 @@ function throttled(source: Accessor<string>): Accessor<string> {
  * Message en markdown, sélectionnable d'un bloc (un seul TextView), avec un bouton « Copier »
  * (markdown source) qui apparaît au survol.
  */
-function Copyable({ text: source, css, onFork, readable = false }: { text: Accessor<string>; css: string; onFork?: (() => void) | undefined; readable?: boolean }): JSX.Element {
+function Copyable({ text: source, css, active, onFork, readable = false }: { text: Accessor<string>; css: string; active: Accessor<boolean>; onFork?: (() => void) | undefined; readable?: boolean }): JSX.Element {
   return (
     <Gtk.Overlay cssClasses={['copyable', css]}>
       {readable ? (
@@ -631,7 +650,7 @@ function Copyable({ text: source, css, onFork, readable = false }: { text: Acces
         />
       )}
       <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
-        <With value={throttled(source)}>{(t: string) => MarkdownView({ text: t })}</With>
+        <With value={throttled(source, active)}>{(t: string) => MarkdownView({ text: t })}</With>
       </Gtk.Box>
       <Gtk.Button
         $type="overlay"
@@ -661,6 +680,7 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
         <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={4}>
           {block.first === true ? <Stamp ms={block.created} /> : null}
           <Copyable
+            active={ctx.active}
             text={block.part((p) => stripImageMarkers(p.text ?? ''))}
             css="user-message"
             onFork={
@@ -679,14 +699,14 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
       widget = <TurnFooter turn={block.turn} />;
       break;
     case 'text':
-      widget = <Copyable text={text(block.part)} css="assistant-message" readable />;
+      widget = <Copyable text={text(block.part)} css="assistant-message" active={ctx.active} readable />;
       break;
     case 'reasoning':
       widget = (
         <Gtk.Overlay cssClasses={['copyable']}>
           <Gtk.Expander label={block.part(reasoningLabel)} cssClasses={['reasoning']}>
             <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
-              <With value={throttled(text(block.part))}>{(t: string) => MarkdownView({ text: t })}</With>
+              <With value={throttled(text(block.part), ctx.active)}>{(t: string) => MarkdownView({ text: t })}</With>
             </Gtk.Box>
           </Gtk.Expander>
           <Gtk.Box $type="overlay" halign={Gtk.Align.END} valign={Gtk.Align.START}>
@@ -898,7 +918,10 @@ export function ConversationView({
   fork,
   emptyClick,
   revealer,
+  active,
 }: {
+  /** page affichée (markdown en direct suspendu sinon) */
+  active?: Accessor<boolean> | undefined;
   conversation: Conversation;
   revealed: Accessor<boolean>;
   actions: RequestActions;
@@ -914,7 +937,7 @@ export function ConversationView({
 }): JSX.Element {
   // spinner tant que l'animation d'entrée n'est pas finie ou que rien n'est chargé
   const showLoading = createComputed(() => !revealed() || (conversation.loading() && conversation.blocks().length === 0));
-  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry(), showTools, subagents, fork };
+  const ctx: FlowContext = { conversation, actions, cards: new CardRegistry(), showTools, subagents, fork, active: active ?? createState(true)[0] };
 
   // demandes non rattachées à un appel d'outil affiché : en fin de conversation
   const orphans = createComputed((): Pending[] => {
