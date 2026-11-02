@@ -42,40 +42,63 @@ export interface Actions {
 
 const updatedAt = (v: SessionView): number => v.session.time.updated ?? v.session.time.created;
 
-function activityIcon(view: SessionView): JSX.Element | null {
+function activityIcon(view: SessionView): Gtk.Widget | null {
   switch (view.activity) {
     case 'busy':
-      return <Adw.Spinner $type="prefix" tooltipText="En cours" />;
+      return new Adw.Spinner({ tooltipText: 'En cours' });
     case 'retry':
-      return <Gtk.Image $type="prefix" iconName="view-refresh-symbolic" cssClasses={['warning']} tooltipText="Nouvel essai" />;
+      return new Gtk.Image({ iconName: 'view-refresh-symbolic', cssClasses: ['warning'], tooltipText: 'Nouvel essai' });
     case 'question':
-      return <Gtk.Image $type="prefix" iconName="help-about-symbolic" cssClasses={['warning']} tooltipText="Question en attente" />;
+      return new Gtk.Image({ iconName: 'help-about-symbolic', cssClasses: ['warning'], tooltipText: 'Question en attente' });
     case 'permission':
-      return <Gtk.Image $type="prefix" iconName="dialog-warning-symbolic" cssClasses={['warning']} tooltipText="Permission demandée" />;
+      return new Gtk.Image({ iconName: 'dialog-warning-symbolic', cssClasses: ['warning'], tooltipText: 'Permission demandée' });
     case 'idle':
-      return view.unread ? <Gtk.Box $type="prefix" cssClasses={['unread-dot']} valign={Gtk.Align.CENTER} tooltipText="Réponse non lue" /> : null;
+      return view.unread ? new Gtk.Box({ cssClasses: ['unread-dot'], valign: Gtk.Align.CENTER, tooltipText: 'Réponse non lue' }) : null;
     default:
       return null;
   }
 }
 
-function SessionRow({ view, actions }: { view: SessionView; actions: Actions }): JSX.Element {
-  const s = view.session;
-  const title = s.title === '' ? 'Sans titre' : s.title;
-  const meta = [fmtRelative(updatedAt(view)), s.agent, s.model === undefined ? undefined : s.model.variant === undefined || s.model.variant === 'default' ? s.model.id : `${s.model.id} (${s.model.variant})`, fmtCost(s.cost)].filter((x) => x !== undefined && x !== '').join('  ·  ');
-  const act = actions.sessionActions(s);
+const titleOf = (v: SessionView): string => (v.session.title === '' ? 'Sans titre' : v.session.title);
+const metaOf = (v: SessionView): string => {
+  const s = v.session;
+  return [fmtRelative(updatedAt(v)), s.agent, s.model === undefined ? undefined : s.model.variant === undefined || s.model.variant === 'default' ? s.model.id : `${s.model.id} (${s.model.variant})`, fmtCost(s.cost)].filter((x) => x !== undefined && x !== '').join('  ·  ');
+};
+
+/** Ligne d'une session : clé stable, titre, détails, activité et non-lu mis à jour sur place (#157). */
+function SessionRow({ view, live, actions }: { view: SessionView; live: Accessor<SessionView>; actions: Actions }): JSX.Element {
+  const act = actions.sessionActions(view.session);
   return (
     <Adw.ActionRow
-      title={esc(title)}
-      subtitle={esc(meta)}
+      title={live((v) => esc(titleOf(v)))}
+      subtitle={live((v) => esc(metaOf(v)))}
       activatable
       onActivated={act.open}
-      cssClasses={view.unread ? ['unread'] : []}
+      cssClasses={createMemo(() => (live().unread ? ['unread'] : []), { equals: (a, b) => a.length === b.length })}
       $={(self: Adw.ActionRow) => {
-        attachSessionMenu(self, () => title, act);
+        attachSessionMenu(self, () => titleOf(live.peek()), act);
       }}
     >
-      {activityIcon(view)}
+      <Gtk.Box
+        $type="prefix"
+        valign={Gtk.Align.CENTER}
+        $={(self: Gtk.Box) => {
+          // indicateur remplacé seulement quand l'activité ou le non-lu change
+          let shown = '';
+          const update = (): void => {
+            const v = live.peek();
+            const k = `${v.activity}|${v.unread}`;
+            if (k === shown) return;
+            shown = k;
+            for (let c = self.get_first_child(); c !== null; c = self.get_first_child()) self.remove(c);
+            const icon = activityIcon(v);
+            if (icon !== null) self.append(icon);
+            self.visible = icon !== null;
+          };
+          update();
+          onCleanup(live.subscribe(update));
+        }}
+      />
       <Gtk.Box $type="suffix" spacing={2} valign={Gtk.Align.CENTER}>
         <Gtk.Button iconName="utilities-terminal-symbolic" tooltipText="Ouvrir dans le terminal" cssClasses={['flat']} onClicked={act.openInTerminal} />
         {deleteButton(act.delete)}
@@ -256,8 +279,8 @@ function ProjectTasks({
 }
 
 function SessionList({ sessions, actions, header }: { sessions: Accessor<readonly SessionView[]>; actions: Actions; header?: JSX.Element }): JSX.Element {
-  // Ordre exact du store (date de mise à jour décroissante). La clé inclut ce qui est affiché :
-  // une session modifiée est reconstruite et replacée à sa nouvelle position.
+  // Ordre exact du store (date de mise à jour décroissante). Clé : la session seule ; une session
+  // modifiée est mise à jour sur place et déplacée à sa nouvelle position (#157).
   return (
     <Gtk.ScrolledWindow vexpand hscrollbarPolicy={Gtk.PolicyType.NEVER}>
       <Adw.Clamp maximumSize={900} marginTop={12} marginBottom={12} marginStart={12} marginEnd={12}>
@@ -272,8 +295,8 @@ function SessionList({ sessions, actions, header }: { sessions: Accessor<readonl
               keyedListBox(
                 self,
                 sessions,
-                (v) => `${v.session.id}|${updatedAt(v)}|${v.activity}|${v.unread}|${v.session.title}`,
-                (v) => asWidget(SessionRow({ view: v, actions })),
+                (v) => v.session.id,
+                (v, live) => asWidget(SessionRow({ view: v, live, actions })),
               ),
             );
           }}

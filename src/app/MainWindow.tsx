@@ -2,7 +2,7 @@
 import Adw from 'gi://Adw?version=1';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
-import { createComputed, createState, onCleanup } from 'gnim';
+import { createMemo, createState, onCleanup } from 'gnim';
 import { errorMessage, HttpError } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
@@ -92,6 +92,9 @@ function makeSidebarResizable(split: Adw.NavigationSplitView, settings: Settings
   });
   split.add_controller(drag);
 }
+
+/** Listes réutilisées tant que leurs éléments sont les mêmes : pas de recalcul en aval (#157). */
+const sameList = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
 function asPage(o: JSX.Element): Adw.NavigationPage {
   if (!(o instanceof Adw.NavigationPage)) throw new TypeError('NavigationPage attendue');
@@ -219,17 +222,25 @@ export function MainWindow({
 }): JSX.Element {
   const [selected, setSelected] = createState<string | null>(null);
   /** Projets connus + favoris absents de la liste d'opencode (répertoire sans session). */
-  const allProjects = createComputed((): readonly ProjectView[] => {
-    const projects = store.projects();
-    const known = new Set(projects.map((p) => p.path));
-    const missing = settings
-      .data()
-      .favorites.filter((path) => !known.has(path))
-      .map((path): ProjectView => ({ key: `dir:${path}`, name: GLib.path_get_basename(path), path, vcs: false, sessions: [], working: 0, waiting: 0, unread: 0, updated: 0 }));
-    return [...projects, ...missing];
-  });
+  /** favoris absents d'opencode : objets réutilisés d'un calcul à l'autre */
+  const placeholders = new Map<string, ProjectView>();
+  const allProjects = createMemo(
+    (): readonly ProjectView[] => {
+      const projects = store.projects();
+      const known = new Set(projects.map((p) => p.path));
+      const missing = settings
+        .data()
+        .favorites.filter((path) => !known.has(path))
+        .map((path): ProjectView => placeholders.get(path) ?? { key: `dir:${path}`, name: GLib.path_get_basename(path), path, vcs: false, sessions: [], working: 0, waiting: 0, unread: 0, updated: 0 });
+      // seuls les favoris encore absents sont gardés
+      placeholders.clear();
+      for (const p of missing) placeholders.set(p.path, p);
+      return [...projects, ...missing];
+    },
+    { equals: sameList },
+  );
   /** Projets affichés dans la barre latérale selon le mode. */
-  const visibleProjects = createComputed((): readonly ProjectView[] => {
+  const visibleProjects = createMemo((): readonly ProjectView[] => {
     const { sidebarMode, favorites } = settings.data();
     const all = allProjects();
     if (sidebarMode === 'all') return all;
@@ -239,8 +250,8 @@ export function MainWindow({
       const p = byPath.get(path);
       return p === undefined ? [] : [p];
     });
-  });
-  const current = createComputed(() => {
+  }, { equals: sameList });
+  const current = createMemo(() => {
     const key = selected();
     return allProjects().find((p) => p.key === key) ?? visibleProjects()[0] ?? allProjects()[0] ?? null;
   });

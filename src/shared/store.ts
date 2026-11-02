@@ -93,6 +93,12 @@ export class Store {
   #childrenSignature = '';
   /** sessions non lues (tenu par l'app, persistant dans ses réglages) */
   #unread: ReadonlySet<string> = new Set();
+  /** activité héritée des sous-agents, invalidée à chaque changement (#inherited) */
+  #inheritedCache: ReadonlyMap<string, Activity> | null = null;
+  /** vues de la dernière publication, réutilisées si rien n'a changé (#157) */
+  #views = new Map<string, SessionView>();
+  #projectViews = new Map<string, ProjectView>();
+  #byWorktree = new Map<string, Project>();
   /** sessions en cours de chargement par #discover */
   readonly #discovering = new Set<string>();
   /** sessions chargées par #discover sans parent (ou introuvables) : pas rechargées */
@@ -164,6 +170,7 @@ export class Store {
       const activity = await this.#loadActivity(sessions);
       if (gen !== this.#reloadGen) return;
       this.#applyActivity(activity, changes.activity);
+      this.#inheritedCache = null;
       for (const id of [...this.#permissions.keys(), ...this.#questions.keys()]) this.#discover(id);
       this.#publish();
     } catch (e) {
@@ -219,6 +226,7 @@ export class Store {
 
   /** Ajoute / retire une demande en attente d'une session. */
   #track(map: Map<string, Set<string>>, sessionID: string, id: string | undefined, add: boolean): void {
+    this.#inheritedCache = null;
     const set = map.get(sessionID) ?? new Set<string>();
     if (add && id !== undefined) set.add(id);
     // id inconnu à la réponse : on considère la session comme répondue
@@ -318,6 +326,8 @@ export class Store {
         if (s.parentID === undefined) this.#roots.add(s.id);
         else {
           this.#children.set(s.id, s);
+    this.#inheritedCache = null;
+          this.#inheritedCache = null;
           this.#discover(s.parentID);
           this.#publishSoon();
         }
@@ -355,6 +365,7 @@ export class Store {
   }
 
   #onEvent({ event }: AppEventEnvelope): void {
+    this.#inheritedCache = null;
     switch (event.type) {
       case 'message.updated':
       case 'message.removed':
@@ -450,22 +461,37 @@ export class Store {
    * sous-agents (question, permission : #154).
    */
   activity(sessionID: string): Activity {
-    const own = (id: string): Activity | null =>
-      (this.#questions.get(id)?.size ?? 0) > 0 ? 'question' : (this.#permissions.get(id)?.size ?? 0) > 0 ? 'permission' : null;
-    const mine = own(sessionID);
-    if (mine !== null) return mine;
-    if (this.#sessions.has(sessionID) && (this.#questions.size > 0 || this.#permissions.size > 0))
-      for (const id of this.#descendants(sessionID)) {
-        const sub = own(id);
-        if (sub !== null) return sub;
+    if ((this.#questions.get(sessionID)?.size ?? 0) > 0) return 'question';
+    if ((this.#permissions.get(sessionID)?.size ?? 0) > 0) return 'permission';
+    // remontée des sous-agents : sessions racines seulement (comme avant #157)
+    return (this.#sessions.has(sessionID) ? this.#inherited().get(sessionID) : undefined) ?? this.#status.get(sessionID) ?? 'idle';
+  }
+
+  /**
+   * Demandes des sous-agents remontées à leurs ancêtres : calculées en partant des demandes en
+   * attente (peu nombreuses) vers la racine, pas en parcourant les sous-agents de chaque session (#157).
+   */
+  #inherited(): ReadonlyMap<string, Activity> {
+    if (this.#inheritedCache !== null) return this.#inheritedCache;
+    const out = new Map<string, Activity>();
+    const climb = (id: string, a: Activity): void => {
+      const seen = new Set<string>();
+      for (let c = this.#children.get(id); c?.parentID !== undefined && !seen.has(c.id); c = this.#children.get(c.parentID)) {
+        seen.add(c.id);
+        // question prioritaire sur permission
+        if (out.get(c.parentID) !== 'question') out.set(c.parentID, a);
       }
-    return this.#status.get(sessionID) ?? 'idle';
+    };
+    for (const [id, set] of this.#permissions) if (set.size > 0) climb(id, 'permission');
+    for (const [id, set] of this.#questions) if (set.size > 0) climb(id, 'question');
+    this.#inheritedCache = out;
+    return out;
   }
 
   #projectOf(s: Session): { key: string; path: string; vcs: boolean; name?: string } {
     // session hors git (`global`) dont le répertoire est depuis devenu un projet git
     // (ex. sessions créées avant le premier commit) : rangée avec ce projet, pas en doublon
-    const project = s.projectID === GLOBAL ? [...this.#projects.values()].find((p) => p.id !== GLOBAL && p.worktree === s.directory) : this.#projects.get(s.projectID);
+    const project = s.projectID === GLOBAL ? this.#byWorktree.get(s.directory) : this.#projects.get(s.projectID);
     if (project === undefined || project.id === GLOBAL) return { key: `dir:${s.directory}`, path: s.directory, vcs: false };
     return { key: project.id, path: project.worktree, vcs: project.vcs !== undefined, ...(project.name === undefined ? {} : { name: project.name }) };
   }
@@ -492,7 +518,23 @@ export class Store {
     this.#setChildren(new Map([...this.#children.values()].map((c) => [c.id, { session: c, activity: this.activity(c.id), unread: false }])));
   }
 
+  /** Vue d'une session (dernière publication), sans parcourir les projets. */
+  sessionView(sessionID: string): SessionView | undefined {
+    return this.#views.get(sessionID);
+  }
+
+  /** Chemin du projet d'une session (dernière publication). */
+  projectPathOf(sessionID: string): string | undefined {
+    return this.#projectOfSession.get(sessionID);
+  }
+
+  #projectOfSession = new Map<string, string>();
+
   #publish(): void {
+    this.#inheritedCache = null;
+    this.#byWorktree = new Map([...this.#projects.values()].filter((p) => p.id !== GLOBAL).map((p) => [p.worktree, p]));
+    const views = new Map<string, SessionView>();
+    const projectOfSession = new Map<string, string>();
     const groups = new Map<string, { path: string; vcs: boolean; name: string; sessions: SessionView[] }>();
     for (const s of this.#sessions.values()) {
       if (this.#hidden.has(s.id)) continue;
@@ -502,7 +544,14 @@ export class Store {
         g = { path: p.path, vcs: p.vcs, name: p.name ?? GLib.path_get_basename(p.path), sessions: [] };
         groups.set(p.key, g);
       }
-      g.sessions.push({ session: s, activity: this.activity(s.id), unread: this.#unread.has(s.id) });
+      const activity = this.activity(s.id);
+      const unread = this.#unread.has(s.id);
+      // même objet si rien n'a changé : les abonnés en aval ne recalculent pas
+      const old = this.#views.get(s.id);
+      const v = old !== undefined && old.session === s && old.activity === activity && old.unread === unread ? old : { session: s, activity, unread };
+      views.set(s.id, v);
+      projectOfSession.set(s.id, p.path);
+      g.sessions.push(v);
     }
     // projets git connus sans session (le serveur les a vus mais tout a été supprimé)
     for (const p of this.#projects.values()) {
@@ -510,10 +559,13 @@ export class Store {
         groups.set(p.id, { path: p.worktree, vcs: p.vcs !== undefined, name: p.name ?? GLib.path_get_basename(p.worktree), sessions: [] });
       }
     }
-    const views: ProjectView[] = [...groups.entries()].map(([key, g]) => {
+    this.#views = views;
+    this.#projectOfSession = projectOfSession;
+    const projectViews = new Map<string, ProjectView>();
+    const list: ProjectView[] = [...groups.entries()].map(([key, g]) => {
       const sessions = g.sessions.toSorted((a, b) => (b.session.time.updated ?? b.session.time.created) - (a.session.time.updated ?? a.session.time.created));
       const first = sessions[0]?.session;
-      return {
+      const next: ProjectView = {
         key,
         name: g.name,
         path: g.path,
@@ -524,9 +576,26 @@ export class Store {
         unread: sessions.filter((s) => s.unread).length,
         updated: first === undefined ? (this.#projects.get(key)?.time?.updated ?? 0) : (first.time.updated ?? first.time.created),
       };
+      const old = this.#projectViews.get(key);
+      const same =
+        old !== undefined &&
+        old.name === next.name &&
+        old.path === next.path &&
+        old.vcs === next.vcs &&
+        old.updated === next.updated &&
+        old.sessions.length === sessions.length &&
+        old.sessions.every((v, i) => v === sessions[i]);
+      const view = same ? old : next;
+      projectViews.set(key, view);
+      return view;
     });
+    this.#projectViews = projectViews;
     this.#publishChildren();
     // projets avec sessions d'abord (activité récente en tête), projets vides en bas
-    this.#setProjects(views.toSorted((a, b) => Number(a.sessions.length === 0) - Number(b.sessions.length === 0) || b.updated - a.updated));
+    const sorted = list.toSorted((a, b) => Number(a.sessions.length === 0) - Number(b.sessions.length === 0) || b.updated - a.updated);
+    const previous = this.projects.peek();
+    // rien n'a changé : pas de publication (aucun abonné ne recalcule)
+    if (sorted.length === previous.length && sorted.every((p, i) => p === previous[i])) return;
+    this.#setProjects(sorted);
   }
 }

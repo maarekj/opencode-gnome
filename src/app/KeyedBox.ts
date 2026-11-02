@@ -2,13 +2,21 @@
 // (<For> de gnim ajoute les nouveaux éléments à la fin, sans insertion à un index.)
 // Chaque enfant vit dans sa propre racine gnim, libérée quand l'élément disparaît.
 import Gtk from 'gi://Gtk?version=4.0';
-import { createRoot, type Accessor } from 'gnim';
+import { createRoot, createState, type Accessor, type Setter } from 'gnim';
 import { afterMenusClosed, menuOpenIn } from './ContextMenu.ts';
 
-interface Child {
+interface Child<T> {
   readonly widget: Gtk.Widget;
   readonly dispose: () => void;
+  /** dernière valeur de l'élément (accessor `live` du rendu) */
+  readonly set: Setter<T>;
 }
+
+/**
+ * Rendu d'un élément : `item` à la création ; `live` suit les valeurs suivantes de l'élément de
+ * même clé (clé stable + mise à jour sur place, au lieu de reconstruire le widget : #157).
+ */
+export type Render<T> = (item: T, live: Accessor<T>) => Gtk.Widget;
 
 /** Opérations d'un conteneur ordonné : insérer à un index, retirer. */
 interface Container {
@@ -17,8 +25,8 @@ interface Container {
   remove: (widget: Gtk.Widget) => void;
 }
 
-function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (item: T) => string, render: (item: T) => Gtk.Widget): () => void {
-  const children = new Map<string, Child>();
+function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (item: T) => string, render: Render<T>): () => void {
+  const children = new Map<string, Child<T>>();
   /** ordre actuel des clés dans le conteneur */
   let order: string[] = [];
 
@@ -55,11 +63,17 @@ function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (ite
       const k = keys[index] ?? '';
       let c = children.get(k);
       if (c === undefined) {
-        c = createRoot((dispose) => ({ widget: render(it), dispose }));
+        c = createRoot((dispose) => {
+          const [live, set] = createState(it);
+          return { widget: render(it, live), dispose, set };
+        });
         children.set(k, c);
         container.insert(c.widget, index, previous(index));
         order.splice(index, 0, k);
-      } else if (order[index] !== k) {
+      } else {
+        c.set(it);
+      }
+      if (order[index] !== k) {
         container.remove(c.widget);
         order.splice(order.indexOf(k), 1);
         container.insert(c.widget, index, previous(index));
@@ -79,7 +93,7 @@ function keyed<T>(container: Container, items: Accessor<readonly T[]>, key: (ite
 }
 
 /** Gtk.Box ordonné selon `items`. */
-export function keyedBox<T>(box: Gtk.Box, items: Accessor<readonly T[]>, key: (item: T) => string, render: (item: T) => Gtk.Widget): () => void {
+export function keyedBox<T>(box: Gtk.Box, items: Accessor<readonly T[]>, key: (item: T) => string, render: Render<T>): () => void {
   return keyed(
     {
       insert: (w, _index, after) => box.insert_child_after(w, after),
@@ -92,7 +106,7 @@ export function keyedBox<T>(box: Gtk.Box, items: Accessor<readonly T[]>, key: (i
 }
 
 /** Gtk.ListBox ordonné selon `items` (sans fonction de tri). */
-export function keyedListBox<T>(list: Gtk.ListBox, items: Accessor<readonly T[]>, key: (item: T) => string, render: (item: T) => Gtk.Widget): () => void {
+export function keyedListBox<T>(list: Gtk.ListBox, items: Accessor<readonly T[]>, key: (item: T) => string, render: Render<T>): () => void {
   return keyed(
     {
       insert: (w, index) => list.insert(w, index),

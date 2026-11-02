@@ -7,7 +7,7 @@ import GObject from 'gi://GObject';
 import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
-import { createComputed, createState, onCleanup, type Accessor } from 'gnim';
+import { createComputed, createMemo, createState, onCleanup, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
@@ -62,35 +62,21 @@ export interface ProjectActions {
   settings: Settings;
 }
 
-function ProjectRow({
-  project,
-  favorite,
-  open,
-  sessions,
-  expanded,
-  unread,
-  terminals,
-  devenvDirs,
-  actions,
-}: {
-  project: ProjectView;
-  favorite: boolean;
-  /** sessions non lues qui ne sont pas visibles dessous (projet replié ou sessions non ouvertes) */
-  unread: number;
-  /** nombre de sessions ouvertes du projet */
-  sessions: number;
-  /** nombre de lignes enfants : sessions ouvertes et sous-projets */
-  open: number;
-  /** terminaux persistants en cours */
-  terminals: number;
-  /** dossiers des process managers devenv du projet (services comptés en arrière-plan) */
-  devenvDirs: readonly string[];
-  expanded: boolean;
-  actions: ProjectActions;
-}): JSX.Element {
+type ProjectItem = Extract<TreeItem, { kind: 'project' }>;
+type SessionItem = Extract<TreeItem, { kind: 'session' }>;
+
+/**
+ * Ligne d'un projet. Structure (nom, repli, favori…) fixée à la création ; activité, demandes,
+ * non-lus et terminaux suivent `live` sans reconstruire la ligne (#157).
+ */
+function ProjectRow({ item, live, actions }: { item: ProjectItem; live: Accessor<ProjectItem>; actions: ProjectActions }): JSX.Element {
+  const { project, favorite, open, expanded } = item;
   const empty = project.sessions.length === 0;
   // replié (ou sans session ouverte) : résumé d'activité sur la ligne du projet
-  const summary = !expanded || sessions === 0;
+  const summary = (i: ProjectItem): boolean => !i.expanded || i.sessions === 0;
+  const working = live((i) => (summary(i) ? i.project.working : 0));
+  const waiting = live((i) => (summary(i) ? i.project.waiting : 0));
+  const unread = live((i) => i.unread);
   return (
     <Adw.ActionRow
       name={`p:${project.key}`}
@@ -115,7 +101,7 @@ function ProjectRow({
           [{ label: 'Nouvelle tâche planifiée…', activate: () => openEditor(self, actions.tasks, undefined, project.path) }],
           [
             { label: 'MCP, skills et plugins…', activate: () => actions.extensions(self, project.path) },
-            { label: 'Recharger la configuration', activate: () => actions.reloadConfig(self, project) },
+            { label: 'Recharger la configuration', activate: () => actions.reloadConfig(self, live.peek().project) },
           ],
         ]);
       }}
@@ -134,26 +120,24 @@ function ProjectRow({
       ) : (
         <Gtk.Box $type="prefix" widthRequest={24} />
       )}
-      {project.working > 0 && summary ? <Adw.Spinner $type="suffix" tooltipText={plural(project.working, 'session en cours', 'sessions en cours')} /> : null}
-      {project.waiting > 0 && summary ? (
-        <Gtk.Label
-          $type="suffix"
-          label={String(project.waiting)}
-          valign={Gtk.Align.CENTER}
-          cssClasses={['waiting-badge']}
-          tooltipText={plural(project.waiting, 'session attend ta réponse', 'sessions attendent ta réponse')}
-        />
-      ) : null}
-      <Gtk.Box $type="suffix" accessibleRole={Gtk.AccessibleRole.STATUS} valign={Gtk.Align.CENTER} $={(self: Gtk.Box) => runningBadge(self, terminals, devenvDirs)} />
-      {unread > 0 ? (
-        <Gtk.Label
-          $type="suffix"
-          label={String(unread)}
-          valign={Gtk.Align.CENTER}
-          cssClasses={['unread-badge']}
-          tooltipText={plural(unread, 'réponse non lue', 'réponses non lues')}
-        />
-      ) : null}
+      <Adw.Spinner $type="suffix" visible={working((n) => n > 0)} tooltipText={working((n) => plural(n, 'session en cours', 'sessions en cours'))} />
+      <Gtk.Label
+        $type="suffix"
+        visible={waiting((n) => n > 0)}
+        label={waiting(String)}
+        valign={Gtk.Align.CENTER}
+        cssClasses={['waiting-badge']}
+        tooltipText={waiting((n) => plural(n, 'session attend ta réponse', 'sessions attendent ta réponse'))}
+      />
+      <Gtk.Box $type="suffix" accessibleRole={Gtk.AccessibleRole.STATUS} valign={Gtk.Align.CENTER} $={(self: Gtk.Box) => runningBadge(self, live((i) => i.terminals), item.devenvDirs)} />
+      <Gtk.Label
+        $type="suffix"
+        visible={unread((n) => n > 0)}
+        label={unread(String)}
+        valign={Gtk.Align.CENTER}
+        cssClasses={['unread-badge']}
+        tooltipText={unread((n) => plural(n, 'réponse non lue', 'réponses non lues'))}
+      />
       <Gtk.Button
         $type="suffix"
         iconName={favorite ? 'starred-symbolic' : 'non-starred-symbolic'}
@@ -167,32 +151,47 @@ function ProjectRow({
 }
 
 /** Session ouverte, sous son projet : titre, activité, fermeture (×) au survol, menu contextuel. */
-function SessionTreeRow({ view, last, actions }: { view: SessionView; last: boolean; actions: ProjectActions }): JSX.Element {
-  const s = view.session;
-  const title = s.title === '' ? 'Sans titre' : s.title;
+function SessionTreeRow({ item, live, actions }: { item: SessionItem; live: Accessor<SessionItem>; actions: ProjectActions }): JSX.Element {
+  const s = item.view.session;
+  const titleOf = (i: SessionItem): string => (i.view.session.title === '' ? 'Sans titre' : i.view.session.title);
   const act = actions.sessionActions(s);
   return (
     <Gtk.ListBoxRow
       name={`s:${s.id}`}
-      cssClasses={[...(last ? ['session-tree-row', 'last'] : ['session-tree-row']), ...(view.unread ? ['unread'] : [])]}
-      tooltipText={view.unread ? `${title}\nRéponse non lue` : title}
+      cssClasses={createMemo(() => [...(live().last ? ['session-tree-row', 'last'] : ['session-tree-row']), ...(live().view.unread ? ['unread'] : [])], { equals: (x, y) => x.join() === y.join() })}
+      tooltipText={live((i) => (i.view.unread ? `${titleOf(i)}\nRéponse non lue` : titleOf(i)))}
       $={(self: Gtk.ListBoxRow) => {
         attachContextMenu(self, () => [
           [
             { label: 'Ouvrir dans le terminal', activate: act.openInTerminal },
-            { label: 'Renommer…', activate: () => askRename(self, title, act.rename) },
+            { label: 'Renommer…', activate: () => askRename(self, titleOf(live.peek()), act.rename) },
             { label: 'Forker', activate: act.fork },
           ],
           [{ label: 'Fermer', activate: () => actions.closeSession(s.id) }],
-          [{ label: 'Supprimer…', activate: () => askDelete(self, title, act.delete) }],
+          [{ label: 'Supprimer…', activate: () => askDelete(self, titleOf(live.peek()), act.delete) }],
         ]);
       }}
     >
       <Gtk.Box spacing={8} marginStart={34} marginEnd={4} cssClasses={['session-tree-inner']}>
-        <Gtk.Box widthRequest={16} valign={Gtk.Align.CENTER}>
-          {treeActivity(view)}
-        </Gtk.Box>
-        <Gtk.Label label={title} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['session-title']} />
+        <Gtk.Box
+          widthRequest={16}
+          valign={Gtk.Align.CENTER}
+          $={(self: Gtk.Box) => {
+            // indicateur remplacé seulement quand l'activité ou le non-lu change
+            let shown = '';
+            const update = (): void => {
+              const v = live.peek().view;
+              const k = `${v.activity}|${v.unread}`;
+              if (k === shown) return;
+              shown = k;
+              for (let c = self.get_first_child(); c !== null; c = self.get_first_child()) self.remove(c);
+              self.append(asWidget(treeActivity(v)));
+            };
+            update();
+            onCleanup(live.subscribe(update));
+          }}
+        />
+        <Gtk.Label label={live(titleOf)} hexpand xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['session-title']} />
         <Gtk.Button
           iconName="window-close-symbolic"
           tooltipText="Fermer (Ctrl+W)"
@@ -230,7 +229,7 @@ const activeServices = (s: DevenvState | null): number => (s?.kind === 'running'
  * Pastille « en marche » d'un projet : terminaux en cours et services devenv actifs (relus en
  * arrière-plan tant que la ligne est affichée), détail en infobulle. Masquée à zéro.
  */
-function runningBadge(box: Gtk.Box, terminals: number, devenvDirs: readonly string[]): void {
+function runningBadge(box: Gtk.Box, terminalsCount: Accessor<number>, devenvDirs: readonly string[]): void {
   const label = new Gtk.Label();
   box.append(new Gtk.Image({ iconName: 'utilities-terminal-symbolic', pixelSize: 12 }));
   box.append(label);
@@ -239,6 +238,7 @@ function runningBadge(box: Gtk.Box, terminals: number, devenvDirs: readonly stri
   const services = new Map<string, number>();
   const show = (): void => {
     const n = [...services.values()].reduce((a, b) => a + b, 0);
+    const terminals = terminalsCount.peek();
     const total = terminals + n;
     box.visible = total > 0;
     label.label = String(total);
@@ -247,6 +247,7 @@ function runningBadge(box: Gtk.Box, terminals: number, devenvDirs: readonly stri
     box.update_property([Gtk.AccessibleProperty.LABEL], [what.join(', ')]);
   };
   show();
+  onCleanup(terminalsCount.subscribe(show));
   if (!devenvInstalled() || devenvDirs.length === 0) return;
   // suivi lié à la ligne du projet : la pastille, masquée à zéro, n'est jamais affichée sinon
   GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -412,8 +413,8 @@ const SUBPROJECT_INDENT = 22;
 const treeKey = (i: TreeItem): string =>
   `${i.depth}|` +
   (i.kind === 'project'
-    ? `p|${i.parent ?? ''}|${i.project.key}|${i.project.working}|${i.project.waiting}|${i.unread}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open}|${i.sessions}|${i.expanded}|${i.terminals}|${i.devenvDirs.join(':')}`
-    : `s|${i.view.session.id}|${i.view.activity}|${i.view.unread}|${i.view.session.title}|${i.last}`);
+    ? `p|${i.parent ?? ''}|${i.project.key}|${i.project.sessions.length === 0}|${i.project.name}|${i.favorite}|${i.open > 0}|${i.expanded}|${i.devenvDirs.join(':')}`
+    : `s|${i.view.session.id}`);
 
 function startServer(): void {
   // captures et tests : le serveur partagé de l'utilisateur n'est pas touché
@@ -633,11 +634,12 @@ export function Sidebar({
                   return out;
                 });
                 onCleanup(
-                  keyedListBox(self, items, treeKey, (i) => {
+                  keyedListBox(self, items, treeKey, (i, live) => {
+                    // clé stable : l'activité et les compteurs sont mis à jour sur place (#157)
                     const row = asWidget(
                       i.kind === 'project'
-                        ? ProjectRow({ project: i.project, favorite: i.favorite, open: i.open, sessions: i.sessions, expanded: i.expanded, unread: i.unread, terminals: i.terminals, devenvDirs: i.devenvDirs, actions })
-                        : SessionTreeRow({ view: i.view, last: i.last, actions }),
+                        ? ProjectRow({ item: i, live: live((x) => (x.kind === 'project' ? x : i)), actions })
+                        : SessionTreeRow({ item: i, live: live((x) => (x.kind === 'session' ? x : i)), actions }),
                     );
                     // sous-projet : la ligne et ses enfants sont indentés
                     if (i.depth > 0) row.marginStart = i.depth * SUBPROJECT_INDENT;

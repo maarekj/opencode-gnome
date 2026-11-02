@@ -112,17 +112,19 @@ export function createConversationPage(opts: {
     const [revealed, setRevealed] = createState(false);
 
     if (child) store.loadChild(sessionID).catch((e: unknown) => toast(`Sous-agent introuvable : ${errorMessage(e)}`));
-    const view = createComputed(() => {
+    // vue de la session : objet réutilisé par le store tant qu'il ne change pas, donc pas de
+    // recalcul en aval à chaque publication (#157)
+    const view = createMemo(() => {
       const sub = store.children().get(sessionID);
       if (sub !== undefined) return sub;
-      for (const p of store.projects()) {
-        const found = p.sessions.find((s) => s.session.id === sessionID);
-        if (found !== undefined) return found;
-      }
-      return null;
+      store.projects();
+      return store.sessionView(sessionID) ?? null;
     });
     /** racine du projet de la session (terminaux persistants) */
-    const projectPath = createMemo(() => store.projects().find((p) => p.sessions.some((s) => s.session.id === sessionID))?.path ?? null);
+    const projectPath = createMemo(() => {
+      store.projects();
+      return store.projectPathOf(sessionID) ?? null;
+    });
     const title = view((v) => {
       if (v === null || v.session.title === '') return child ? 'Sous-agent' : 'Session';
       // « Description (@explore subagent) » -> « @explore · Description »
