@@ -456,13 +456,18 @@ export function Sidebar({
   const favorites = settings.data((d) => d.favorites);
   // recherche : filtre tous les projets sur le nom et le chemin (sans casse ni accents)
   const [query, setQuery] = createState('');
-  const projects = createComputed((): readonly ProjectView[] => {
+  // recherche : l'arbre est construit une fois sur tous les projets (en entrant dans la recherche),
+  // puis chaque frappe masque / affiche les lignes sans les recréer (#159)
+  const searching = createMemo(() => query().trim() !== '');
+  const projects = createComputed((): readonly ProjectView[] => (searching() ? allProjects() : modeProjects()));
+  /** clés des projets qui correspondent à la recherche (null : pas de recherche) */
+  const matching = createComputed((): ReadonlySet<string> | null => {
     const q = normalize(query().trim());
-    if (q === '') return modeProjects();
-    return allProjects().filter((p) => normalize(`${p.name} ${p.path}`).includes(q));
+    if (q === '') return null;
+    return new Set(allProjects().filter((p) => normalize(`${p.name} ${p.path}`).includes(q)).map((p) => p.key));
   });
-  const emptyFavorites = createComputed(() => query().trim() === '' && mode() === 'favorites' && projects().length === 0);
-  const noMatch = createComputed(() => query().trim() !== '' && projects().length === 0);
+  const emptyFavorites = createComputed(() => !searching() && mode() === 'favorites' && projects().length === 0);
+  const noMatch = createComputed(() => matching()?.size === 0);
   let searchBar: Gtk.SearchBar | null = null;
   return (
     <Adw.NavigationPage title="Projets" tag="projects">
@@ -542,7 +547,8 @@ export function Sidebar({
             entry.connect('search-changed', () => setQuery(entry.text));
             // Entrée : ouvre le premier résultat
             entry.connect('activate', () => {
-              const first = projects.peek()[0];
+              const set = matching.peek();
+              const first = projects.peek().find((p) => set === null || set.has(p.key));
               if (first === undefined) return;
               select(first.key);
               self.searchModeEnabled = false;
@@ -646,6 +652,14 @@ export function Sidebar({
                     return row;
                   }),
                 );
+                // filtrage de la recherche : projet affiché s'il correspond, sessions avec leur projet
+                self.set_filter_func((row) => {
+                  const set = matching.peek();
+                  if (set === null) return true;
+                  const proj = row.name.startsWith('p:') ? row : projectRowOf(self, row);
+                  return proj !== null && set.has(proj.name.slice(2));
+                });
+                onCleanup(matching.subscribe(() => self.invalidate_filter()));
                 enableReorder(self, settings, projects, () => {
                   const parents = new Map<string, string | null>();
                   for (const i of items.peek()) if (i.kind === 'project') parents.set(i.project.key, i.parent);

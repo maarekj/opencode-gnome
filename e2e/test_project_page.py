@@ -120,3 +120,15 @@ def test_recharger_la_configuration_demande_confirmation_si_occupe(run_app):
     assert not fake.requests('POST', '/instance/dispose')
     app.click('button', 'Recharger', within=app.dialog())
     fake.wait_request('POST', '/instance/dispose')
+
+
+def test_recherche_de_session_vide_puis_effacee(run_app):
+    """#159 : 0 résultat puis effacement : la liste revient, sans reconstruire la page."""
+    _, app = run_app(scenario('projects'))
+    open_project(app, 'alpha')
+    app.key('<Control>f')
+    app.type('introuvable')
+    assert app.text_visible('Aucune session ne correspond à la recherche.')
+    app.key('Escape')
+    app.find('list item', "Refonte de l'API")
+    wait_until(lambda: not app.has('label', 'Aucune session ne correspond à la recherche.'), 5, 'message « aucune session » masqué')

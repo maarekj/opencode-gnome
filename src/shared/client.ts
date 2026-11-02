@@ -14,6 +14,31 @@ Gio._promisify(Gio.DataInputStream.prototype, 'read_line_async', 'read_line_fini
 type Query = Readonly<Record<string, string | number | boolean | undefined>>;
 
 const decoder = new TextDecoder();
+
+/** Taille des morceaux décodés entre deux tours de boucle principale. */
+const DECODE_CHUNK = 2 * 1024 * 1024;
+
+/**
+ * UTF-8 → texte. Une grosse réponse (sorties d'outils : des dizaines de Mo) est décodée par
+ * morceaux, en rendant la main à la boucle principale entre deux : le décodage d'un bloc de
+ * 64 Mo la figeait ~400 ms (#159).
+ */
+async function decodeLarge(data: Uint8Array): Promise<string> {
+  if (data.length <= DECODE_CHUNK) return decoder.decode(data);
+  const stream = new TextDecoder();
+  const parts: string[] = [];
+  for (let i = 0; i < data.length; i += DECODE_CHUNK) {
+    parts.push(stream.decode(data.subarray(i, i + DECODE_CHUNK), { stream: i + DECODE_CHUNK < data.length }));
+    // oxlint-disable-next-line no-await-in-loop -- pause volontaire entre deux morceaux
+    await new Promise<void>((resolve) => {
+      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        resolve();
+        return GLib.SOURCE_REMOVE;
+      });
+    });
+  }
+  return parts.join('');
+}
 const encoder = new TextEncoder();
 
 /** Types de fichiers que les modèles lisent directement en pièce jointe. */
@@ -105,7 +130,7 @@ export class OpencodeClient {
     const session = opts.long === true ? this.#long : this.#session;
     const bytes = await session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, opts.cancellable ?? null);
     const data = bytes.get_data();
-    const text = data === null ? '' : decoder.decode(data);
+    const text = data === null ? '' : await decodeLarge(data);
     const status: number = msg.get_status();
     if (status < 200 || status >= 300) throw new HttpError(status, `${method} ${path} : HTTP ${status} ${text.slice(0, 200)}`);
     opts.headers?.(msg.get_response_headers());
@@ -148,6 +173,21 @@ export class OpencodeClient {
   async messagePage(sessionID: string, limit: number, before?: string): Promise<{ messages: MessageWithParts[]; older: string | null }> {
     let older: string | null = null;
     const messages = await this.request('GET', `/session/${encodeURIComponent(sessionID)}/message`, z.array(MessageWithParts), {
+      query: { limit, before },
+      headers: (h) => {
+        older = h.get_one('X-Next-Cursor');
+      },
+    });
+    return { messages, older };
+  }
+
+  /**
+   * Page de messages non validée (indexation de la recherche : seuls les textes sont lus, la
+   * validation zod des sorties d'outils serait coûteuse : #159).
+   */
+  async messagePageRaw(sessionID: string, limit: number, before?: string): Promise<{ messages: unknown; older: string | null }> {
+    let older: string | null = null;
+    const messages = await this.request('GET', `/session/${encodeURIComponent(sessionID)}/message`, z.unknown(), {
       query: { limit, before },
       headers: (h) => {
         older = h.get_one('X-Next-Cursor');

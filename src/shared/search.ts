@@ -106,16 +106,32 @@ export function textsOf(messages: unknown): IndexedText[] {
 }
 
 const hexEncoder = new TextEncoder();
+/** octet -> deux chiffres hexadécimaux (table : encodage des longs textes sans un appel par octet, #159) */
+const HEX = Array.from({ length: 256 }, (_, b) => b.toString(16).padStart(2, '0'));
+const hex = (bytes: Uint8Array): string => {
+  const out: string[] = [];
+  for (let i = 0; i < bytes.length; i += 4096) {
+    let chunk = '';
+    for (const b of bytes.subarray(i, i + 4096)) chunk += HEX[b] ?? '00';
+    out.push(chunk);
+  }
+  return out.join('');
+};
 /**
  * Littéral SQL d'une chaîne, en hexadécimal (UTF-8) : ni apostrophe ni barre oblique inverse
  * dans la requête. Le délimiteur de libgda prend `\'` pour une apostrophe échappée et plante
  * (free invalide) sur un texte qui en contient, fréquent dans les messages (code, chemins).
  */
-const lit = (s: string): string => `CAST(X'${Array.from(hexEncoder.encode(s), (b) => b.toString(16).padStart(2, '0')).join('')}' AS TEXT)`;
+const lit = (s: string): string => `CAST(X'${hex(hexEncoder.encode(s))}' AS TEXT)`;
 /** Entier SQL. */
 const num = (n: number): string => String(Math.trunc(n));
 /** Terme FTS5 entre guillemets (recherche littérale). */
 const phrase = (s: string): string => `"${s.replaceAll('"', '""')}"`;
+/**
+ * Messages par page lue : petites pages, car chaque réponse est décodée d'un bloc sur la boucle
+ * principale (sorties d'outils volumineuses : jusqu'à ~400 ms par page de 100 messages, #159).
+ */
+const PAGE = 20;
 /** Le tokenizer trigram ne sait chercher que des termes de 3 caractères ou plus. */
 const TRIGRAM = 3;
 
@@ -126,6 +142,15 @@ const SCHEMA = [
   "CREATE VIRTUAL TABLE IF NOT EXISTS texts USING fts5(body, session UNINDEXED, message UNINDEXED, part UNINDEXED, role UNINDEXED, created UNINDEXED, tokenize='trigram remove_diacritics 1')",
 ];
 const VERSION = '1';
+
+/** Laisse passer un tour de boucle principale. */
+const idle = (): Promise<void> =>
+  new Promise((resolve) => {
+    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      resolve();
+      return GLib.SOURCE_REMOVE;
+    });
+  });
 
 export class SearchIndex {
   readonly #client: OpencodeClient;
@@ -260,12 +285,12 @@ export class SearchIndex {
           const texts: IndexedText[] = [];
           let before: string | undefined;
           for (let n = 0; ; n += 1) {
-            if (n === 1000) {
+            if (n === 5000) {
               console.warn(`index de recherche : ${session.id} : plus de 100 000 messages, les plus anciens ne sont pas indexés`);
               break;
             }
             // oxlint-disable-next-line no-await-in-loop -- pages successives
-            const page = await this.#client.messagePage(session.id, 100, before);
+            const page = await this.#client.messagePageRaw(session.id, PAGE, before);
             texts.unshift(...textsOf(page.messages));
             if (page.older === null) break;
             before = page.older;
@@ -285,6 +310,9 @@ export class SearchIndex {
         }
         done += 1;
         progress?.(done, done + todo.length);
+        // la boucle principale respire entre deux sessions (indexation sans figer l'interface)
+        // oxlint-disable-next-line no-await-in-loop -- pause volontaire
+        await idle();
       }
     };
     await Promise.all([worker(), worker(), worker()]);
@@ -324,10 +352,13 @@ export class SearchIndex {
     }
   }
 
-  /** Résultats, du plus récent au plus ancien (au plus `limit`). */
+  /**
+   * Résultats, du plus récent au plus ancien (au plus `limit`). Il faut au moins un terme de 3
+   * caractères : sans lui, toute la table serait parcourue par LIKE à chaque frappe (#159).
+   */
   search(query: string, filter: SearchFilter = {}, limit = 200): SearchHit[] {
     const q = terms(query);
-    if (q.length === 0) return [];
+    if (!q.some((t) => t.length >= TRIGRAM)) return [];
     const db = this.#open();
     const long = q.filter((t) => t.length >= TRIGRAM);
     // termes courts comparés par LIKE au texte non replié : pris tels que saisis (accents
@@ -343,15 +374,24 @@ export class SearchIndex {
     ];
     const rows = this.#strings(
       db,
-      `SELECT sessions.id, sessions.title, sessions.directory, sessions.project, CAST(sessions.updated AS TEXT), texts.message, texts.part, texts.role, CAST(texts.created AS TEXT), texts.body
+      `SELECT sessions.id, sessions.title, sessions.directory, sessions.project, CAST(sessions.updated AS TEXT), texts.message, texts.part, texts.role, CAST(texts.created AS TEXT),
+         -- extrait seulement (pas le texte complet, parfois des dizaines de Ko) : autour du premier
+         -- terme s'il est trouvé tel quel, sinon le début
+         substr(texts.body, max(1, instr(lower(texts.body), ${lit(q.find((t) => t.length >= TRIGRAM) ?? '')}) - 300), 1200),
+         CAST(texts.rowid AS TEXT)
        FROM texts JOIN sessions ON sessions.id = texts.session
        WHERE ${where.join(' AND ')}
        ORDER BY CAST(texts.created AS INTEGER) DESC LIMIT ${Math.trunc(limit)}`,
     );
-    return rows.map(([id, title, directory, project, updated, message, part, role, created, body]) => {
+    return rows.map(([id, title, directory, project, updated, message, part, role, created, excerpt, rowid]) => {
       const session: IndexedSession = { id: id ?? '', title: title ?? '', directory: directory ?? '', projectID: project ?? '', updated: Number(updated ?? 0) };
       if (role === 'title') return { session, text: null, snippet: session.title };
-      const text: IndexedText = { message: message ?? '', part: part ?? '', role: role === 'user' ? 'user' : 'assistant', created: Number(created ?? 0), text: body ?? '' };
+      // terme absent de l'extrait (accents, majuscules non ASCII : instr de SQLite ne les replie
+      // pas) : texte complet de cette ligne seulement
+      let body = excerpt ?? '';
+      const folded = fold(body);
+      if (!q.some((t) => folded.includes(t)) && rowid !== null) body = this.#strings(db, `SELECT body FROM texts WHERE rowid = ${num(Number(rowid))}`)[0]?.[0] ?? body;
+      const text: IndexedText = { message: message ?? '', part: part ?? '', role: role === 'user' ? 'user' : 'assistant', created: Number(created ?? 0), text: body };
       return { session, text, snippet: snippetOf(text.text, q) };
     });
   }

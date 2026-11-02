@@ -25,3 +25,12 @@ def test_recherche_sans_resultat(run_app):
     app.find('entry', 'Rechercher dans toutes les conversations')
     app.type('introuvablexyz')
     assert app.text_visible('Aucun résultat')
+
+
+def test_recherche_demande_trois_caracteres(run_app):
+    """#159 : pas de recherche sur 1 ou 2 caractères (table entière parcourue sinon)."""
+    _, app = run_app(scenario('demo'))
+    app.key('<Control><Shift>f')
+    app.find('entry', 'Rechercher dans toutes les conversations')
+    app.type('ch')
+    assert app.text_visible('Tape au moins 3 caractères.')

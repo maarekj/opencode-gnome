@@ -278,7 +278,20 @@ function ProjectTasks({
   );
 }
 
-function SessionList({ sessions, actions, header }: { sessions: Accessor<readonly SessionView[]>; actions: Actions; header?: JSX.Element }): JSX.Element {
+function SessionList({
+  sessions,
+  shown,
+  noMatch,
+  actions,
+  header,
+}: {
+  sessions: Accessor<readonly SessionView[]>;
+  /** sessions affichées (recherche) : les autres lignes sont masquées, pas détruites (#159) */
+  shown: Accessor<ReadonlySet<string> | null>;
+  noMatch: Accessor<boolean>;
+  actions: Actions;
+  header?: JSX.Element;
+}): JSX.Element {
   // Ordre exact du store (date de mise à jour décroissante). Clé : la session seule ; une session
   // modifiée est mise à jour sur place et déplacée à sa nouvelle position (#157).
   return (
@@ -286,19 +299,35 @@ function SessionList({ sessions, actions, header }: { sessions: Accessor<readonl
       <Adw.Clamp maximumSize={900} marginTop={12} marginBottom={12} marginStart={12} marginEnd={12}>
         <Gtk.Box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.START}>
         {header ?? null}
+        <Adw.StatusPage iconName="system-search-symbolic" title="Aucune session" description="Aucune session ne correspond à la recherche." visible={noMatch} cssClasses={['compact']} />
         <Gtk.ListBox
           cssClasses={['boxed-list']}
           selectionMode={Gtk.SelectionMode.NONE}
           valign={Gtk.Align.START}
+          visible={noMatch((n) => !n)}
           $={(self: Gtk.ListBox) => {
+            const ids = new Map<Gtk.ListBoxRow, string>();
             onCleanup(
               keyedListBox(
                 self,
                 sessions,
                 (v) => v.session.id,
-                (v, live) => asWidget(SessionRow({ view: v, live, actions })),
+                (v, live) => {
+                  const row = asWidget(SessionRow({ view: v, live, actions }));
+                  if (row instanceof Gtk.ListBoxRow) ids.set(row, v.session.id);
+                  row.connect('destroy', () => {
+                    if (row instanceof Gtk.ListBoxRow) ids.delete(row);
+                  });
+                  return row;
+                },
               ),
             );
+            // filtrage de la recherche : lignes masquées, gardées pour la suite de la saisie
+            self.set_filter_func((row) => {
+              const set = shown.peek();
+              return set === null || set.has(ids.get(row) ?? '');
+            });
+            onCleanup(shown.subscribe(() => self.invalidate_filter()));
           }}
         />
         </Gtk.Box>
@@ -361,13 +390,14 @@ export function SessionsPage({
   // recherche dans les sessions du projet (titre, agent, modèle), sans casse ni accents
   const [query, setQuery] = createState('');
   const allSessions = createComputed(() => current()?.sessions ?? []);
-  const sessions = createComputed((): readonly SessionView[] => {
+  /** sessions qui correspondent à la recherche (null : pas de recherche) */
+  const matching = createComputed((): ReadonlySet<string> | null => {
     const q = normalize(query().trim());
-    if (q === '') return allSessions();
-    return allSessions().filter((v) => normalize(`${v.session.title} ${v.session.agent ?? ''} ${v.session.model?.id ?? ''}`).includes(q));
+    if (q === '') return null;
+    return new Set(allSessions().filter((v) => normalize(`${v.session.title} ${v.session.agent ?? ''} ${v.session.model?.id ?? ''}`).includes(q)).map((v) => v.session.id));
   });
   const empty = createMemo(() => allSessions().length === 0);
-  const noMatch = createMemo(() => !empty() && sessions().length === 0);
+  const noMatch = createMemo(() => !empty() && matching()?.size === 0);
   let searchBar: Gtk.SearchBar | null = null;
   const newSession = (): void => {
     const p = current();
@@ -469,7 +499,8 @@ export function SessionsPage({
             entry.connect('search-changed', () => setQuery(entry.text));
             // Entrée : ouvre la première session trouvée
             entry.connect('activate', () => {
-              const first = sessions.peek()[0];
+              const set = matching.peek();
+              const first = allSessions.peek().find((v) => set === null || set.has(v.session.id));
               if (first === undefined) return;
               self.searchModeEnabled = false;
               actions.openSession(first.session.id);
@@ -483,7 +514,7 @@ export function SessionsPage({
         <Gtk.Box $type="top">
           <ProjectBar project={current((p) => p?.path ?? null)} ctx={terminals} />
         </Gtk.Box>
-        <With value={createMemo(() => `${key() ?? ''}|${String(empty())}|${String(noMatch())}|${store.connection().state}`)}>
+        <With value={createMemo(() => `${key() ?? ''}|${String(empty())}|${store.connection().state}`)}>
           {() => {
             if (store.connection.peek().state !== 'connected' && store.projects.peek().length === 0) {
               return <Adw.StatusPage iconName="network-offline-symbolic" title="Connexion au serveur opencode…" description={esc(store.client.url)} vexpand />;
@@ -501,11 +532,12 @@ export function SessionsPage({
                 </Gtk.Box>
               );
             }
-            if (noMatch.peek()) return <Adw.StatusPage iconName="system-search-symbolic" title="Aucune session" description="Aucune session ne correspond à la recherche." vexpand />;
             // pas de tâches pendant une recherche de sessions
             return (
               <SessionList
-                sessions={sessions}
+                sessions={allSessions}
+                shown={matching}
+                noMatch={noMatch}
                 actions={actions}
                 header={
                   <Gtk.Box orientation={Gtk.Orientation.VERTICAL} visible={query((q) => q.trim() === '')}>

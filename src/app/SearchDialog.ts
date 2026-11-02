@@ -92,9 +92,10 @@ export function openSearch(parent: Gtk.Widget, o: SearchOptions): void {
     for (let r = list.get_row_at_index(0); r !== null; r = list.get_row_at_index(0)) list.remove(r);
     targets.clear();
     const q = terms(entry.text);
-    if (q.length === 0) {
+    // au moins un terme de 3 caractères (#159)
+    if (!q.some((t) => t.length >= 3)) {
       empty.title = 'Rechercher dans les conversations';
-      empty.description = 'Messages et titres de toutes les sessions, de tous les projets.';
+      empty.description = q.length === 0 ? 'Messages et titres de toutes les sessions, de tous les projets.' : 'Tape au moins 3 caractères.';
       stack.visibleChildName = 'empty';
       status.label = indexing;
       return;
@@ -206,6 +207,7 @@ export function openSearch(parent: Gtk.Widget, o: SearchOptions): void {
 
   // index mis à jour à chaque ouverture (sessions nouvelles ou modifiées seulement)
   let open = true;
+  let renderedAt = Date.now();
   dialog.connect('closed', () => {
     open = false;
   });
@@ -213,7 +215,14 @@ export function openSearch(parent: Gtk.Widget, o: SearchOptions): void {
     .refresh((done, total) => {
       if (!open) return;
       indexing = total === 0 || done >= total ? '' : `Indexation des conversations : ${done} / ${total}…`;
-      if (done >= total || done % 10 === 0) render();
+      // avancement ; résultats relus au plus toutes les 3 s pendant l'indexation, puis à la fin (#159)
+      if (Date.now() - renderedAt > 3000 && done < total) {
+        renderedAt = Date.now();
+        render();
+        return;
+      }
+      const summary = status.label.split(' · ').filter((x) => !x.startsWith('Indexation') && !x.startsWith('Index incomplet'));
+      status.label = [...summary, indexing].filter((x) => x !== '').join(' · ');
     })
     .then(() => {
       indexing = '';

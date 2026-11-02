@@ -176,3 +176,14 @@ def test_menu_session_fermer(run_app):
     _, app = run_app(scenario('projects'), settings={'openSessions': ['ses_a1']})
     app.menu(app.all('list item', "Refonte de l'API")[0], 'Fermer')
     wait_until(lambda: app.settings().get('openSessions') == [], 5, 'session fermée')
+
+
+def test_recherche_de_projet_garde_les_lignes(run_app):
+    """#159 : la recherche masque les lignes au lieu de les recréer ; effacée, tout revient."""
+    _, app = run_app(scenario('projects'))
+    app.key('<Control>k')
+    app.type('beta')
+    wait_until(lambda: not app.has('list item', 'alpha'), 5, 'alpha filtré')
+    app.key('Escape')
+    app.find('list item', 'alpha')
+    app.find('list item', 'béta-projet')
