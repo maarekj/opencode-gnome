@@ -5,7 +5,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import { errorMessage } from '../shared/errors.ts';
 import { prettyPath } from '../shared/store.ts';
 import type { ProjectTerminal, Settings } from '../shared/settings.ts';
-import { attachArgv, cwdOf, terminalId, type TerminalManager } from '../shared/terminals.ts';
+import { attachArgv, BUILTIN_LAYOUTS, cwdOf, layoutLabel, terminalId, userLayouts, type TerminalManager } from '../shared/terminals.ts';
 import { attachContextMenu, hosted, type MenuHost, type MenuItem } from './ContextMenu.ts';
 import { currentFolder, folderChooser } from './FolderChoice.ts';
 import type { TerminalDock } from './TerminalPanel.tsx';
@@ -32,6 +32,16 @@ export function askTerminal(parent: Gtk.Widget, project: string, ctx: TerminalCo
   const cwd = new Adw.EntryRow({ title: 'Répertoire, relatif au projet (optionnel, ex. packages/web)', text: current?.cwd ?? '' });
   const group = new Adw.PreferencesGroup();
   for (const row of [name, command, cwd]) group.add(row);
+  // layout zellij (#155) : celui des préférences, ou un choix propre au terminal
+  const layoutIds = ['', ...BUILTIN_LAYOUTS.map(([id]) => id), ...userLayouts()];
+  if (current?.layout !== undefined && !layoutIds.includes(current.layout)) layoutIds.push(current.layout);
+  const layout = new Adw.ComboRow({
+    title: 'Layout zellij',
+    subtitle: 'Appliqué au prochain démarrage du terminal',
+    model: Gtk.StringList.new(layoutIds.map((id) => (id === '' ? `Comme les préférences (${layoutLabel(ctx.settings.data.peek().zellijLayout)})` : layoutLabel(id)))),
+    selected: Math.max(0, layoutIds.indexOf(current?.layout ?? '')),
+  });
+  group.add(layout);
   const place = folderChooser(ctx.settings, project, current === undefined ? folder : currentFolder(ctx.settings, project, `terminal:${current.id}`));
   if (place.row !== null) group.add(place.row);
   const dialog = new Adw.AlertDialog({
@@ -55,11 +65,13 @@ export function askTerminal(parent: Gtk.Widget, project: string, ctx: TerminalCo
       .flat()
       .map((t) => t.id);
     const dir = cwd.text.trim();
+    const chosen = layoutIds[layout.selected] ?? '';
     ctx.settings.saveTerminal(project, {
       id: current?.id ?? terminalId(project, name.text.trim(), taken),
       name: name.text.trim(),
       command: command.text.trim(),
       ...(dir === '' ? {} : { cwd: dir }),
+      ...(chosen === '' ? {} : { layout: chosen }),
     }, place.value());
   });
   dialog.present(parent);

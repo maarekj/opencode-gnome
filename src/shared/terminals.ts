@@ -44,6 +44,42 @@ async function run(argv: readonly string[], cwd?: string): Promise<{ ok: boolean
   return { ok: proc.get_successful(), out: out ?? '' };
 }
 
+/** Layouts zellij proposés (#155) : identifiant enregistré -> libellé. */
+export const BUILTIN_LAYOUTS: readonly (readonly [string, string])[] = [
+  ['bare', 'Sans barre'],
+  ['compact', 'Compact (une barre en bas)'],
+  ['default', 'Défaut de zellij (barres en haut et en bas)'],
+];
+
+/** Layouts personnels : fichiers .kdl de ~/.config/zellij/layouts (nom sans extension). */
+export function userLayouts(): string[] {
+  const dir = GLib.build_filenamev([GLib.getenv('ZELLIJ_CONFIG_DIR') ?? GLib.build_filenamev([GLib.get_user_config_dir(), 'zellij']), 'layouts']);
+  try {
+    const it = Gio.File.new_for_path(dir).enumerate_children('standard::name', Gio.FileQueryInfoFlags.NONE, null);
+    const names: string[] = [];
+    for (let info = it.next_file(null); info !== null; info = it.next_file(null)) {
+      const n = info.get_name();
+      if (n.endsWith('.kdl')) names.push(n.slice(0, -4));
+    }
+    return names.filter((n) => !BUILTIN_LAYOUTS.some(([id]) => id === n)).toSorted();
+  } catch {
+    return [];
+  }
+}
+
+/** Libellé d'un layout. */
+export const layoutLabel = (id: string): string => BUILTIN_LAYOUTS.find(([x]) => x === id)?.[1] ?? id;
+
+/** Argument `--layout` : `bare` est un fichier écrit par l'app (un seul panneau, sans barre). */
+export function layoutArg(id: string): string {
+  if (id !== 'bare') return id;
+  const dir = GLib.build_filenamev([GLib.get_user_data_dir(), 'opencode-gnome', 'zellij']);
+  const path = GLib.build_filenamev([dir, 'bare.kdl']);
+  GLib.mkdir_with_parents(dir, 0o755);
+  GLib.file_set_contents(path, 'layout {\n    pane\n}\n');
+  return path;
+}
+
 export const zellijInstalled = (): boolean => GLib.find_program_in_path('zellij') !== null;
 
 /** Sessions zellij vivantes (les sessions « EXITED » ne comptent pas). */
@@ -61,10 +97,13 @@ export class TerminalManager {
   readonly running: Accessor<ReadonlySet<string>>;
   readonly #set: (v: ReadonlySet<string>) => void;
   readonly #choice: () => TerminalChoice;
+  /** layout par défaut (préférence globale) */
+  readonly #layout: () => string;
   #timer = 0;
 
-  constructor(choice: () => TerminalChoice) {
+  constructor(choice: () => TerminalChoice, layout: () => string = () => 'bare') {
     this.#choice = choice;
+    this.#layout = layout;
     [this.running, this.#set] = createState<ReadonlySet<string>>(new Set(), { equals: (a, b) => a.size === b.size && [...a].every((x) => b.has(x)) });
   }
 
@@ -104,7 +143,8 @@ export class TerminalManager {
     // session morte (résurrection possible) : supprimée pour repartir de la commande configurée
     await run(['zellij', 'delete-session', t.id]);
     const shell = GLib.getenv('SHELL') ?? '/bin/sh';
-    const res = await run(['zellij', 'attach', '--create-background', t.id, '--', ...shellArgv(t.command, shell)], cwd);
+    const layout = layoutArg(t.layout ?? this.#layout());
+    const res = await run(['zellij', '--layout', layout, 'attach', '--create-background', t.id, '--', ...shellArgv(t.command, shell)], cwd);
     if (!res.ok) throw new Error(`zellij : ${res.out.trim()}`);
     await this.refresh();
   }

@@ -10,6 +10,7 @@ import { DEFAULT_MARKDOWN_STYLE, type Settings, type Theme } from '../shared/set
 import { MarkdownView } from './Markdown.tsx';
 import { automaticIde, installedIdes } from './Ide.ts';
 import { automaticTerminal, installedTerminals } from '../shared/terminal.ts';
+import { BUILTIN_LAYOUTS, layoutLabel, userLayouts } from '../shared/terminals.ts';
 import { integratedAvailable } from './TerminalPanel.tsx';
 import { piperModel, piperReady } from '../shared/speaker.ts';
 import { openFolder } from './OpenFolder.ts';
@@ -72,6 +73,15 @@ function terminalGroup(settings: Settings): Adw.PreferencesGroup {
   });
   group.add(row);
   group.add(custom);
+  // layout zellij des terminaux persistants (#155), modifiable par terminal
+  const layoutIds = [...BUILTIN_LAYOUTS.map(([id]) => id), ...userLayouts()];
+  if (!layoutIds.includes(current.zellijLayout)) layoutIds.push(current.zellijLayout);
+  const layout = comboRow('Layout zellij', '', false);
+  layout.subtitle = 'Terminaux persistants, au prochain démarrage';
+  layout.tooltipText = 'Modifiable par terminal ; layouts personnels : ~/.config/zellij/layouts';
+  setItems(layout, layoutIds.map((id) => layoutLabel(id)), layoutIds.indexOf(current.zellijLayout));
+  layout.connect('notify::selected', () => settings.setZellijLayout(layoutIds[layout.selected] ?? 'bare'));
+  group.add(layout);
   return group;
 }
 

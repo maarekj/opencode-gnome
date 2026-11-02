@@ -459,3 +459,44 @@ def test_dossier_sans_devenv_en_marche(run_app, tmp_path):
     app.find('toggle button', 'Dossier « worktree 1 » : 1 élément')
     time.sleep(2)
     assert not app.has('toggle button', contains='en marche')
+
+
+# ---------------------------------------------------------------- layout zellij (#155)
+
+
+def dump_layout(tid: str) -> str:
+    return subprocess.run(['zellij', '-s', tid, 'action', 'dump-layout'], capture_output=True, text=True, timeout=10).stdout
+
+
+@needs_zellij
+def test_layout_zellij_sans_barre_par_defaut_et_par_terminal(run_app):
+    settings = {'terminals': {DIR: [
+        {'id': 'og-e2e-bare', 'name': 'alpha', 'command': 'sleep 600'},
+        {'id': 'og-e2e-compact', 'name': 'beta', 'command': 'sleep 600', 'layout': 'compact'},
+    ]}}
+    _, app = project(run_app, settings=settings)
+    app.menu(app.find('button', contains='beta'), 'Démarrer en arrière-plan')
+    app.find(None, 'Arrêter', timeout=20)
+    app.menu(app.find('button', contains='alpha'), 'Démarrer en arrière-plan')
+    wait_until(lambda: 'sleep' in dump_layout('og-e2e-bare') and 'sleep' in dump_layout('og-e2e-compact'), 20, 'terminaux démarrés')
+    # préférence par défaut : aucune barre ; surcharge du terminal : compact
+    assert 'plugin' not in dump_layout('og-e2e-bare').split('swap_tiled_layout')[0]
+    assert 'compact-bar' in dump_layout('og-e2e-compact')
+    for tid in ('og-e2e-bare', 'og-e2e-compact'):
+        subprocess.run(['zellij', 'delete-session', '--force', tid], capture_output=True, timeout=10)
+
+
+def test_choisir_le_layout_d_un_terminal(run_app):
+    _, app = project(run_app)
+    add_menu(app, 'Nouveau terminal persistant…')
+    dialog = app.find('alert', 'Nouveau terminal')
+    fill(app, dialog, ['Serveur', 'sleep 600'])
+    # liste : Comme les préférences, Sans barre, Compact… (clavier : positions du popover peu fiables)
+    app.click('combo box', contains='Layout zellij', within=dialog)
+    app.find('label', 'Compact (une barre en bas)')
+    time.sleep(0.4)
+    for k in ('Down', 'Down', 'Return'):
+        app.key(k)
+    app.click('button', 'Ajouter', within=dialog)
+    t = wait_until(lambda: terminals(app)[:1], 5, 'terminal enregistré')[0]
+    assert t['layout'] == 'compact'

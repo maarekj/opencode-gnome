@@ -1,7 +1,7 @@
 // `ocg terminal` : terminaux persistants d'un projet (sessions zellij), les mêmes que la barre
 // « Terminaux » de l'application (réglages partagés, affichés en direct par l'app).
 import { Settings, type ProjectTerminal } from '../shared/settings.ts';
-import { TerminalManager, cwdOf, terminalId, zellijInstalled } from '../shared/terminals.ts';
+import { BUILTIN_LAYOUTS, TerminalManager, cwdOf, terminalId, userLayouts, zellijInstalled } from '../shared/terminals.ts';
 import { parseArgs, UsageError } from './args.ts';
 import { folderName, folderOption } from './folders.ts';
 import { projectDir } from './project.ts';
@@ -14,8 +14,8 @@ barre « Terminaux » du projet (ouvrir, redémarrer, arrêter).
 
 Usage :
   ocg terminal list [--project DIR] [--all] [--json]   terminaux du projet (--all : tous les projets) et leur état
-  ocg terminal add --name NOM [--command CMD] [--cwd SOUS-DOSSIER] [--folder DOSSIER] [--start] [--project DIR]
-  ocg terminal edit <terminal> [--name NOM] [--command CMD] [--cwd SOUS-DOSSIER] [--folder DOSSIER] [--project DIR]
+  ocg terminal add --name NOM [--command CMD] [--cwd SOUS-DOSSIER] [--layout L] [--folder DOSSIER] [--start] [--project DIR]
+  ocg terminal edit <terminal> [--name NOM] [--command CMD] [--cwd SOUS-DOSSIER] [--layout L] [--folder DOSSIER] [--project DIR]
   ocg terminal rm <terminal> [--project DIR]         (arrête la session si elle tourne)
   ocg terminal start | stop | restart <terminal> [--project DIR]
 
@@ -23,6 +23,9 @@ Options :
   --project DIR   projet (défaut : racine git du dossier courant, sinon le dossier courant)
   --command CMD   commande lancée par le shell de l'utilisateur ; vide : simple shell
   --cwd DIR       répertoire de lancement, relatif au projet (défaut : racine du projet)
+  --layout L      layout zellij : bare (sans barre), compact, default, ou un layout de
+                  ~/.config/zellij/layouts ; '' : celui des préférences (défaut : bare).
+                  Appliqué au prochain démarrage du terminal
   --folder NOM    range le terminal dans ce dossier de la barre (créé s'il n'existe pas) ;
                   '' : le sort de son dossier (voir ocg folder help)
   --start         démarre le terminal juste après l'avoir ajouté
@@ -45,6 +48,15 @@ function find(settings: Settings, project: string, ref: string | undefined): Pro
   return t;
 }
 
+/** Layout de --layout : intégré ou personnel ; '' (retour aux préférences) accepté. */
+function checkLayout(layout: string | undefined): string | undefined {
+  const l = layout?.trim();
+  if (l === undefined || l === '') return l;
+  const known = [...BUILTIN_LAYOUTS.map(([id]) => id), ...userLayouts()];
+  if (!known.includes(l) && !l.endsWith('.kdl')) throw new UsageError(`layout inconnu : ${l} (choix : ${known.join(', ')}, ou chemin d'un fichier .kdl)`);
+  return l;
+}
+
 const describe = (settings: Settings, t: ProjectTerminal, project: string, running: boolean): Record<string, unknown> => ({ ...t, project, cwd: cwdOf(t, project), running, folder: folderName(settings, project, `terminal:${t.id}`) });
 
 export async function terminalCommand(argv: readonly string[]): Promise<number> {
@@ -55,7 +67,7 @@ export async function terminalCommand(argv: readonly string[]): Promise<number> 
     return 0;
   }
   const settings = new Settings();
-  const manager = new TerminalManager(() => ({}));
+  const manager = new TerminalManager(() => ({}), () => settings.data.peek().zellijLayout);
   await manager.refresh();
   const project = projectDir(args.options.get('project'));
   const json = args.flags.has('json');
@@ -75,7 +87,8 @@ export async function terminalCommand(argv: readonly string[]): Promise<number> 
       if (name === undefined || name === '') throw new UsageError('--name est requis');
       const taken = Object.values(settings.data.peek().terminals).flat().map((t) => t.id);
       const cwd = args.options.get('cwd')?.trim();
-      const t: ProjectTerminal = { id: terminalId(project, name, taken), name, command: args.options.get('command')?.trim() ?? '', ...(cwd === undefined || cwd === '' ? {} : { cwd }) };
+      const layout = checkLayout(args.options.get('layout'));
+      const t: ProjectTerminal = { id: terminalId(project, name, taken), name, command: args.options.get('command')?.trim() ?? '', ...(cwd === undefined || cwd === '' ? {} : { cwd }), ...(layout === undefined || layout === '' ? {} : { layout }) };
       settings.saveTerminal(project, t, folderOption(settings, project, args.options.get('folder')));
       if (args.flags.has('start')) await manager.start(t, project);
       if (json) print(JSON.stringify(describe(settings, t, project, manager.isRunning(t.id)), null, 2));
@@ -93,6 +106,11 @@ export async function terminalCommand(argv: readonly string[]): Promise<number> 
       if (cwd !== undefined) {
         if (cwd.trim() === '') delete next.cwd;
         else next.cwd = cwd.trim();
+      }
+      const layout = checkLayout(args.options.get('layout'));
+      if (layout !== undefined) {
+        if (layout === '') delete next.layout;
+        else next.layout = layout;
       }
       settings.saveTerminal(project, next, folderOption(settings, project, args.options.get('folder')));
       print(`Terminal « ${next.name} » modifié${manager.isRunning(t.id) ? ' (redémarre-le pour appliquer : ocg terminal restart ' + t.id + ')' : ''}`);

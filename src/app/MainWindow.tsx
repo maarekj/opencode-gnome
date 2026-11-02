@@ -367,7 +367,7 @@ export function MainWindow({
     manager: new TerminalManager(() => {
       const { terminal, terminalCommand } = settings.data.peek();
       return { terminal, command: terminalCommand };
-    }),
+    }, () => settings.data.peek().zellijLayout),
     toast,
   };
 

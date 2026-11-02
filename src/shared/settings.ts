@@ -20,6 +20,8 @@ export const ProjectTerminal = z.object({
   command: z.string(),
   /** répertoire de lancement ; absent = racine du projet */
   cwd: z.optional(z.string()),
+  /** layout zellij (#155) : bare, compact, default ou layout personnel ; absent = préférence globale */
+  layout: z.optional(z.string()),
 });
 export type ProjectTerminal = z.output<typeof ProjectTerminal>;
 
@@ -137,6 +139,8 @@ export const SettingsData = z.object({
   terminal: z.optional(z.string()),
   /** commande du terminal personnalisé (préfixe argv, ex. `foot -e`) */
   terminalCommand: z.optional(z.string()),
+  /** layout zellij des terminaux persistants (#155) : bare (sans barre), compact, default ou layout personnel */
+  zellijLayout: z.prefault(z.string(), 'bare'),
   /** terminaux ouverts dans le panneau intégré (VTE) plutôt que dans le terminal externe */
   terminalIntegrated: z.prefault(z.boolean(), true),
   /** thème de l'application : système, jour ou nuit */
@@ -155,7 +159,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { asides: {}, links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { asides: {}, links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, zellijLayout: 'bare', terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -290,6 +294,11 @@ export class Settings {
   /** Ordre des sous-projets de `parent` : `item` placé avant `before` (à la fin si null), parmi `siblings`. */
   moveSubproject(parent: string, siblings: readonly string[], item: string, before: string | null): void {
     this.update((d) => ({ ...d, subprojects: { ...d.subprojects, [parent]: moveChild(siblings, item, before) } }));
+  }
+
+  /** Layout zellij par défaut des terminaux persistants (#155). */
+  setZellijLayout(layout: string): void {
+    if (this.data.peek().zellijLayout !== layout) this.update((d) => ({ ...d, zellijLayout: layout }));
   }
 
   /** Modifie un réglage optionnel (`undefined` = valeur automatique, retirée du fichier). */
