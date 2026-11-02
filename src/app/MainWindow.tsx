@@ -584,17 +584,19 @@ export function MainWindow({
       previous = now;
       // premier chargement : état de référence (les non-lues persistantes restent)
       if (before === null) return;
+      // changements regroupés : un seul enregistrement (#156)
+      const changes = new Map<string, boolean>();
       for (const [id, activity] of now) {
         const was = before.get(id) ?? 'idle';
         if (was === activity) continue;
         // fin d'un tour de l'agent : non lue, sauf si elle est sous les yeux
-        if (activity === 'idle' && (was === 'busy' || was === 'retry')) settings.setUnread(id, seen() !== id);
+        if (activity === 'idle' && (was === 'busy' || was === 'retry')) changes.set(id, seen() !== id);
         // nouveau tour (message envoyé d'ici ou de la console) : la réponse précédente a été lue
-        else if (activity === 'busy') settings.setUnread(id, false);
+        else if (activity === 'busy') changes.set(id, false);
       }
       // sessions supprimées : retirées
-      const gone = settings.data.peek().unread.filter((id) => !now.has(id) && before.has(id));
-      for (const id of gone) settings.setUnread(id, false);
+      for (const id of settings.data.peek().unread) if (!now.has(id) && before.has(id)) changes.set(id, false);
+      if (changes.size > 0) settings.setUnreadMany(changes);
     }),
   );
 

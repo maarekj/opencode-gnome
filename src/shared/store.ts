@@ -232,7 +232,8 @@ export class Store {
   setUnread(ids: ReadonlySet<string>): void {
     if (ids.size === this.#unread.size && [...ids].every((id) => this.#unread.has(id))) return;
     this.#unread = ids;
-    this.#publish();
+    // différé : souvent appelé depuis un abonné de `projects` (pas de publication ré-entrante)
+    this.#publishSoon();
   }
 
   /** Sessions cachées (questions annexes, #153). */

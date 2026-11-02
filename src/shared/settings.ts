@@ -166,6 +166,13 @@ export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_co
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
+/** Écrit un fichier de réglages : lisible par l'utilisateur seul (peut contenir une clé API, voix). */
+function write(path: string, text: string): void {
+  GLib.mkdir_with_parents(GLib.path_get_dirname(path), 0o700);
+  GLib.file_set_contents(path, encoder.encode(text));
+  GLib.chmod(path, 0o600);
+}
+
 /**
  * Valide les réglages champ par champ : un champ invalide reprend sa valeur par défaut au lieu
  * de remettre tous les réglages à zéro (#64).
@@ -180,23 +187,44 @@ export function parseSettings(raw: unknown): SettingsData {
   return parsed.success ? parsed.data : DEFAULTS;
 }
 
-/** Réglages du fichier ; `undefined` s'il est absent, `null` s'il est illisible (JSON invalide…). */
-function read(path: string): SettingsData | null | undefined {
-  let text: string;
+/**
+ * État d'interface (#156) : propre à l'application, changé souvent (session ouverte, lu / non lu,
+ * repli…), enregistré dans state.json à côté de settings.json, sans verrou (ocg ne s'en sert pas).
+ */
+export const STATE_KEYS = ['openSessions', 'unread', 'collapsed', 'asides', 'sidebarWidth', 'terminalPanelHeight', 'sidebarMode'] as const satisfies readonly (keyof SettingsData)[];
+const isStateKey = (k: string): boolean => (STATE_KEYS as readonly string[]).includes(k);
+
+export const statePath = (settings: string): string => GLib.build_filenamev([GLib.path_get_dirname(settings), 'state.json']);
+
+/** Texte du fichier ; `undefined` s'il est absent. */
+function readText(path: string): string | undefined {
   try {
     const [ok, bytes] = GLib.file_get_contents(path);
-    if (!ok) return undefined;
-    text = decoder.decode(bytes);
+    return ok ? decoder.decode(bytes) : undefined;
   } catch {
     return undefined; // absent
   }
+}
+
+/** Objet JSON du fichier ; `undefined` s'il est absent, `null` s'il est illisible (JSON invalide…). */
+function readJson(path: string, text = readText(path)): Record<string, unknown> | null | undefined {
+  if (text === undefined) return undefined;
   try {
-    return parseSettings(JSON.parse(text));
+    const raw: unknown = JSON.parse(text);
+    const parsed = z.safeParse(z.record(z.string(), z.unknown()), raw);
+    if (!parsed.success) console.error(`réglages illisibles (objet attendu), ignorés : ${path}`);
+    return parsed.success ? parsed.data : null;
   } catch {
     console.error(`réglages illisibles, ignorés : ${path}`);
     return null;
   }
 }
+
+/** Champs `keys` de `d`. */
+const pick = (d: SettingsData, keys: Iterable<string>): Record<string, unknown> => Object.fromEntries([...keys].map((k) => [k, (d as Record<string, unknown>)[k]]));
+
+/** Réglages partagés (sans l'état d'interface), tels qu'enregistrés dans settings.json. */
+const sharedOf = (d: SettingsData): Record<string, unknown> => Object.fromEntries(Object.entries(d).filter(([k]) => !isStateKey(k)));
 
 /** `item` déplacé juste avant `before` (à la fin si null ou absent) ; liste inchangée si `item` est absent. */
 export function moveBefore(list: readonly string[], item: string, before: string | null): string[] {
@@ -215,54 +243,158 @@ function withLayout(d: SettingsData, project: string, fn: (layout: LayoutEntry[]
   return { ...d, layout: { ...d.layout, [project]: next } };
 }
 
+/** Délai d'enregistrement des réglages en mode différé (application) : changements regroupés. */
+const SAVE_DELAY_MS = 400;
+
 export class Settings {
   readonly data: Accessor<SettingsData>;
   readonly #set: (v: SettingsData) => void;
   readonly #path: string;
+  readonly #statePath: string;
+  /** application : écritures différées et regroupées ; CLI : immédiates (le processus s'arrête aussitôt) */
+  readonly #deferred: boolean;
   #monitor: Gio.FileMonitor | null = null;
-  /** contenu écrit par ce processus (ignoré par le moniteur) */
+  /** texte de settings.json écrit par ce processus (ignoré par le moniteur) */
   #written = '';
+  /** modifications des réglages partagés pas encore enregistrées : rejouées sur le fichier relu */
+  #pending: ((d: SettingsData) => SettingsData)[] = [];
+  /** réglages partagés connus sur disque (dernier chargement / enregistrement) : base de rejeu si le fichier est illisible */
+  #saved: Record<string, unknown> = {};
+  #stateDirty = false;
+  #timer = 0;
 
-  constructor(path = settingsPath()) {
+  constructor(path = settingsPath(), opts: { deferred?: boolean } = {}) {
     this.#path = path;
-    const [data, set] = createState<SettingsData>(read(path) ?? DEFAULTS);
+    this.#statePath = statePath(path);
+    this.#deferred = opts.deferred === true;
+    const [data, set] = createState<SettingsData>(this.#load());
     this.data = data;
     this.#set = set;
   }
 
-  /** Recharge le fichier quand un autre processus le modifie. */
+  /** settings.json, puis l'état d'interface de state.json (absent : celui de settings.json, migration). */
+  #load(): SettingsData {
+    const shared = readJson(this.#path) ?? {};
+    const state = readJson(this.#statePath) ?? {};
+    const d = parseSettings({ ...shared, ...state });
+    this.#saved = sharedOf(d);
+    return d;
+  }
+
+  /** Recharge les réglages partagés quand un autre processus (ocg) modifie settings.json. */
   watch(): void {
     if (this.#monitor !== null) return;
     this.#monitor = Gio.File.new_for_path(this.#path).monitor_file(Gio.FileMonitorFlags.NONE, null);
     this.#monitor.connect('changed', (_m: Gio.FileMonitor, _f: Gio.File, _o: Gio.File | null, event: Gio.FileMonitorEvent) => {
       if (event !== Gio.FileMonitorEvent.CHANGES_DONE_HINT && event !== Gio.FileMonitorEvent.CREATED) return;
-      // illisible (écriture en cours d'un autre processus…) ou supprimé : état courant conservé
-      const next = read(this.#path);
-      if (next === null || next === undefined) return;
-      if (JSON.stringify(next) !== this.#written) this.#set(next);
+      const text = readText(this.#path);
+      // notre propre écriture : rien à relire
+      if (text === undefined || text === this.#written) return;
+      // illisible (écriture en cours d'un autre processus…) : état courant conservé
+      const disk = readJson(this.#path, text);
+      if (disk === null || disk === undefined) return;
+      const current = this.data.peek();
+      // l'état d'interface est le nôtre ; les changements locaux pas encore enregistrés sont rejoués
+      this.#saved = disk;
+      const next = this.#replay(disk);
+      if (JSON.stringify(sharedOf(next)) !== JSON.stringify(sharedOf(current))) this.#set(next);
     });
   }
 
   /**
-   * Modifie les réglages sous verrou (l'app et la CLI `ocg` écrivent le même fichier) : le fichier
-   * est relu juste avant, pour ne pas écraser une modification d'un autre processus.
+   * Modifie les réglages. Application : état en mémoire immédiat, enregistrement regroupé un peu
+   * plus tard (#156). CLI : fichier relu sous verrou juste avant (l'application et `ocg` écrivent
+   * le même fichier), écrit aussitôt.
    */
   update(fn: (d: SettingsData) => SettingsData): void {
     try {
-      withLock(this.#path, () => {
-        const onDisk = read(this.#path);
-        const base = onDisk ?? this.data.peek();
-        const next = fn(base);
-        this.#set(next);
-        this.#written = JSON.stringify(next);
-        GLib.mkdir_with_parents(GLib.path_get_dirname(this.#path), 0o700);
-        GLib.file_set_contents(this.#path, encoder.encode(`${JSON.stringify(next, null, 2)}\n`));
-        // peut contenir une clé API (voix) : lisible par l'utilisateur seul
-        GLib.chmod(this.#path, 0o600);
-      });
+      if (!this.#deferred) {
+        withLock(this.#path, () => {
+          // fichier illisible : dernier état connu (jamais remplacé par les valeurs par défaut)
+          const base = parseSettings({ ...(readJson(this.#path) ?? this.#saved), ...pick(this.data.peek(), STATE_KEYS) });
+          const next = fn(base);
+          this.#set(next);
+          this.#writeShared(next);
+          if (STATE_KEYS.some((k) => next[k] !== base[k])) this.#writeState(next);
+        });
+        return;
+      }
+      const prev = this.data.peek();
+      const next = fn(prev);
+      const changed = Object.keys(next).filter((k) => (next as Record<string, unknown>)[k] !== (prev as Record<string, unknown>)[k]);
+      if (changed.length === 0) return;
+      if (changed.some((k) => isStateKey(k))) this.#stateDirty = true;
+      if (changed.some((k) => !isStateKey(k))) this.#pending.push(fn);
+      this.#set(next);
+      this.#schedule(SAVE_DELAY_MS);
     } catch (e) {
       console.error(`réglages non enregistrés : ${String(e)}`);
     }
+  }
+
+  #schedule(ms: number): void {
+    if (this.#timer !== 0) return;
+    this.#timer = GLib.timeout_add(GLib.PRIORITY_LOW, ms, () => {
+      this.#timer = 0;
+      this.flush(false);
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+
+  /**
+   * Enregistre les changements en attente. `wait` : attend le verrou (fermeture de l'application) ;
+   * sinon, verrou pris par un autre processus : nouvel essai un peu plus tard, sans bloquer.
+   */
+  flush(wait = true): void {
+    if (this.#timer !== 0) {
+      GLib.source_remove(this.#timer);
+      this.#timer = 0;
+    }
+    try {
+      if (this.#stateDirty) {
+        this.#writeState(this.data.peek());
+        this.#stateDirty = false;
+      }
+      if (this.#pending.length === 0) return;
+      const done = withLock(
+        this.#path,
+        () => {
+          // fichier relu : les modifications d'ici sont rejouées dessus (celles d'ocg sont gardées)
+          // illisible ou absent : dernier état connu du disque (pas de réglages remis à zéro)
+          const next = this.#replay(readJson(this.#path) ?? this.#saved);
+          this.#pending = [];
+          this.#writeShared(next, this.data.peek());
+          if (JSON.stringify(sharedOf(next)) !== JSON.stringify(sharedOf(this.data.peek()))) this.#set(next);
+        },
+        wait ? 2000 : 0,
+      );
+      if (!done) this.#schedule(100);
+    } catch (e) {
+      console.error(`réglages non enregistrés : ${String(e)}`);
+    }
+  }
+
+  /** Réglages partagés `disk`, état d'interface en mémoire, modifications en attente rejouées. */
+  #replay(disk: Record<string, unknown>): SettingsData {
+    const base = parseSettings({ ...disk, ...pick(this.data.peek(), STATE_KEYS) });
+    const next = this.#pending.reduce((d, fn) => fn(d), base);
+    // état d'interface : celui de la mémoire (les modifications rejouées ne le changent pas)
+    return { ...next, ...pick(this.data.peek(), STATE_KEYS) };
+  }
+
+  /**
+   * settings.json sans l'état d'interface ; state.json absent (réglages d'avant #156) : écrit
+   * d'abord depuis `state`, pour ne pas perdre les sessions ouvertes et autres.
+   */
+  #writeShared(d: SettingsData, state: SettingsData = d): void {
+    if (!GLib.file_test(this.#statePath, GLib.FileTest.EXISTS)) this.#writeState(state);
+    this.#saved = sharedOf(d);
+    this.#written = `${JSON.stringify(this.#saved, null, 2)}\n`;
+    write(this.#path, this.#written);
+  }
+
+  #writeState(d: SettingsData): void {
+    write(this.#statePath, `${JSON.stringify(pick(d, STATE_KEYS), null, 2)}\n`);
   }
 
   isFavorite(path: string): boolean {
@@ -365,6 +497,13 @@ export class Settings {
 
   /** Ajoute une session aux sessions ouvertes (à la fin), si elle n'y est pas. */
   /** Marque une session non lue (true) ou lue (false). */
+  /** Plusieurs sessions lues / non lues en une seule modification. */
+  setUnreadMany(changes: ReadonlyMap<string, boolean>): void {
+    const current = this.data.peek().unread;
+    const next = [...current.filter((id) => changes.get(id) !== false), ...[...changes].filter(([id, u]) => u && !current.includes(id)).map(([id]) => id)];
+    if (next.length !== current.length || next.some((id, i) => id !== current[i])) this.update((d) => ({ ...d, unread: next }));
+  }
+
   setUnread(id: string, unread: boolean): void {
     if (this.data.peek().unread.includes(id) === unread) return;
     this.update((d) => ({ ...d, unread: unread ? [...d.unread, id] : d.unread.filter((x) => x !== id) }));

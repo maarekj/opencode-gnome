@@ -33,7 +33,8 @@ const app = new Adw.Application({ applicationId: APP_ID, flags: Gio.ApplicationF
 // icône installée sous l'identifiant de l'application (scripts/install.ts)
 Gtk.Window.set_default_icon_name(APP_ID);
 const store = new Store(new OpencodeClient(serverUrl()));
-const settings = new Settings();
+// écritures différées et regroupées (#156) ; enregistrées à la fermeture
+const settings = new Settings(undefined, { deferred: true });
 initVoice(settings);
 cleanVoiceTemp();
 let api: WindowApi | null = null;
@@ -225,10 +226,14 @@ app.connect('startup', () => {
   const fontCss = new Gtk.CssProvider();
   const mono = monospaceFamily();
   setMonospaceFamily(mono);
+  // rechargé seulement s'il change : un rechargement restyle toute l'application (#156)
+  let fontText = '';
   const applyFont = (): void => {
-    fontCss.load_from_string(
-      `.conversation { font-size: ${settings.data.peek().fontScale}%; }\n.monospace, .diff-view, .md-font-mono { font-family: "${mono}", "DejaVu Sans Mono", monospace; }\n.md-font-serif { font-family: serif; }`,
-    );
+    const text = `.conversation { font-size: ${settings.data.peek().fontScale}%; }\n.monospace, .diff-view, .md-font-mono { font-family: "${mono}", "DejaVu Sans Mono", monospace; }\n.md-font-serif { font-family: serif; }`;
+    if (text !== fontText) {
+      fontText = text;
+      fontCss.load_from_string(text);
+    }
     // rendu markdown (préférences « Rendu des messages »)
     setMarkdownStyle(settings.data.peek().markdown);
   };
@@ -237,7 +242,8 @@ app.connect('startup', () => {
   // thème de l'application (préférences) : système, jour ou nuit
   const SCHEMES = { system: Adw.ColorScheme.DEFAULT, light: Adw.ColorScheme.FORCE_LIGHT, dark: Adw.ColorScheme.FORCE_DARK } as const;
   const applyTheme = (): void => {
-    Adw.StyleManager.get_default().colorScheme = SCHEMES[settings.data.peek().appTheme];
+    const scheme = SCHEMES[settings.data.peek().appTheme];
+    if (Adw.StyleManager.get_default().colorScheme !== scheme) Adw.StyleManager.get_default().colorScheme = scheme;
   };
   applyTheme();
   settings.data.subscribe(applyTheme);
@@ -292,7 +298,10 @@ app.connect('activate', () => {
     win.present();
   });
 });
-app.connect('shutdown', () => store.stop());
+app.connect('shutdown', () => {
+  store.stop();
+  settings.flush();
+});
 
 app.runAsync([imports.system.programInvocationName, ...ARGV]).catch((e: unknown) => {
   console.error(e);

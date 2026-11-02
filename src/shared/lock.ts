@@ -2,11 +2,15 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-/** Exécute `fn` sous le verrou du fichier `path` (`path.lock` créé en exclusif ; périmé après 10 s). */
-export function withLock(path: string, fn: () => void): void {
+/**
+ * Exécute `fn` sous le verrou du fichier `path` (`path.lock` créé en exclusif ; périmé après 10 s).
+ * `waitMs` : attente maximale d'un verrou pris (0 : pas d'attente, `fn` n'est pas exécutée et le
+ * résultat est false). Au-delà, le verrou est considéré abandonné et repris.
+ */
+export function withLock(path: string, fn: () => void, waitMs = 2000): boolean {
   const lock = Gio.File.new_for_path(`${path}.lock`);
   GLib.mkdir_with_parents(GLib.path_get_dirname(path), 0o700);
-  const deadline = Date.now() + 2000;
+  const deadline = Date.now() + waitMs;
   for (;;) {
     try {
       lock.create(Gio.FileCreateFlags.NONE, null).close(null);
@@ -18,6 +22,7 @@ export function withLock(path: string, fn: () => void): void {
       } catch {
         continue; // verrou retiré entre-temps : nouvel essai
       }
+      if (waitMs === 0 && age <= 10) return false;
       if (age > 10 || Date.now() > deadline) {
         try {
           lock.delete(null);
@@ -31,6 +36,7 @@ export function withLock(path: string, fn: () => void): void {
   }
   try {
     fn();
+    return true;
   } finally {
     try {
       lock.delete(null);

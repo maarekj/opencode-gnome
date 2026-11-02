@@ -313,9 +313,16 @@ class App:
             return text
 
     def settings(self) -> dict:
-        """Réglages enregistrés par l'application (settings.json)."""
-        path = self.config_dir / 'settings.json'
-        return json.loads(path.read_text()) if path.exists() else {}
+        """Réglages enregistrés par l'application : settings.json, et l'état d'interface de state.json (#156)."""
+        out = {}
+        for name in ('settings.json', 'state.json'):
+            path = self.config_dir / name
+            if path.exists():
+                try:
+                    out.update(json.loads(path.read_text()))
+                except json.JSONDecodeError:
+                    pass  # écriture en cours
+        return out
 
     def logged(self, label: str, contains: str = '', timeout: float = 5) -> str:
         """Ligne du bac à sable (`DOSSIER …`, `LIEN …`, `TERMINAL …`) écrite par l'application."""
