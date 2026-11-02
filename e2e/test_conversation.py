@@ -1,5 +1,7 @@
 """Scénarios utilisateur sur une conversation (seul opencode est simulé)."""
 
+import time
+
 from conftest import scenario, wait_until
 
 
@@ -113,3 +115,19 @@ def test_supprimer_une_session_par_double_clic(run_app):
     req = fake.wait_request('DELETE', '/session/ses_a')
     assert req
     wait_until(lambda: not app.has('list item', 'Corriger le bug de connexion'), 5, 'session retirée de la liste')
+
+
+def test_session_cachee_rattrapee_au_retour(run_app):
+    """#161 : une session cachée qui reçoit une réponse l'affiche complète au retour."""
+    fake, app = run_app(scenario('demo'), '--session', 'ses_a', settings={'openSessions': ['ses_a', 'ses_b']})
+    app.text_visible('La connexion échoue')
+    # autre session affichée : ses_a cachée
+    app.click('list item', contains='Permission en attente')
+    assert app.text_visible('pnpm test')
+    # réponse reçue par ses_a pendant qu'elle est cachée (prompt envoyé d'ailleurs, ex. la console)
+    fake.post('/session/ses_a/prompt_async?directory=/tmp/opencode-fake/demo', {'parts': [{'type': 'text', 'text': 'Question depuis la console'}]})
+    # réponse terminée (fin de tour) pendant que ses_a est cachée
+    wait_until(lambda: any('Réponse simulée : Question depuis la console' in str(p.get('text', '')) for m in fake._get('/session/ses_a/message') for p in m.get('parts', [])), 5, 'réponse du faux opencode')
+    time.sleep(0.5)
+    app.click('list item', contains='Corriger le bug de connexion')
+    assert app.text_visible('Réponse simulée : Question depuis la console')

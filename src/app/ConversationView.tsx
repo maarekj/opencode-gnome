@@ -4,7 +4,7 @@ import Gdk from 'gi://Gdk?version=4.0';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
-import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
+import { createComputed, createRoot, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
 import { stripImageMarkers, type Block, type Conversation, type TurnInfo } from '../shared/conversation.ts';
 import type { Activity } from '../shared/store.ts';
 import { AttachmentView } from './Attachments.tsx';
@@ -13,6 +13,7 @@ import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../sha
 import { readInfo, type ReadInfo } from '../shared/toolread.ts';
 import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { paused } from './Paused.ts';
 import { openFile } from './OpenFolder.ts';
 import { ReadButton } from './Voice.ts';
 import { horizontalScroller, ShellCommand } from './ShellCommand.ts';
@@ -716,7 +717,8 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
       );
       break;
     case 'tool':
-      widget = <ToolBlock part={block.part} ctx={ctx} />;
+      // sortie en direct, état, cartes : suspendus quand la page est cachée (#161)
+      widget = <ToolBlock part={paused(block.part, ctx.active)} ctx={ctx} />;
       break;
     case 'file': {
       // contenu figé : une pièce jointe ne change pas une fois envoyée
@@ -954,7 +956,16 @@ export function ConversationView({
   const whenRevealed = (build: () => () => void): void => {
     let stop: (() => void) | null = null;
     const start = (): void => {
-      if (stop === null && revealed.peek()) stop = build();
+      if (stop !== null || !revealed.peek()) return;
+      // racine propre : construit plus tard (révélation), hors de la portée du composant ; ses
+      // abonnements (paused…) sont libérés avec elle
+      stop = createRoot((dispose) => {
+        const inner = build();
+        return () => {
+          inner();
+          dispose();
+        };
+      });
     };
     start();
     const unsubscribe = revealed.subscribe(start);
@@ -1179,7 +1190,8 @@ export function ConversationView({
               whenRevealed(() => {
                 const t0 = Date.now();
                 // type dans la clé : un bloc qui change de type (même id) est reconstruit (#88)
-                const stop = keyedBox(self, conversation.blocks, (b) => `${b.id}:${b.kind}`, (b) => {
+                // page cachée : nouveaux blocs créés seulement au retour à l'écran (#161)
+                const stop = keyedBox(self, paused(conversation.blocks, ctx.active), (b) => `${b.id}:${b.kind}`, (b) => {
                   const w = BlockView({ block: b, ctx });
                   // retrouvé par reveal() (résultat de recherche)
                   w.name = `block:${b.id}`;
@@ -1194,7 +1206,7 @@ export function ConversationView({
             orientation={Gtk.Orientation.VERTICAL}
             spacing={14}
             $={(self: Gtk.Box) => {
-              whenRevealed(() => keyedBox(self, orphans, (p) => p.request.id, (p) => RequestCard({ pending: p, ctx })));
+              whenRevealed(() => keyedBox(self, paused(orphans, ctx.active), (p) => p.request.id, (p) => RequestCard({ pending: p, ctx })));
             }}
           />
         </Gtk.Box>
