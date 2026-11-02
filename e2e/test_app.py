@@ -143,3 +143,24 @@ def test_fermeture_sans_service_devenv_en_marche(run_app, tmp_path):
     app.find('frame', 'opencode').doActionNamed('window.close')
     # rien à signaler : fermeture directe
     wait_until(lambda: app.proc.poll() is not None or not app.has('frame', 'opencode'), 10, 'fenêtre fermée')
+
+
+def test_permission_d_un_sous_agent_signalee_sur_la_session(run_app):
+    """#154 : la demande d'un sous-agent remonte sur sa session (projet, notification)."""
+    _, app = run_app(scenario('conversation'))
+
+    def waiting(n):
+        text = '1 session attend ta réponse' if n == 1 else f'{n} sessions attendent ta réponse'
+        return wait_until(lambda: any(x.description == text for x in app.all('label', str(n))), 10, text)
+
+    # au départ : ses_c (question) et ses_p (permission) ; la question de ses_c est rejetée
+    waiting(2)
+    app.emit('question.rejected', {'sessionID': 'ses_c', 'requestID': 'que_1'})
+    waiting(1)
+    # permission demandée par le sous-agent de ses_c : ses_c attend de nouveau
+    app.emit('permission.asked', {'id': 'per_sub', 'sessionID': 'ses_child', 'permission': 'bash', 'patterns': ['rm -rf build']})
+    waiting(2)
+    # notification sur la session parente, bouton « Autoriser » sur la demande du sous-agent
+    assert 'session-ses_c' in app.logged('NOTIF', 'permission per_sub', timeout=10)
+    app.emit('permission.replied', {'sessionID': 'ses_child', 'requestID': 'per_sub', 'reply': 'once'})
+    waiting(1)

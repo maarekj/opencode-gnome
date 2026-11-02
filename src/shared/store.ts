@@ -93,6 +93,10 @@ export class Store {
   #childrenSignature = '';
   /** sessions non lues (tenu par l'app, persistant dans ses réglages) */
   #unread: ReadonlySet<string> = new Set();
+  /** sessions en cours de chargement par #discover */
+  readonly #discovering = new Set<string>();
+  /** sessions chargées par #discover sans parent (ou introuvables) : pas rechargées */
+  readonly #roots = new Set<string>();
   /** sessions cachées (questions annexes) : absentes des projets */
   #hidden: ReadonlySet<string> = new Set();
   /** numéro du dernier rechargement (les réponses des précédents sont ignorées) */
@@ -160,6 +164,7 @@ export class Store {
       const activity = await this.#loadActivity(sessions);
       if (gen !== this.#reloadGen) return;
       this.#applyActivity(activity, changes.activity);
+      for (const id of [...this.#permissions.keys(), ...this.#questions.keys()]) this.#discover(id);
       this.#publish();
     } catch (e) {
       if (gen === this.#reloadGen) this.#setConnection({ state: 'error', message: errorMessage(e) });
@@ -282,7 +287,49 @@ export class Store {
   /** Session connue (racine), si présente. */
   /** Première demande de permission en attente d'une session (pour y répondre depuis une notification). */
   pendingPermission(sessionID: string): string | undefined {
-    return [...(this.#permissions.get(sessionID) ?? [])][0];
+    for (const id of [sessionID, ...this.#descendants(sessionID)]) {
+      const first = [...(this.#permissions.get(id) ?? [])][0];
+      if (first !== undefined) return first;
+    }
+    return undefined;
+  }
+
+  /** Sous-agents connus de la session, à toute profondeur (#154). */
+  #descendants(sessionID: string): string[] {
+    const out: string[] = [];
+    const queue = [sessionID];
+    for (let id = queue.shift(); id !== undefined; id = queue.shift())
+      for (const c of this.#children.values())
+        if (c.parentID === id && !out.includes(c.id)) {
+          out.push(c.id);
+          queue.push(c.id);
+        }
+    return out;
+  }
+
+  /** Session d'une demande inconnue (sous-agent pas encore vu) : chargée pour connaître son parent. */
+  #discover(sessionID: string): void {
+    if (this.#sessions.has(sessionID) || this.#children.has(sessionID) || this.#discovering.has(sessionID) || this.#roots.has(sessionID)) return;
+    this.#discovering.add(sessionID);
+    this.client
+      .session(sessionID)
+      .then((s) => {
+        if (s.parentID === undefined) this.#roots.add(s.id);
+        else {
+          this.#children.set(s.id, s);
+          this.#discover(s.parentID);
+          this.#publishSoon();
+        }
+        return null;
+      })
+      .catch((e: unknown) => {
+        // session supprimée : pas redemandée à chaque rechargement
+        this.#roots.add(sessionID);
+        console.error(e);
+      })
+      .finally(() => {
+        this.#discovering.delete(sessionID);
+      });
   }
 
   /** S'abonne aux erreurs de session (`session.error`). */
@@ -374,6 +421,7 @@ export class Store {
         const raw: unknown = asked ? event.properties['id'] : event.properties['requestID'];
         const map = event.type.startsWith('question') ? this.#questions : this.#permissions;
         this.#track(map, event.properties.sessionID, typeof raw === 'string' ? raw : undefined, asked);
+        if (asked) this.#discover(event.properties.sessionID);
         break;
       }
       case 'project.updated':
@@ -396,9 +444,20 @@ export class Store {
     });
   }
 
+  /**
+   * Activité d'une session ; une session racine remonte aussi les demandes en attente de ses
+   * sous-agents (question, permission : #154).
+   */
   activity(sessionID: string): Activity {
-    if ((this.#questions.get(sessionID)?.size ?? 0) > 0) return 'question';
-    if ((this.#permissions.get(sessionID)?.size ?? 0) > 0) return 'permission';
+    const own = (id: string): Activity | null =>
+      (this.#questions.get(id)?.size ?? 0) > 0 ? 'question' : (this.#permissions.get(id)?.size ?? 0) > 0 ? 'permission' : null;
+    const mine = own(sessionID);
+    if (mine !== null) return mine;
+    if (this.#sessions.has(sessionID) && (this.#questions.size > 0 || this.#permissions.size > 0))
+      for (const id of this.#descendants(sessionID)) {
+        const sub = own(id);
+        if (sub !== null) return sub;
+      }
     return this.#status.get(sessionID) ?? 'idle';
   }
 
@@ -416,7 +475,11 @@ export class Store {
    */
   #publishChildren(): void {
     if (this.#children.size > MAX_CHILDREN) {
-      const old = [...this.#children.values()].toSorted((a, b) => (a.time.updated ?? a.time.created) - (b.time.updated ?? b.time.created));
+      // sous-agents en attente et leurs ancêtres gardés : la demande remonte à la session racine
+      const keep = new Set<string>();
+      for (const id of [...this.#questions.keys(), ...this.#permissions.keys()])
+        for (let c = this.#children.get(id); c !== undefined && !keep.has(c.id); c = c.parentID === undefined ? undefined : this.#children.get(c.parentID)) keep.add(c.id);
+      const old = [...this.#children.values()].filter((c) => !keep.has(c.id)).toSorted((a, b) => (a.time.updated ?? a.time.created) - (b.time.updated ?? b.time.created));
       for (const c of old.slice(0, this.#children.size - MAX_CHILDREN)) this.#children.delete(c.id);
     }
     // activité de toutes les sessions aussi : les cartes de sous-agents relisent store.activity(id),
