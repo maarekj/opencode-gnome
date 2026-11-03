@@ -23,12 +23,15 @@ const DECODE_CHUNK = 2 * 1024 * 1024;
  * morceaux, en rendant la main à la boucle principale entre deux : le décodage d'un bloc de
  * 64 Mo la figeait ~400 ms (#159).
  */
-async function decodeLarge(data: Uint8Array): Promise<string> {
-  if (data.length <= DECODE_CHUNK) return decoder.decode(data);
-  const stream = new TextDecoder();
+export async function decodeLarge(data: Uint8Array, chunk = DECODE_CHUNK): Promise<string> {
+  if (data.length <= chunk) return decoder.decode(data);
   const parts: string[] = [];
-  for (let i = 0; i < data.length; i += DECODE_CHUNK) {
-    parts.push(stream.decode(data.subarray(i, i + DECODE_CHUNK), { stream: i + DECODE_CHUNK < data.length }));
+  // Le TextDecoder de GJS ignore l'option `stream` (erreur, #163) : chaque morceau est coupé
+  // sur une frontière de caractère et décodé seul.
+  for (let i = 0; i < data.length; ) {
+    const end = utf8Boundary(data, i + chunk);
+    parts.push(decoder.decode(data.subarray(i, end)));
+    i = end;
     // oxlint-disable-next-line no-await-in-loop -- pause volontaire entre deux morceaux
     await new Promise<void>((resolve) => {
       GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -38,6 +41,17 @@ async function decodeLarge(data: Uint8Array): Promise<string> {
     });
   }
   return parts.join('');
+}
+
+/**
+ * Position ≤ `end` qui ne coupe pas un caractère UTF-8 : recule tant que l'octet est une
+ * continuation (10xxxxxx). Au plus 3 octets de recul pour un texte valide.
+ */
+export function utf8Boundary(data: Uint8Array, end: number): number {
+  if (end >= data.length) return data.length;
+  let i = end;
+  while (i > end - 3 && ((data[i] ?? 0) & 0xc0) === 0x80) i--;
+  return i;
 }
 const encoder = new TextEncoder();
 
