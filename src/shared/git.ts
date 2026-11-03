@@ -269,12 +269,24 @@ export async function gitChanges(directory: string, target: DiffTarget): Promise
   return parseChanges(names, nums);
 }
 
-/** Patch d'un fichier d'un commit ou entre deux refs. */
-export async function gitFilePatch(directory: string, target: DiffTarget, file: GitFileChange): Promise<string> {
+/** Contexte « fichier entier » d'un diff (#162). */
+const FULL_CONTEXT = '--unified=1000000';
+
+/** Patch d'un fichier d'un commit ou entre deux refs ; `full` : fichier entier autour des modifications. */
+export async function gitFilePatch(directory: string, target: DiffTarget, file: GitFileChange, full = false): Promise<string> {
   const paths = file.from === undefined ? [file.path] : [file.from, file.path];
-  const out = await git(directory, [...diffArgs(target), '-M', '--no-color', '--', ...paths]);
+  const out = await git(directory, [...diffArgs(target), '-M', '--no-color', ...(full ? [FULL_CONTEXT] : []), '--', ...paths]);
   if (out === null) throw new Error(`Diff de ${file.path} illisible`);
   return out;
+}
+
+/**
+ * Patch d'un fichier de l'arbre de travail par rapport à HEAD, fichier entier (#162) ; vide si git
+ * ne le connaît pas (fichier non suivi).
+ */
+export async function gitWorktreeFullPatch(directory: string, file: GitFileChange): Promise<string> {
+  const paths = file.from === undefined ? [file.path] : [file.from, file.path];
+  return (await git(directory, ['diff', 'HEAD', '-M', '--no-color', FULL_CONTEXT, '--', ...paths])) ?? '';
 }
 
 /** Commit complet (message entier). */

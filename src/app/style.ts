@@ -127,6 +127,18 @@ export const STYLESHEET = `
 .diff-view {
   font-size: 0.9em;
 }
+/* fichiers modifiés : lignes serrées (#162) */
+.git-files > row {
+  min-height: 0;
+  padding: 3px 6px;
+  margin: 0 6px 1px;
+}
+.git-dir-name {
+  font-weight: bold;
+}
+.diff-markers {
+  background: alpha(currentColor, 0.04);
+}
 .git-pane-header {
   padding: 6px 12px;
   min-height: 36px;

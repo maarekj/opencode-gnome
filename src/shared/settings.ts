@@ -131,6 +131,8 @@ export const SettingsData = z.object({
   showTools: z.prefault(z.boolean(), true),
   /** fenêtre git : fichiers modifiés en arborescence de dossiers (sinon à plat) */
   gitFilesTree: z.prefault(z.boolean(), false),
+  /** diffs de la fenêtre git : fichier entier plutôt que le contexte des modifications (#162) */
+  gitDiffFull: z.prefault(z.boolean(), false),
   /** notifications de bureau (session terminée, question, permission, erreur) */
   notifications: z.prefault(z.boolean(), true),
   /** son joué avec les notifications */
@@ -159,7 +161,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { asides: {}, links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, zellijLayout: 'bare', terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { asides: {}, links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, gitDiffFull: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, zellijLayout: 'bare', terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -551,6 +553,10 @@ export class Settings {
 
   setGitFilesTree(tree: boolean): void {
     if (this.data.peek().gitFilesTree !== tree) this.update((d) => ({ ...d, gitFilesTree: tree }));
+  }
+
+  setGitDiffFull(full: boolean): void {
+    if (this.data.peek().gitDiffFull !== full) this.update((d) => ({ ...d, gitDiffFull: full }));
   }
 
   setShowTools(show: boolean): void {

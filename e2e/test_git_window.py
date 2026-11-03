@@ -289,3 +289,22 @@ def test_arborescence_memorisee(run_app, repo):
     app.click('button', 'Git : modifications, journal, branches, comparaison')
     win = app.find('frame', 'Git — depot')
     app.find('list item', 'src/app/ — replier', within=win)
+
+
+def test_reperes_des_modifications(run_app, repo):
+    # bande de repères à droite du diff (#162)
+    _, app = open_git(run_app, repo)
+    app.find('list item', 'Modifié : app.txt')
+    app.find(None, 'Modifications du fichier : clic pour y aller')
+
+
+def test_diff_fichier_entier(run_app, repo):
+    # bascule contexte / fichier entier, relu par git et mémorisée (#162)
+    _, app = open_git(run_app, repo)
+    app.find('list item', 'Modifié : app.txt')
+    assert app.text_visible('non commité')
+    with pytest.raises(AssertionError):
+        app.text_visible('initial', timeout=1)
+    app.click('toggle button', 'Afficher le fichier entier (sinon : les modifications et leur contexte)')
+    assert app.text_visible('initial')
+    wait_until(lambda: app.settings().get('gitDiffFull') is True, 5, 'choix mémorisé')

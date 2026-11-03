@@ -10,7 +10,7 @@ import Pango from 'gi://Pango';
 import { createState, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtFullDate, fmtRelative } from '../shared/format.ts';
-import { gitChanges, gitCommit, gitFilePatch, gitLog, gitRefs, gitStatus, gitResolve, commitGraph, type GitCommit, type GitFileChange, type GitRef, type GraphEdge, type GraphRow } from '../shared/git.ts';
+import { gitChanges, gitCommit, gitFilePatch, gitWorktreeFullPatch, gitLog, gitRefs, gitStatus, gitResolve, commitGraph, type GitCommit, type GitFileChange, type GitRef, type GraphEdge, type GraphRow } from '../shared/git.ts';
 import type { FileDiff } from '../shared/schemas.ts';
 import { fileTree, type TreeRow } from '../shared/filetree.ts';
 import type { Settings } from '../shared/settings.ts';
@@ -71,6 +71,16 @@ const setTreeView = (tree: boolean): void => {
   treeSettings?.setGitFilesTree(tree);
 };
 
+/** Diffs : fichier entier ou contexte des modifications ; partagé et mémorisé comme `treeView` (#162). */
+const [fullView, setFullViewState] = createState(false);
+const setFullView = (full: boolean): void => {
+  setFullViewState(full);
+  treeSettings?.setGitDiffFull(full);
+};
+
+/** Patch d'un fichier ; `full` : fichier entier autour des modifications. */
+type PatchOf = (f: GitFileChange, full: boolean) => Promise<string>;
+
 /** Commenter des lignes : contrôleur de la revue de la fenêtre et origine du diff affiché. */
 interface Commenting {
   readonly review: ReviewController;
@@ -115,14 +125,14 @@ const headerSubtitle = (): Gtk.Label => new Gtk.Label({ xalign: 0, ellipsize: Pa
 const statMarkup = (add: number | null, del: number | null): string =>
   add === null ? 'binaire' : `<span foreground="#26a269">+${add}</span> <span foreground="#c01c28">−${del ?? 0}</span>`;
 
-const INDENT = 16;
+const INDENT = 12;
 
 /** Ligne d'un dossier de l'arborescence : flèche, nom, nombre de fichiers et lignes ; clic : replier / déplier. */
 function dirRow(row: Extract<TreeRow<GitFileChange>, { kind: 'dir' }>, open: boolean): Gtk.ListBoxRow {
-  const box = new Gtk.Box({ spacing: 8, marginTop: 4, marginBottom: 4, marginStart: 6 + row.depth * INDENT, marginEnd: 6 });
+  const box = new Gtk.Box({ spacing: 6, marginStart: 2 + row.depth * INDENT, marginEnd: 4 });
   box.append(new Gtk.Image({ iconName: open ? 'pan-down-symbolic' : 'pan-end-symbolic', cssClasses: ['dim-label'] }));
   box.append(new Gtk.Image({ iconName: open ? 'folder-open-symbolic' : 'folder-symbolic', cssClasses: ['dim-label'] }));
-  box.append(new Gtk.Label({ label: row.label, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.MIDDLE, cssClasses: ['heading'] }));
+  box.append(new Gtk.Label({ label: row.label, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.MIDDLE, cssClasses: ['git-dir-name'] }));
   box.append(new Gtk.Label({ label: String(row.files), cssClasses: ['caption', 'dim-label', 'numeric'], tooltipText: plural(row.files, 'fichier') }));
   box.append(new Gtk.Label({ label: statMarkup(row.additions, row.deletions), useMarkup: true, cssClasses: ['caption', 'numeric'] }));
   return new Gtk.ListBoxRow({ child: box, selectable: false, activatable: true, tooltipText: `${row.path}/ — ${open ? 'replier' : 'déplier'}`, name: `dir:${row.path}` });
@@ -132,7 +142,8 @@ function fileRow(file: GitFileChange, depth: number | null = null): Gtk.ListBoxR
   const st = statusOf(file.status);
   // arborescence : le dossier est donné par l'indentation
   const dir = depth === null ? dirname(file.path) : '';
-  const box = new Gtk.Box({ spacing: 10, marginTop: 6, marginBottom: 6, marginStart: 6 + (depth ?? 0) * INDENT + (depth === null ? 0 : 20), marginEnd: 6 });
+  // arborescence : lignes serrées (#162) ; à plat : deux lignes (nom, dossier)
+  const box = depth === null ? new Gtk.Box({ spacing: 10, marginTop: 6, marginBottom: 6, marginStart: 6, marginEnd: 6 }) : new Gtk.Box({ spacing: 6, marginStart: 2 + depth * INDENT + 22, marginEnd: 4 });
   box.append(new Gtk.Image({ iconName: st.icon, cssClasses: [st.css] }));
   const names = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
   names.append(new Gtk.Label({ label: basename(file.path), xalign: 0, ellipsize: Pango.EllipsizeMode.MIDDLE }));
@@ -149,12 +160,12 @@ const noPatch = (): Promise<string> => Promise.resolve('');
 /** Liste de fichiers modifiés et diff du fichier choisi (patch chargé à la demande). */
 function createFilesPane(commenting?: Commenting): {
   readonly widget: Gtk.Widget;
-  show: (files: readonly GitFileChange[], patch: (f: GitFileChange) => Promise<string>, keep?: string | null) => void;
+  show: (files: readonly GitFileChange[], patch: PatchOf, keep?: string | null) => void;
   readonly selected: () => string | null;
   /** affiche un fichier à une ligne (commentaire de la revue), dès que la liste est chargée */
   readonly reveal: (file: string, end: DiffAnchor | undefined) => void;
 } {
-  const list = new Gtk.ListBox({ cssClasses: ['navigation-sidebar'] });
+  const list = new Gtk.ListBox({ cssClasses: ['navigation-sidebar', 'git-files'] });
   const listBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   listBox.append(list);
   // à plat / arborescence (choix commun à toutes les listes)
@@ -206,7 +217,12 @@ function createFilesPane(commenting?: Commenting): {
     });
     commenting.review.comments.subscribe(() => diff.refresh());
   }
-  right.append(paneHeader(title, subtitle, commentBtn));
+  // fichier entier / contexte des modifications
+  const fullBtn = new Gtk.ToggleButton({ iconName: 'view-continuous-symbolic', cssClasses: ['flat'], valign: Gtk.Align.CENTER, active: fullView.peek(), tooltipText: 'Afficher le fichier entier (sinon : les modifications et leur contexte)' });
+  fullBtn.connect('toggled', () => {
+    if (fullBtn.active !== fullView.peek()) setFullView(fullBtn.active);
+  });
+  right.append(paneHeader(title, subtitle, fullBtn, commentBtn));
   right.append(new Gtk.Separator());
   right.append(stack);
 
@@ -215,7 +231,7 @@ function createFilesPane(commenting?: Commenting): {
   let shown: ({ kind: 'file'; file: GitFileChange } | { kind: 'dir'; path: string })[] = [];
   /** dossiers repliés (arborescence), conservés d'un rafraîchissement à l'autre */
   const collapsed = new Set<string>();
-  let patchOf: (f: GitFileChange) => Promise<string> = noPatch;
+  let patchOf: PatchOf = noPatch;
   let selected: string | null = null;
   let generation = 0;
   /** fichier et ligne à montrer (commentaire choisi dans la revue) */
@@ -238,7 +254,7 @@ function createFilesPane(commenting?: Commenting): {
     stack.visibleChildName = 'loading';
     void (async () => {
       try {
-        const patch = await patchOf(file);
+        const patch = await patchOf(file, fullView.peek());
         if (gen !== generation) return;
         diff.show(file.path, patch);
         stack.visibleChildName = 'diff';
@@ -288,6 +304,12 @@ function createFilesPane(commenting?: Commenting): {
     render();
   });
   list.connect('destroy', unsubscribeView);
+  const unsubscribeFull = fullView.subscribe(() => {
+    fullBtn.active = fullView.peek();
+    const file = files.find((f) => f.path === selected) ?? null;
+    if (file !== null) open(file);
+  });
+  list.connect('destroy', unsubscribeFull);
 
   /**
    * Sélectionne le fichier `path`, ou le premier fichier. `unfold` : dossiers parents dépliés
@@ -302,7 +324,7 @@ function createFilesPane(commenting?: Commenting): {
     return file;
   };
 
-  const show = (next: readonly GitFileChange[], patch: (f: GitFileChange) => Promise<string>, keep: string | null = null): void => {
+  const show = (next: readonly GitFileChange[], patch: PatchOf, keep: string | null = null): void => {
     files = next;
     patchOf = patch;
     selected = null;
@@ -365,7 +387,14 @@ function changesTab(source: GitSource, review: ReviewController, select: (c: Rev
       last = key;
       const files = diffs.map((d): GitFileChange => ({ path: d.file, status: SERVER_STATUS[d.status ?? 'modified'] ?? 'M', additions: d.additions, deletions: d.deletions }));
       const patches = new Map(diffs.map((d) => [d.file, d.patch ?? '']));
-      pane.show(files, (f) => Promise.resolve(patches.get(f.path) ?? ''), pane.selected());
+      // fichier entier : relu par git (le serveur ne donne que le contexte) ; fichier non suivi : patch du serveur
+      const patchOf = async (f: GitFileChange, full: boolean): Promise<string> => {
+        const server = patches.get(f.path) ?? '';
+        if (!full) return server;
+        const whole = await gitWorktreeFullPatch(source.directory, f);
+        return whole === '' ? server : whole;
+      };
+      pane.show(files, patchOf, pane.selected());
       stack.visibleChildName = files.length === 0 ? 'empty' : 'files';
       loaded = true;
     } catch (e) {
@@ -556,7 +585,7 @@ function logTab(
         const parents = full.parents.length > 1 ? `\nFusion de ${full.parents.map((p) => p.slice(0, 7)).join(' et ')}` : '';
         meta.label = `<b>${esc(full.author)}</b> &lt;${esc(full.email)}&gt; · ${esc(fmtFullDate(full.date))}\n<tt>${full.hash}</tt> · ${esc(plural(changes.length, 'fichier'))}${committer}${esc(parents)}`;
         copyHash.tooltipText = `Copier ${full.hash}`;
-        files.show(changes, (f) => gitFilePatch(directory, target, f));
+        files.show(changes, (f, whole) => gitFilePatch(directory, target, f, whole));
         rightStack.visibleChildName = 'commit';
       } catch (e) {
         if (gen !== generation) return;
@@ -778,7 +807,7 @@ function compareTab(
       const add = changes.reduce((n, f) => n + (f.additions ?? 0), 0);
       const del = changes.reduce((n, f) => n + (f.deletions ?? 0), 0);
       summarySub.label = `↑${onlyB.length} ↓${onlyA.length} · ${plural(changes.length, 'fichier')} · +${add} −${del}`;
-      files.show(changes, (f) => gitFilePatch(directory, target, f), files.selected());
+      files.show(changes, (f, whole) => gitFilePatch(directory, target, f, whole), files.selected());
       stack.visibleChildName = 'result';
     } catch (e) {
       if (gen !== generation) return;
@@ -891,10 +920,13 @@ export function openGitWindow(parent: Gtk.Widget, source: GitSource, tab: GitTab
     const settings = source.settings;
     treeSettings = settings;
     setTreeViewState(settings.data.peek().gitFilesTree);
+    setFullViewState(settings.data.peek().gitDiffFull);
     // réglage modifié ailleurs (autre instance, fichier) : suivi
     settings.data.subscribe(() => {
       const tree = settings.data.peek().gitFilesTree;
       if (tree !== treeView.peek()) setTreeViewState(tree);
+      const full = settings.data.peek().gitDiffFull;
+      if (full !== fullView.peek()) setFullViewState(full);
     });
   }
   const root = parent.get_root();

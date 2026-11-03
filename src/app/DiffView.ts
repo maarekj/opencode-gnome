@@ -9,7 +9,86 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import GtkSource from 'gi://GtkSource?version=5';
 import Pango from 'gi://Pango';
-import { atAnchor, parsePatch, selectionOf, type DiffAnchor, type DiffKind as Kind, type DiffLine, type DiffSelection } from '../shared/diff.ts';
+import { atAnchor, diffMarkers, parsePatch, selectionOf, type DiffAnchor, type DiffKind as Kind, type DiffLine, type DiffMarker, type DiffSelection, markerY, valueAtMarker, type ScrollTrack } from '../shared/diff.ts';
+
+const MARKER_COLORS: Readonly<Record<DiffMarker['kind'], [number, number, number]>> = {
+  add: [0.18, 0.76, 0.49],
+  del: [0.88, 0.11, 0.14],
+  change: [0.21, 0.52, 0.89],
+};
+
+/** Premier descendant de nom CSS `name` (gouttière, curseur de la barre de défilement). */
+function descendant(widget: Gtk.Widget, name: string): Gtk.Widget | null {
+  for (let c = widget.get_first_child(); c !== null; c = c.get_next_sibling()) {
+    if (c.get_css_name() === name) return c;
+    const found = descendant(c, name);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * Bande étroite à droite du diff : un trait par bloc modifié (vert ajout, rouge suppression, bleu
+ * modification), aligné sur la barre de défilement : quand le curseur passe sur un repère, le bloc
+ * est à l'écran. Un clic y fait défiler (#162).
+ */
+function markerStrip(scrolled: Gtk.ScrolledWindow, view: Gtk.TextView, markersOf: () => readonly DiffMarker[]): Gtk.DrawingArea {
+  const label = 'Modifications du fichier : clic pour y aller';
+  const area = new Gtk.DrawingArea({ widthRequest: 10, vexpand: true, accessibleRole: Gtk.AccessibleRole.IMG, cssClasses: ['diff-markers'], tooltipText: label, cursor: Gdk.Cursor.new_from_name('pointer', null) });
+  area.update_property([Gtk.AccessibleProperty.LABEL], [label]);
+  /** gouttière et curseur de la barre verticale, dans les coordonnées de la bande */
+  const track = (height: number, upper: number, page: number): ScrollTrack => {
+    const bar = scrolled.get_vscrollbar();
+    const trough = descendant(bar, 'trough');
+    const slider = descendant(bar, 'slider');
+    if (trough !== null && slider !== null && trough.get_height() > 0) {
+      const [ok, rect] = trough.compute_bounds(area);
+      if (ok) return { top: rect.get_y(), height: rect.get_height(), slider: slider.get_height() };
+    }
+    return { top: 0, height, slider: upper > 0 ? (page / upper) * height : 0 };
+  };
+  area.set_draw_func((_a, cr, width, height) => {
+    const adj = view.get_vadjustment();
+    if (adj === null) return;
+    const upper = adj.get_upper();
+    const page = adj.get_page_size();
+    const t = track(height, upper, page);
+    const buffer = view.get_buffer();
+    for (const m of markersOf()) {
+      const [red, green, blue] = MARKER_COLORS[m.kind];
+      cr.setSourceRGBA(red, green, blue, 0.9);
+      const [, first] = buffer.get_iter_at_line(m.start);
+      const [, last] = buffer.get_iter_at_line(m.end - 1);
+      const [top] = view.get_line_yrange(first);
+      const [lastTop, lastHeight] = view.get_line_yrange(last);
+      const y0 = markerY(top, upper, page, t);
+      const y1 = markerY(lastTop + lastHeight, upper, page, t);
+      // trait visible même pour une seule ligne d'un long fichier
+      cr.rectangle(2, Math.min(y0, height - 3), width - 4, Math.max(3, y1 - y0));
+      cr.fill();
+    }
+  });
+  // contenu mis en page (validé par morceaux) ou redimensionné : positions à recalculer
+  view.get_vadjustment()?.connect('changed', () => area.queue_draw());
+  const click = new Gtk.GestureClick();
+  click.connect('pressed', (_g: Gtk.GestureClick, _n: number, _x: number, y: number) => {
+    const adj = view.get_vadjustment();
+    if (adj === null) return;
+    const upper = adj.get_upper();
+    const page = adj.get_page_size();
+    adj.set_value(valueAtMarker(y, upper, page, track(area.get_height(), upper, page)));
+  });
+  area.add_controller(click);
+  return area;
+}
+
+/** Diff défilant et bande des repères à sa droite. */
+function withStrip(scrolled: Gtk.ScrolledWindow, strip: Gtk.Widget): Gtk.Widget {
+  const box = new Gtk.Box({ vexpand: true });
+  box.append(scrolled);
+  box.append(strip);
+  return box;
+}
 
 /** Au-delà, le diff est tronqué (#160). */
 const MAX_LINES = 20_000;
@@ -140,6 +219,10 @@ export function createDiffView({ inline = false }: { inline?: boolean } = {}): D
   /** lignes affichées : lignes du diff, et une ligne par commentaire (null) sous la ligne commentée */
   let shownLines: readonly (DiffLine | null)[] = [];
   let annotationsOf: (file: string) => readonly DiffAnnotation[] = noAnnotations;
+  let markers: readonly DiffMarker[] = [];
+  /** repères des modifications le long de la barre de défilement (vue défilante seulement) */
+  const scrolled = inline ? null : new Gtk.ScrolledWindow({ child: view, vexpand: true, hexpand: true });
+  const strip = scrolled === null ? null : markerStrip(scrolled, view, () => markers);
   const show = (filename: string, patch: string, keepPosition = false): void => {
     const parsed = parsePatch(patch);
     // très gros diff (fichier généré, lockfile…) : affichage plafonné (#160)
@@ -186,6 +269,8 @@ export function createDiffView({ inline = false }: { inline?: boolean } = {}): D
     }
     raise();
     numbers.setLines(lines);
+    markers = diffMarkers(lines);
+    strip?.queue_draw();
     buffer.place_cursor(buffer.get_start_iter());
     if (inline) return;
     const adj = view.get_vadjustment();
@@ -261,7 +346,7 @@ export function createDiffView({ inline = false }: { inline?: boolean } = {}): D
   });
 
   return {
-    widget: inline ? view : new Gtk.ScrolledWindow({ child: view, vexpand: true }),
+    widget: scrolled === null || strip === null ? view : withStrip(scrolled, strip),
     show,
     selection,
     onSelectionChanged: (fn) => {

@@ -95,3 +95,67 @@ export function selectionOf(file: string, lines: readonly DiffLine[], from: numb
   return { file, lines: old.length === 0 ? 'lignes sélectionnées' : `${range(old)} (supprimée${old.length > 1 ? 's' : ''})`, excerpt, end };
 }
 
+
+/** Bloc de modifications pour les repères de la barre de défilement (#162). */
+export interface DiffMarker {
+  /** première ligne et ligne suivant la dernière (indices des lignes affichées) */
+  readonly start: number;
+  readonly end: number;
+  /** ajout seul, suppression seule, ou les deux (modification) */
+  readonly kind: 'add' | 'del' | 'change';
+}
+
+/** Suites de lignes ajoutées / retirées consécutives, en blocs. */
+export function diffMarkers(lines: readonly (DiffLine | null)[]): DiffMarker[] {
+  const out: DiffMarker[] = [];
+  let start = -1;
+  let add = false;
+  let del = false;
+  const flush = (end: number): void => {
+    if (start >= 0) out.push({ start, end, kind: add && del ? 'change' : add ? 'add' : 'del' });
+    start = -1;
+    add = false;
+    del = false;
+  };
+  for (const [i, l] of lines.entries()) {
+    // ligne de commentaire (null) : ne coupe pas un bloc
+    if (l === null) continue;
+    if (l.kind === 'add' || l.kind === 'del') {
+      if (start < 0) start = i;
+      if (l.kind === 'add') add = true;
+      else del = true;
+    } else flush(i);
+  }
+  flush(lines.length);
+  return out;
+}
+
+/**
+ * Glissière de la barre de défilement, en pixels dans la bande des repères : début et hauteur
+ * de la gouttière, hauteur du curseur (souvent plus grand que la proportion de la page : taille
+ * minimale).
+ */
+export interface ScrollTrack {
+  readonly top: number;
+  readonly height: number;
+  readonly slider: number;
+}
+
+/**
+ * Position d'un repère dans la bande, alignée sur la barre de défilement (#162) : le repère d'une
+ * ligne est là où se trouve le milieu du curseur quand cette ligne est au milieu de la vue.
+ * Contenu plus court que la vue (pas de défilement) : position proportionnelle.
+ */
+export function markerY(lineY: number, upper: number, page: number, track: ScrollTrack): number {
+  if (upper <= page || page <= 0) return track.top + (lineY / Math.max(upper, page, 1)) * track.height;
+  const value = Math.min(Math.max(lineY - page / 2, 0), upper - page);
+  return track.top + track.slider / 2 + (value / (upper - page)) * (track.height - track.slider);
+}
+
+/** Inverse de `markerY` : position de défilement qui amène le curseur au point cliqué. */
+export function valueAtMarker(y: number, upper: number, page: number, track: ScrollTrack): number {
+  if (upper <= page) return 0;
+  const free = track.height - track.slider;
+  const f = free <= 0 ? 0 : (y - track.top - track.slider / 2) / free;
+  return Math.min(Math.max(f, 0), 1) * (upper - page);
+}
