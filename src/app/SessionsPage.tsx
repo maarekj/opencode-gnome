@@ -3,6 +3,7 @@ import Adw from 'gi://Adw?version=1';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
+import { bindClasses } from './CssClass.ts';
 import { createComputed, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
 import { esc, fmtCost, fmtRelative } from '../shared/format.ts';
 import { errorMessage } from '../shared/errors.ts';
@@ -74,8 +75,8 @@ function SessionRow({ view, live, actions }: { view: SessionView; live: Accessor
       subtitle={live((v) => esc(metaOf(v)))}
       activatable
       onActivated={act.open}
-      cssClasses={createMemo(() => (live().unread ? ['unread'] : []), { equals: (a, b) => a.length === b.length })}
       $={(self: Adw.ActionRow) => {
+        bindClasses(self, live, (v) => ({ unread: v.unread }));
         attachSessionMenu(self, () => titleOf(live.peek()), act);
       }}
     >

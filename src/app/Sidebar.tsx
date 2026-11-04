@@ -7,6 +7,7 @@ import GObject from 'gi://GObject';
 import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
+import { bindClasses } from './CssClass.ts';
 import { createComputed, createMemo, createState, onCleanup, type Accessor } from 'gnim';
 import { errorMessage } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
@@ -158,9 +159,10 @@ function SessionTreeRow({ item, live, actions }: { item: SessionItem; live: Acce
   return (
     <Gtk.ListBoxRow
       name={`s:${s.id}`}
-      cssClasses={createMemo(() => [...(live().last ? ['session-tree-row', 'last'] : ['session-tree-row']), ...(live().view.unread ? ['unread'] : [])], { equals: (x, y) => x.join() === y.join() })}
+      cssClasses={['session-tree-row']}
       tooltipText={live((i) => (i.view.unread ? `${titleOf(i)}\nRéponse non lue` : titleOf(i)))}
       $={(self: Gtk.ListBoxRow) => {
+        bindClasses(self, live, (i) => ({ last: i.last, unread: i.view.unread }));
         attachContextMenu(self, () => [
           [
             { label: 'Ouvrir dans le terminal', activate: act.openInTerminal },
