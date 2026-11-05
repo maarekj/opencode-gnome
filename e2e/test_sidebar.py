@@ -187,3 +187,16 @@ def test_recherche_de_projet_garde_les_lignes(run_app):
     app.key('Escape')
     app.find('list item', 'alpha')
     app.find('list item', 'béta-projet')
+
+
+def test_page_dechargee_garde_le_brouillon(run_app):
+    # plafond des conversations chargées (#165) : ici 1 ; la page quittée est déchargée, son brouillon gardé
+    _, app = run_app(scenario('demo'), '--session', 'ses_a', env={'OPENCODE_GNOME_MAX_PAGES': '1'})
+    composer = app.composer()
+    composer.text = 'brouillon en cours'
+    wait_until(lambda: composer.text == 'brouillon en cours', 5, 'texte saisi')
+    app.action('open-session', "'ses_b'")
+    assert app.text_visible('Permission en attente')
+    app.action('open-session', "'ses_a'")
+    assert app.text_visible('La connexion échoue après une mise en veille.')
+    wait_until(lambda: app.composer().text == 'brouillon en cours', 5, 'brouillon retrouvé')

@@ -47,6 +47,8 @@ export interface ComposerProps {
   busy: Accessor<boolean>;
   /** texte pré-rempli (fork depuis un message : le message à renvoyer ou modifier) */
   initialText?: string;
+  /** reçoit la lecture du texte en cours (brouillon gardé quand la page est déchargée : #165) */
+  exposeText?: (read: () => string) => void;
   /** Agent, modèle et niveau de raisonnement de la session (présélection). */
   initial: () => Choice;
   /**
@@ -365,6 +367,7 @@ export function Composer(props: ComposerProps): JSX.Element {
     programmatic = false;
   };
   if (props.initialText !== undefined && props.initialText !== '') setText(props.initialText);
+  props.exposeText?.(() => buffer.text);
   const historyEntries = (): string[] => {
     const out: string[] = [];
     for (const t of props.history().toReversed()) if (t !== '' && out.at(-1) !== t) out.push(t);

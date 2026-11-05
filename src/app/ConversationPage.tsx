@@ -77,9 +77,12 @@ export function gitTooltip(g: GitStatus): string {
 export const sessionTag = (sessionID: string): string => `session:${sessionID}`;
 export const subagentTag = (sessionID: string): string => `subagent:${sessionID}`;
 
+const noDraft = (): string => '';
+
 /**
  * Crée la page d'une session. Elle n'est pas détruite en quittant l'écran : son état (prompt en
- * cours, défilement, choix de modèle) est retrouvé au retour. Libérée par `dispose()`.
+ * cours, défilement, choix de modèle) est retrouvé au retour. Libérée par `dispose()` (session
+ * fermée, ou déchargée au-delà du plafond de pages : #165, brouillon seul conservé).
  */
 export function createConversationPage(opts: {
   store: Store;
@@ -204,12 +207,16 @@ export function createConversationPage(opts: {
             return query.endsWith('/') ? [...dirs, ...files] : [...files.slice(0, 15), ...dirs, ...files.slice(15)];
           };
 
+    let readDraft: () => string = noDraft;
     // sous-agent : lecture seule, pas de compositeur (ni chargement des modèles et commandes : #86)
     const composer = child
       ? null
       : Composer({
           busy,
           ...(opts.draft === undefined ? {} : { initialText: opts.draft }),
+          exposeText: (read) => {
+            readDraft = read;
+          },
           initial,
           loadChoices,
           send: (text, choice, payload) => attempt(toast, 'Envoi impossible', () => client.prompt(sessionID, dir(), text, { ...payload, ...choice })),
@@ -436,6 +443,7 @@ export function createConversationPage(opts: {
       page,
       reveal: (messageID, partID) => revealMessage?.(messageID, partID),
       toggleAside: () => aside?.toggle(),
+      draft: () => readDraft(),
       dispose: () => {
         aside?.dispose();
         for (const u of unsubscribeGit) u();
@@ -455,6 +463,8 @@ export interface ConversationPageHandle {
   readonly reveal: (messageID: string, partID?: string) => void;
   /** ouvre / ferme le panneau de la question annexe (Ctrl+Maj+A) */
   readonly toggleAside: () => void;
+  /** texte en cours du prompt */
+  readonly draft: () => string;
   /** libère la page (session fermée ou supprimée) */
   readonly dispose: () => void;
 }

@@ -94,6 +94,8 @@ function makeSidebarResizable(split: Adw.NavigationSplitView, settings: Settings
 }
 
 const TIMING = GLib.getenv('OPENCODE_GNOME_TIMING') !== null;
+/** conversations chargées au plus (#165) ; OPENCODE_GNOME_MAX_PAGES pour les tests */
+const MAX_PAGES = Math.max(1, Number(GLib.getenv('OPENCODE_GNOME_MAX_PAGES') ?? '') || 8);
 
 /** Listes réutilisées tant que leurs éléments sont les mêmes : pas de recalcul en aval (#157). */
 const sameList = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -271,6 +273,24 @@ export function MainWindow({
     if (nav.find_page(sessionTag(sessionID)) !== null) nav.pop_to_tag('sessions');
     nav.remove(handle.page);
     handle.dispose();
+  };
+
+  /** dernière consultation de chaque page chargée (plafond : #165) */
+  const pageSeen = new Map<string, number>();
+  /**
+   * Au-delà de MAX_PAGES conversations chargées, les moins récemment vues sont déchargées (chaque
+   * page gardée alourdit l'affichage : ≈ +3 ms par page à l'ouverture d'une session, #165). Jamais
+   * celle affichée, ni une session qui travaille ou attend une réponse ; le brouillon est gardé.
+   */
+  const evictPages = (shown: string): void => {
+    if (pages.size <= MAX_PAGES) return;
+    const candidates = [...pages.keys()].filter((id) => id !== shown && store.activity(id) === 'idle').toSorted((a, b) => (pageSeen.get(a) ?? 0) - (pageSeen.get(b) ?? 0));
+    for (const id of candidates.slice(0, pages.size - MAX_PAGES)) {
+      const text = pages.get(id)?.draft() ?? '';
+      if (text.trim() !== '') drafts.set(id, { text, from: undefined });
+      disposePage(id);
+      pageSeen.delete(id);
+    }
   };
 
   /** pages des sous-agents, empilées au-dessus de la session parente, libérées une fois retirées */
@@ -484,6 +504,8 @@ export function MainWindow({
         // pas de détachement / rattachement complet à chaque changement de session (#158)
         nav.add(handle.page);
       }
+      pageSeen.set(sessionID, Date.now());
+      evictPages(sessionID);
       if (nav.visiblePage === handle.page) return;
       // pile : liste du projet, puis la session (la page précédente est retirée mais conservée)
       const root = nav.find_page('sessions');
