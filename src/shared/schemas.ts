@@ -4,16 +4,18 @@ import * as z from 'zod/mini';
 
 export const Time = z.looseObject({ created: z.number(), updated: z.optional(z.number()) });
 
-export const Project = z.looseObject({
+// Projets et sessions : modèle OpenCode 2 (src/shared/v2/schemas.ts, #171)
+export type { AppProject as Project, AppSession as Session } from './v2/schemas.ts';
+
+export const ProjectV1 = z.looseObject({
   id: z.string(),
   worktree: z.string(),
   vcs: z.optional(z.string()),
   name: z.optional(z.string()),
   time: z.optional(Time),
 });
-export type Project = z.output<typeof Project>;
 
-export const Session = z.looseObject({
+export const SessionV1 = z.looseObject({
   id: z.string(),
   projectID: z.string(),
   directory: z.string(),
@@ -28,7 +30,6 @@ export const Session = z.looseObject({
   /** présent dans /experimental/session */
   project: z.optional(z.looseObject({ id: z.string(), worktree: z.string() })),
 });
-export type Session = z.output<typeof Session>;
 
 export const SessionStatus = z.looseObject({ type: z.string() }); // idle | busy | retry
 export type SessionStatus = z.output<typeof SessionStatus>;
@@ -245,7 +246,7 @@ export const GlobalEnvelope = z.looseObject({
 /** Événements dont l'app a besoin. Les autres sont ignorés. */
 export const AppEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('server.connected') }),
-  z.object({ type: z.enum(['session.created', 'session.updated']), properties: z.looseObject({ info: Session }) }),
+  z.object({ type: z.enum(['session.created', 'session.updated']), properties: z.looseObject({ info: SessionV1 }) }),
   z.object({ type: z.literal('session.deleted'), properties: z.looseObject({ sessionID: z.string() }) }),
   z.object({ type: z.literal('session.status'), properties: z.looseObject({ sessionID: z.string(), status: SessionStatus }) }),
   z.object({ type: z.literal('session.idle'), properties: z.looseObject({ sessionID: z.string() }) }),
@@ -264,7 +265,7 @@ export const AppEvent = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('session.diff'), properties: z.looseObject({ sessionID: z.string() }) }),
   z.object({ type: z.literal('todo.updated'), properties: z.looseObject({ sessionID: z.string(), todos: z.array(Todo) }) }),
-  z.object({ type: z.literal('project.updated'), properties: Project }),
+  z.object({ type: z.literal('project.updated'), properties: ProjectV1 }),
   z.object({ type: z.literal('message.updated'), properties: z.looseObject({ sessionID: z.string(), info: MessageInfo }) }),
   z.object({ type: z.literal('message.removed'), properties: z.looseObject({ sessionID: z.string(), messageID: z.string() }) }),
   z.object({ type: z.literal('message.part.updated'), properties: z.looseObject({ sessionID: z.string(), part: Part }) }),

@@ -46,6 +46,8 @@ export const Session = z.object({
     archived: z.optional(z.number()),
   }),
   location: z.object({ directory: z.string() }),
+  /** messages annulés à partir de `messageID` (annulation en cours, pas encore validée) */
+  revert: z.optional(z.object({ messageID: z.string() })),
 });
 export type SessionV2 = z.infer<typeof Session>;
 
@@ -66,3 +68,71 @@ export const Message = z.looseObject({
 });
 export type MessageV2 = z.infer<typeof Message>;
 export const Messages = z.object({ data: z.array(Message), cursor: Cursor });
+
+/** Demande de permission en attente (`GET /api/permission/request`). */
+export const PermissionV2 = z.object({
+  id: z.string(),
+  sessionID: z.string(),
+  action: z.string(),
+  resources: z.array(z.string()),
+  save: z.optional(z.array(z.string())),
+  metadata: z.optional(z.record(z.string(), z.unknown())),
+  /** appel d'outil à l'origine de la demande */
+  source: z.optional(z.object({ type: z.string(), messageID: z.string(), id: z.string() })),
+  message: z.optional(z.string()),
+});
+export type PermissionV2 = z.infer<typeof PermissionV2>;
+export const PermissionList = z.object({ data: z.array(PermissionV2) });
+
+/** Formulaire en attente (questions de l'agent, `GET /api/form`). Champs : #173. */
+export const FormV2 = z.looseObject({ id: z.string(), sessionID: z.string(), title: z.string() });
+export type FormV2 = z.infer<typeof FormV2>;
+export const FormList = z.object({ data: z.array(FormV2) });
+
+// ------------------------------------------------------------- modèle de l'application
+
+/** Session de l'application : session v2, dossier à plat, titre toujours présent. */
+export interface AppSession {
+  readonly id: string;
+  readonly projectID: string;
+  readonly directory: string;
+  readonly parentID?: string;
+  readonly title: string;
+  readonly agent?: string;
+  readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string | undefined };
+  readonly cost: number;
+  readonly revert?: { readonly messageID: string };
+  readonly time: { readonly created: number; readonly updated: number; readonly archived?: number };
+}
+
+export function appSession(s: SessionV2): AppSession {
+  return {
+    id: s.id,
+    projectID: s.projectID,
+    directory: s.location.directory,
+    ...(s.parentID === undefined ? {} : { parentID: s.parentID }),
+    title: s.title ?? '',
+    ...(s.agent === undefined ? {} : { agent: s.agent }),
+    ...(s.model === undefined ? {} : { model: s.model }),
+    cost: s.cost,
+    ...(s.revert === undefined ? {} : { revert: s.revert }),
+    time: { created: s.time.created, updated: s.time.updated, ...(s.time.archived === undefined ? {} : { archived: s.time.archived }) },
+  };
+}
+
+/** Projet de l'application : `worktree` = dossier du projet. */
+export interface AppProject {
+  readonly id: string;
+  readonly worktree: string;
+  readonly vcs?: string;
+  readonly name?: string;
+  readonly time: { readonly created: number; readonly updated: number };
+}
+
+export const appProject = (p: ProjectV2): AppProject => ({
+  id: p.id,
+  worktree: p.canonical,
+  ...(p.vcs === undefined ? {} : { vcs: p.vcs }),
+  ...(p.name === undefined ? {} : { name: p.name }),
+  time: { created: p.time.created, updated: p.time.updated },
+});

@@ -3,7 +3,18 @@ import GLib from 'gi://GLib';
 import { createState, type Accessor } from 'gnim';
 import type { OpencodeClient } from './client.ts';
 import { errorMessage } from './errors.ts';
-import type { AppEventEnvelope, Project, Session, SessionEvent } from './schemas.ts';
+import type { Project, Session, SessionEvent } from './schemas.ts';
+import { listenV2 } from './v2/client.ts';
+import * as E from './v2/events.ts';
+import { appProject, Project as ProjectV2 } from './v2/schemas.ts';
+import type * as z from 'zod/mini';
+
+/** Événement v2 d'une session, transmis aux conversations ouvertes (#171). */
+export interface SessionEventV2 {
+  readonly type: string;
+  readonly created: number;
+  readonly data: unknown;
+}
 
 export type Activity = 'idle' | 'busy' | 'retry' | 'question' | 'permission';
 
@@ -48,6 +59,32 @@ const RECENT_MS = 24 * 3600 * 1000;
 export type Connection = { state: 'connecting' } | { state: 'connected'; version: string } | { state: 'error'; message: string };
 
 const GLOBAL = 'global';
+
+/** Demande (permission, formulaire) d'un événement : session, identifiant, posée ou réglée. */
+function requestOf(type: string, data: unknown): { sessionID: string; id: string; asked: boolean } | null {
+  const parse = <S extends z.ZodMiniType>(s: S): z.output<S> | null => {
+    const r = s.safeParse(data);
+    return r.success ? r.data : null;
+  };
+  switch (type) {
+    case 'permission.asked': {
+      const d = parse(E.PermissionAsked);
+      return d === null ? null : { sessionID: d.sessionID, id: d.id, asked: true };
+    }
+    case 'permission.replied': {
+      const d = parse(E.PermissionReplied);
+      return d === null ? null : { sessionID: d.sessionID, id: d.requestID, asked: false };
+    }
+    case 'form.created': {
+      const d = parse(E.FormCreated);
+      return d === null ? null : { sessionID: d.form.sessionID, id: d.form.id, asked: true };
+    }
+    default: {
+      const d = parse(E.FormSettled);
+      return d === null ? null : { sessionID: d.sessionID, id: d.id, asked: false };
+    }
+  }
+}
 const home = GLib.get_home_dir();
 export const prettyPath = (p: string): string => (p === home ? '~' : p.startsWith(`${home}/`) ? `~${p.slice(home.length)}` : p);
 
@@ -126,8 +163,9 @@ export class Store {
   }
 
   start(): void {
-    this.#stop ??= this.client.listen(
-      (e) => this.#onEvent(e),
+    this.#stop ??= listenV2(
+      this.client,
+      (json) => this.#onEvent(json),
       (connected, error) => {
         if (connected) {
           void this.reload();
@@ -135,8 +173,6 @@ export class Store {
           this.#connectedOnce = true;
         } else this.#setConnection({ state: 'error', message: error ?? 'déconnecté' });
       },
-      // messages d'une session sans conversation ouverte : ignorés avant analyse (#160)
-      (_type, sessionID) => !this.#messageListeners.has(sessionID),
     );
   }
 
@@ -186,24 +222,25 @@ export class Store {
   async #loadActivity(sessions: readonly Session[]): Promise<ActivitySnapshot> {
     const since = Date.now() - RECENT_MS;
     const dirs = [...new Set(sessions.filter((s) => (s.time.updated ?? s.time.created) >= since).map((s) => s.directory))];
-    const results = await Promise.all(
-      dirs.map(async (dir) => {
-        try {
-          const [statuses, permissions, questions] = await Promise.all([this.client.statuses(dir), this.client.permissions(dir), this.client.questions(dir)]);
-          return { statuses, permissions, questions };
-        } catch {
-          return null; // répertoire supprimé, instance en erreur… : ignoré
-        }
-      }),
-    );
+    const [statuses, results] = await Promise.all([
+      this.client.statuses().catch(() => ({})),
+      Promise.all(
+        dirs.map(async (dir) => {
+          try {
+            const [permissions, forms] = await Promise.all([this.client.v2.permissions(dir), this.client.v2.forms(dir)]);
+            return { permissions, forms };
+          } catch {
+            return null; // répertoire supprimé, instance en erreur… : ignoré
+          }
+        }),
+      ),
+    ]);
     const snapshot: ActivitySnapshot = { status: new Map(), permissions: new Map(), questions: new Map() };
+    for (const id of Object.keys(statuses)) snapshot.status.set(id, 'busy');
     for (const r of results) {
       if (r === null) continue;
-      for (const [id, st] of Object.entries(r.statuses)) {
-        if (st.type === 'busy' || st.type === 'retry') snapshot.status.set(id, st.type);
-      }
       for (const p of r.permissions) this.#track(snapshot.permissions, p.sessionID, p.id, true);
-      for (const q of r.questions) this.#track(snapshot.questions, q.sessionID, q.id, true);
+      for (const q of r.forms) this.#track(snapshot.questions, q.sessionID, q.id, true);
     }
     return snapshot;
   }
@@ -275,9 +312,18 @@ export class Store {
     };
   }
 
-  #notify(event: SessionEvent): void {
-    for (const fn of this.#messageListeners.get(event.properties.sessionID) ?? []) fn(event);
+  /** Événements v2 d'une session (conversations ouvertes). Retourne la fonction de désabonnement. */
+  onSessionEventsV2(sessionID: string, fn: (e: SessionEventV2) => void): () => void {
+    const set = this.#listenersV2.get(sessionID) ?? new Set();
+    set.add(fn);
+    this.#listenersV2.set(sessionID, set);
+    return () => {
+      set.delete(fn);
+      if (set.size === 0) this.#listenersV2.delete(sessionID);
+    };
   }
+
+  readonly #listenersV2 = new Map<string, Set<(e: SessionEventV2) => void>>();
 
   /** Ajoute ou met à jour une session localement (avant l'événement du serveur). */
   upsertSession(session: Session): void {
@@ -366,85 +412,122 @@ export class Store {
     this.#publish();
   }
 
-  #onEvent({ event }: AppEventEnvelope): void {
+  /** Événement v2 (`GET /api/event`). */
+  #onEvent(json: unknown): void {
+    const env = E.Envelope.safeParse(json);
+    if (!env.success) return;
+    const { type, data } = env.data;
+    const created = env.data.created ?? Date.now();
+    const sid = E.Sid.safeParse(data);
+    const sessionID = sid.success ? sid.data.sessionID : null;
+    // conversations ouvertes : tous les événements de leur session (streaming compris)
+    if (sessionID !== null) for (const fn of this.#listenersV2.get(sessionID) ?? []) fn({ type, created, data });
     this.#inheritedCache = null;
-    switch (event.type) {
-      case 'message.updated':
-      case 'message.removed':
-      case 'message.part.updated':
-      case 'message.part.removed':
-      case 'message.part.delta':
-      case 'session.diff':
-      case 'todo.updated':
-        // haute fréquence (streaming) : uniquement pour les conversations ouvertes
-        this.#notify(event);
-        return;
-      case 'server.connected':
-        return;
-      case 'session.error': {
-        const { sessionID, error } = event.properties;
-        // interruption volontaire : pas une erreur à signaler
-        if (sessionID === undefined || error?.name === 'MessageAbortedError') return;
-        const message = error?.data?.message ?? error?.name ?? 'Erreur';
-        for (const fn of this.#errorListeners) fn(sessionID, message);
-        return;
-      }
+    switch (type) {
       case 'session.created':
-      case 'session.updated':
-        this.#changes?.info.add(event.properties.info.id);
-        if (event.properties.info.parentID === undefined) this.#sessions.set(event.properties.info.id, event.properties.info);
-        else this.#children.set(event.properties.info.id, event.properties.info);
-        break;
+      case 'session.renamed':
+      case 'session.moved':
+      case 'session.archived':
+      case 'session.unarchived':
+      case 'session.forked':
+      case 'session.metadata.updated':
+      case 'session.revert.staged':
+      case 'session.revert.cleared':
+      case 'session.revert.committed':
+        // l'événement ne porte pas la session complète : relue
+        if (sessionID !== null) {
+          this.#changes?.info.add(sessionID);
+          this.#refetch(sessionID);
+        }
+        return;
       case 'session.deleted':
-        for (const c of this.#children.values()) if (c.parentID === event.properties.sessionID) this.#children.delete(c.id);
-        this.#changes?.info.add(event.properties.sessionID);
-        this.#changes?.activity.add(event.properties.sessionID);
-        this.#sessions.delete(event.properties.sessionID);
-        this.#children.delete(event.properties.sessionID);
-        this.#status.delete(event.properties.sessionID);
-        this.#permissions.delete(event.properties.sessionID);
-        this.#questions.delete(event.properties.sessionID);
+        if (sessionID !== null) this.#forget(sessionID);
         break;
-      case 'session.status': {
-        const { sessionID, status } = event.properties;
+      case 'session.execution.started':
+        if (sessionID === null) return;
         this.#changes?.activity.add(sessionID);
-        if (status.type === 'busy' || status.type === 'retry') this.#status.set(sessionID, status.type);
-        else this.#status.delete(sessionID);
+        this.#status.set(sessionID, 'busy');
+        this.#touch(sessionID, created);
+        break;
+      case 'session.retry.scheduled':
+        if (sessionID === null) return;
+        this.#changes?.activity.add(sessionID);
+        this.#status.set(sessionID, 'retry');
+        break;
+      case 'session.execution.failed':
+      case 'session.execution.succeeded':
+      case 'session.execution.interrupted': {
+        if (sessionID === null) return;
+        this.#changes?.activity.add(sessionID);
+        this.#status.delete(sessionID);
+        this.#permissions.delete(sessionID);
+        this.#questions.delete(sessionID);
+        this.#touch(sessionID, created);
+        const failed = type === 'session.execution.failed' ? E.ExecutionFailed.safeParse(data) : null;
+        if (failed?.success === true) for (const fn of this.#errorListeners) fn(sessionID, failed.data.error.message);
         break;
       }
-      case 'session.idle':
-        this.#changes?.activity.add(event.properties.sessionID);
-        this.#status.delete(event.properties.sessionID);
-        this.#permissions.delete(event.properties.sessionID);
-        this.#questions.delete(event.properties.sessionID);
-        break;
-      case 'question.asked':
-      case 'question.v2.asked':
-      case 'question.replied':
-      case 'question.v2.replied':
-      case 'question.rejected':
-      case 'question.v2.rejected':
       case 'permission.asked':
-      case 'permission.v2.asked':
       case 'permission.replied':
-      case 'permission.v2.replied': {
-        this.#notify(event);
-        this.#changes?.activity.add(event.properties.sessionID);
-        const asked = event.type.endsWith('asked');
-        // demande : `id` ; réponse : `requestID`
-        const raw: unknown = asked ? event.properties['id'] : event.properties['requestID'];
-        const map = event.type.startsWith('question') ? this.#questions : this.#permissions;
-        this.#track(map, event.properties.sessionID, typeof raw === 'string' ? raw : undefined, asked);
-        if (asked) this.#discover(event.properties.sessionID);
+      case 'form.created':
+      case 'form.replied':
+      case 'form.cancelled': {
+        const r = requestOf(type, data);
+        if (r === null) return;
+        // la conversation d'une demande de sous-agent écoute aussi la session de la demande
+        if (sessionID === null) for (const fn of this.#listenersV2.get(r.sessionID) ?? []) fn({ type, created, data });
+        this.#changes?.activity.add(r.sessionID);
+        this.#track(type.startsWith('form') ? this.#questions : this.#permissions, r.sessionID, r.id, r.asked);
+        if (r.asked) this.#discover(r.sessionID);
         break;
       }
-      case 'project.updated':
-        this.#projects.set(event.properties.id, event.properties);
+      case 'project.updated': {
+        const p = ProjectV2.safeParse(data);
+        if (!p.success) return;
+        this.#projects.set(p.data.id, appProject(p.data));
         break;
+      }
       default:
         return;
     }
     this.#publishSoon();
+  }
+
+  /** Activité récente : la session remonte en tête de son projet. */
+  #touch(sessionID: string, at: number): void {
+    const s = this.#sessions.get(sessionID) ?? this.#children.get(sessionID);
+    if (s === undefined || s.time.updated >= at) return;
+    const next = { ...s, time: { ...s.time, updated: at } };
+    if (s.parentID === undefined) this.#sessions.set(sessionID, next);
+    else this.#children.set(sessionID, next);
+  }
+
+  #forget(sessionID: string): void {
+    for (const c of this.#children.values()) if (c.parentID === sessionID) this.#children.delete(c.id);
+    this.#changes?.info.add(sessionID);
+    this.#changes?.activity.add(sessionID);
+    this.#sessions.delete(sessionID);
+    this.#children.delete(sessionID);
+    this.#status.delete(sessionID);
+    this.#permissions.delete(sessionID);
+    this.#questions.delete(sessionID);
+  }
+
+  /** Relit une session (créée, renommée, archivée…) ; archivée : retirée des projets. */
+  #refetch(sessionID: string): void {
+    this.client
+      .session(sessionID)
+      .then((s) => {
+        if (s.time.archived !== undefined) this.#forget(s.id);
+        else if (s.parentID === undefined) this.#sessions.set(s.id, s);
+        else this.#children.set(s.id, s);
+        this.#inheritedCache = null;
+        this.#publishSoon();
+        return null;
+      })
+      .catch((e: unknown) => {
+        console.error(e);
+      });
   }
 
   /** Regroupe les mises à jour rapprochées (le streaming émet beaucoup d'événements). */

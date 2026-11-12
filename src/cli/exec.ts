@@ -115,7 +115,7 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
     if (!exists && task.session.pinned === true) return fail('error', `session ${task.session.id} introuvable (supprimée ?)`);
     sessionID = exists ? task.session.id : '';
     if (exists) {
-      const statuses = await client.statuses(dir).catch(() => ({}));
+      const statuses = await client.statuses().catch(() => ({}));
       const st: unknown = Reflect.get(statuses, sessionID);
       if (typeof st === 'object' && st !== null && 'type' in st && st.type !== 'idle') {
         return fail('skipped', 'la session est occupée : run sauté (relance-le quand elle est libre)', { session: sessionID });
@@ -227,7 +227,7 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
     // filet : la session n'est plus active alors que le prompt est parti
     if (sent && Date.now() - base.start > POLL_MS) {
       // oxlint-disable-next-line no-await-in-loop
-      const statuses = await client.statuses(dir).catch(() => null);
+      const statuses = await client.statuses().catch(() => null);
       if (statuses !== null && statuses[sessionID] === undefined && (sawBusy || assistants.size > 0)) break;
     }
   }

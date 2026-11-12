@@ -5,7 +5,9 @@ import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
 import { serverPassword } from './server.ts';
-import { type McpConfig, Agent, AppEvent, type Attachment, Command, FileDiff, type Mention, SharedSession, GlobalEnvelope, Health, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, Project, Session, SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { type McpConfig, Agent, AppEvent, type Attachment, Command, FileDiff, type Mention, SharedSession, GlobalEnvelope, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { OpencodeV2 } from './v2/client.ts';
+import { appProject, appSession } from './v2/schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
 Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
@@ -157,22 +159,40 @@ export class OpencodeClient {
 
   // ------------------------------------------------------------------ API
 
-  health(): Promise<Health> {
-    return this.get('/global/health', Health);
+  /** API d'OpenCode 2 (#169) sur le même transport. */
+  get v2(): OpencodeV2 {
+    this.#v2 ??= new OpencodeV2(this);
+    return this.#v2;
+  }
+  #v2: OpencodeV2 | null = null;
+
+  /** Version du serveur. */
+  async health(): Promise<{ version: string }> {
+    return { version: (await this.v2.info()).version };
   }
 
-  projects(): Promise<Project[]> {
-    return this.get('/project', z.array(Project));
+  async projects(): Promise<Project[]> {
+    return (await this.v2.projects()).map((p) => appProject(p));
   }
 
   /** Sessions racines (sans les sous-agents) de tous les projets, les plus récentes d'abord. */
-  sessions(limit = 500): Promise<Session[]> {
-    return this.get('/experimental/session', z.array(Session), { roots: true, limit });
+  async sessions(limit = 500): Promise<Session[]> {
+    const out: Session[] = [];
+    let cursor: string | undefined;
+    // pages de 200 au plus ; une page vide termine (le serveur peut annoncer une suite vide)
+    for (;;) {
+      // oxlint-disable-next-line no-await-in-loop -- pages successives (curseur)
+      const page = await this.v2.sessions({ roots: true, limit: Math.min(200, limit - out.length), ...(cursor === undefined ? {} : { cursor }) });
+      out.push(...page.items.map((x) => appSession(x)));
+      if (page.next === null || page.items.length === 0 || out.length >= limit) return out;
+      cursor = page.next;
+    }
   }
 
-  /** Statut des sessions actives (les sessions absentes sont au repos). */
-  statuses(directory?: string): Promise<Record<string, SessionStatus>> {
-    return this.get('/session/status', z.record(z.string(), SessionStatus), directory === undefined ? {} : { directory });
+  /** Sessions en cours d'exécution (les sessions absentes sont au repos), tous dossiers. */
+  async statuses(): Promise<Record<string, SessionStatus>> {
+    const active = await this.v2.active();
+    return Object.fromEntries(Object.keys(active).map((id) => [id, { type: 'busy' }]));
   }
 
   /** Derniers messages d'une session (ordre chronologique). */
@@ -215,33 +235,27 @@ export class OpencodeClient {
     return this.get(`/session/${encodeURIComponent(sessionID)}/todo`, z.array(Todo), { directory });
   }
 
-  session(sessionID: string): Promise<Session> {
-    return this.get(`/session/${encodeURIComponent(sessionID)}`, Session);
+  async session(sessionID: string): Promise<Session> {
+    return appSession(await this.v2.session(sessionID));
   }
 
   /** Nouvelle session ; `allowAll` : aucune demande de permission (tâches planifiées). */
-  createSession(directory: string, opts: { title?: string; allowAll?: boolean } = {}): Promise<Session> {
-    const body = {
-      ...(opts.title === undefined ? {} : { title: opts.title }),
-      ...(opts.allowAll === true ? { permission: [{ permission: '*', pattern: '*', action: 'allow' }] } : {}),
-    };
-    return this.request('POST', '/session', Session, { query: { directory }, body });
+  async createSession(directory: string, opts: { title?: string; allowAll?: boolean } = {}): Promise<Session> {
+    return appSession(await this.v2.createSession({ location: { directory }, ...(opts.title === undefined ? {} : { title: opts.title }), ...(opts.allowAll === true ? { permissions: [{ action: '*', resource: '*', effect: 'allow' }] } : {}) }));
   }
 
-  renameSession(sessionID: string, directory: string, title: string): Promise<Session> {
-    return this.request('PATCH', `/session/${encodeURIComponent(sessionID)}`, Session, { query: { directory }, body: { title } });
+  async renameSession(sessionID: string, _directory: string, title: string): Promise<Session> {
+    await this.v2.updateSession({ sessionID, title });
+    return this.session(sessionID);
   }
 
-  /** Copie une session (entière, ou jusqu'à `messageID`) dans une nouvelle session. */
-  forkSession(sessionID: string, directory: string, messageID?: string): Promise<Session> {
-    return this.request('POST', `/session/${encodeURIComponent(sessionID)}/fork`, Session, {
-      query: { directory },
-      body: messageID === undefined ? {} : { messageID },
-    });
+  /** Copie une session (entière, ou jusqu'à `messageID` exclu) dans une nouvelle session. */
+  async forkSession(sessionID: string, _directory: string, messageID?: string): Promise<Session> {
+    return appSession(await this.v2.forkSession({ sessionID, ...(messageID === undefined ? {} : { before: messageID }) }));
   }
 
-  async deleteSession(sessionID: string, directory: string): Promise<void> {
-    await this.request('DELETE', `/session/${encodeURIComponent(sessionID)}`, z.unknown(), { query: { directory } });
+  async deleteSession(sessionID: string, _directory: string): Promise<void> {
+    await this.v2.removeSession({ sessionID });
   }
 
   /** Envoie un prompt sans attendre la réponse (elle arrive par le flux d'événements). */

@@ -10,6 +10,8 @@ type Data<T extends V2Event['type']> = Extract<V2Event, { type: T }>['data'];
 /** Enveloppe d'un événement de `GET /api/event`. */
 export const Envelope = z.object({
   type: z.string(),
+  /** horodatage (ms) ; absent de `server.connected` */
+  created: z.optional(z.number()),
   location: z.optional(z.object({ directory: z.optional(z.string()) })),
   data: z.optional(z.unknown()),
 });
