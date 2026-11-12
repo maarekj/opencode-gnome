@@ -5,11 +5,11 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createRoot, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
-import { stripImageMarkers, type Block, type Conversation, type TurnInfo } from '../shared/conversation.ts';
+import { stripImageMarkers, type Block, type Conversation, type Item, type ToolCall, type TurnInfo } from '../shared/conversation.ts';
 import type { Activity } from '../shared/store.ts';
 import { AttachmentView } from './Attachments.tsx';
 import { esc, fmtDuration, fmtFullDate, fmtStamp } from '../shared/format.ts';
-import type { Part, PermissionRequest, QuestionRequest, ToolState } from '../shared/schemas.ts';
+import type { PermissionRequest, QuestionRequest } from '../shared/schemas.ts';
 import { readInfo, type ReadInfo } from '../shared/toolread.ts';
 import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
@@ -83,7 +83,7 @@ interface FlowContext {
  * Appel d'outil toujours affiché, même quand les outils sont masqués : erreur, ou question
  * (dialogue avec l'utilisateur plutôt qu'outillage).
  */
-const alwaysShown = (p: Part): boolean => p.state?.status === 'error' || p.tool === 'question';
+const alwaysShown = (t: ToolCall): boolean => t.status === 'error' || t.name === 'question';
 
 const pendingList = (c: Conversation): Pending[] => [
   ...c.permissions().map((request): Pending => ({ kind: 'permission', request })),
@@ -98,9 +98,8 @@ const pendingList = (c: Conversation): Pending[] => [
 function toolCommand(conversation: Conversation, callID: string | undefined): string | undefined {
   if (callID === undefined) return undefined;
   for (const b of conversation.blocks.peek()) {
-    if (b.kind === 'turn') continue;
-    const part = b.part.peek();
-    if (part.callID === callID) return field(part.state?.input, 'command');
+    const item = b.item.peek();
+    if (item.kind === 'tool' && item.tool.callID === callID) return field(item.tool.input, 'command');
   }
   return undefined;
 }
@@ -135,10 +134,10 @@ const field = (v: unknown, key: string): string | undefined => {
 };
 
 /** Résumé d'un appel d'outil sur une ligne. */
-function toolSummary(tool: string, state: ToolState | undefined): string {
-  const input = state?.input;
-  const fromInput = field(input, 'command') ?? field(input, 'filePath') ?? field(input, 'pattern') ?? field(input, 'url') ?? field(input, 'description');
-  const full = state?.title ?? fromInput ?? tool;
+function toolSummary(t: ToolCall): string {
+  const input = t.input;
+  const fromInput = field(input, 'command') ?? field(input, 'path') ?? field(input, 'pattern') ?? field(input, 'url') ?? field(input, 'query') ?? field(input, 'description');
+  const full = fromInput ?? t.name;
   const lines = full.trim().split('\n');
   return lines.length > 1 ? `${lines[0] ?? ''} …` : full;
 }
@@ -158,7 +157,7 @@ function Code({ text, css = [] }: { text: string; css?: string[] }): JSX.Element
 
 function StatusIcon({ status }: { status: string }): JSX.Element {
   switch (status) {
-    case 'pending':
+    case 'streaming':
     case 'running':
       return <Adw.Spinner />;
     case 'error':
@@ -179,12 +178,11 @@ function ScrolledOutput(text: string, css: string[]): Gtk.Widget {
   return box;
 }
 
-function ToolDetails({ part }: { part: Part }): JSX.Element {
-  const state = part.state;
-  const input = state?.input;
+function ToolDetails({ tool }: { tool: ToolCall }): JSX.Element {
+  const input = tool.input;
   const command = field(input, 'command');
-  const output = asText(state?.output);
-  const error = asText(state?.error);
+  const output = tool.output;
+  const error = tool.error ?? '';
   return (
     <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={6} marginTop={6} marginStart={28}>
       {command === undefined ? (
@@ -200,10 +198,10 @@ function ToolDetails({ part }: { part: Part }): JSX.Element {
 }
 
 /** Appel `todowrite` / `todoread` : une ligne « Liste de tâches mise à jour · 3/7 », les tâches en détail. */
-function TodoToolLine({ part: p, open }: { part: Part; open: Unfold }): JSX.Element {
-  const todos = todosOfCall(p.state?.input, p.state?.metadata);
-  if (todos === null || p.state?.status === 'error') return <ToolLine part={p} open={open} generic />;
-  const label = p.tool === 'todoread' ? 'Liste de tâches consultée' : 'Liste de tâches mise à jour';
+function TodoToolLine({ tool: p, open }: { tool: ToolCall; open: Unfold }): JSX.Element {
+  const todos = todosOfCall(p.input, p.metadata);
+  if (todos === null || p.status === 'error') return <ToolLine tool={p} open={open} generic />;
+  const label = p.name === 'todoread' ? 'Liste de tâches consultée' : 'Liste de tâches mise à jour';
   return (
     <Gtk.Expander
       expanded={open.value}
@@ -212,7 +210,7 @@ function TodoToolLine({ part: p, open }: { part: Part; open: Unfold }): JSX.Elem
       }}
     >
       <Gtk.Box $type="label" spacing={8}>
-        <StatusIcon status={p.state?.status ?? 'pending'} />
+        <StatusIcon status={p.status} />
         <Gtk.Label label={label} cssClasses={['heading']} />
         <Gtk.Label label={todoSummary(todos)} ellipsize={Pango.EllipsizeMode.END} xalign={0} hexpand cssClasses={['dim-label']} />
       </Gtk.Box>
@@ -226,11 +224,11 @@ function TodoToolLine({ part: p, open }: { part: Part; open: Unfold }): JSX.Elem
 const prefix = (sign: string, s: string): string[] => (s === '' ? [] : s.replace(/\n$/u, '').split('\n').map((l) => sign + l));
 
 /** Diff d'un appel `edit` / `write` : celui calculé par opencode, sinon reconstitué depuis l'entrée. */
-function editPatch(p: Part): string | null {
-  const input = p.state?.input;
-  const diff = field(p.state?.metadata, 'diff');
+function editPatch(p: ToolCall): string | null {
+  const input = p.input;
+  const diff = field(p.metadata, 'diff');
   if (diff !== undefined && diff.includes('@@')) return diff;
-  if (p.tool === 'write') {
+  if (p.name === 'write') {
     const lines = prefix('+', field(input, 'content') ?? '');
     return lines.length === 0 ? null : [`@@ -0,0 +1,${lines.length} @@`, ...lines].join('\n');
   }
@@ -255,8 +253,8 @@ function diffStat(patch: string): { add: string; del: string } {
  * Appel `edit` / `write` : chemin, décompte des lignes ajoutées / retirées et bouton pour ouvrir le
  * fichier ; déplié, le diff coloré (comme la fenêtre des fichiers modifiés), construit à la demande.
  */
-function EditToolLine({ part: p, patch, open }: { part: Part; patch: string; open: Unfold }): JSX.Element {
-  const filePath = field(p.state?.input, 'filePath') ?? '';
+function EditToolLine({ tool: p, patch, open }: { tool: ToolCall; patch: string; open: Unfold }): JSX.Element {
+  const filePath = field(p.input, 'path') ?? field(p.input, 'filePath') ?? '';
   const stat = diffStat(patch);
   const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, marginTop: 6, marginStart: 28, cssClasses: ['diff-frame'], overflow: Gtk.Overflow.HIDDEN });
   let built = false;
@@ -278,9 +276,9 @@ function EditToolLine({ part: p, patch, open }: { part: Part; patch: string; ope
       }}
     >
       <Gtk.Box $type="label" spacing={8}>
-        <StatusIcon status={p.state?.status ?? 'pending'} />
-        <Gtk.Label label={p.tool ?? 'edit'} cssClasses={['heading']} />
-        <Gtk.Label label={toolSummary(p.tool ?? '', p.state)} ellipsize={Pango.EllipsizeMode.MIDDLE} xalign={0} cssClasses={['dim-label', 'monospace']} />
+        <StatusIcon status={p.status} />
+        <Gtk.Label label={p.name} cssClasses={['heading']} />
+        <Gtk.Label label={toolSummary(p)} ellipsize={Pango.EllipsizeMode.MIDDLE} xalign={0} cssClasses={['dim-label', 'monospace']} />
         <Gtk.Label label={stat.add} visible={stat.add !== ''} cssClasses={['caption', 'diff-stat', 'success']} />
         <Gtk.Label label={stat.del} visible={stat.del !== ''} cssClasses={['caption', 'diff-stat', 'error']} />
         <Gtk.Box hexpand />
@@ -302,13 +300,13 @@ function EditToolLine({ part: p, patch, open }: { part: Part; patch: string; ope
  * Appel `read` : chemin, plage lue et bouton pour ouvrir le fichier ; déplié, le contenu lu avec
  * ses numéros de ligne, construit à la demande.
  */
-function ReadToolLine({ part: p, info, open }: { part: Part; info: ReadInfo; open: Unfold }): JSX.Element {
+function ReadToolLine({ tool: p, info, open }: { tool: ToolCall; info: ReadInfo; open: Unfold }): JSX.Element {
   const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, marginTop: 6, marginStart: 28 });
   let built = false;
   const build = (): void => {
     if (built) return;
     built = true;
-    const text = info.text === '' ? asText(p.state?.output) : info.text;
+    const text = info.text === '' ? p.output : info.text;
     body.append(new Gtk.Label({ label: truncate(text), xalign: 0, selectable: true, wrap: true, wrapMode: Pango.WrapMode.CHAR, cssClasses: ['monospace', 'tool-output'] }));
   };
   if (open.value) build();
@@ -321,9 +319,9 @@ function ReadToolLine({ part: p, info, open }: { part: Part; info: ReadInfo; ope
       }}
     >
       <Gtk.Box $type="label" spacing={8}>
-        <StatusIcon status={p.state?.status ?? 'pending'} />
+        <StatusIcon status={p.status} />
         <Gtk.Label label="read" cssClasses={['heading']} />
-        <Gtk.Label label={toolSummary('read', p.state)} ellipsize={Pango.EllipsizeMode.MIDDLE} xalign={0} cssClasses={['dim-label', 'monospace']} />
+        <Gtk.Label label={toolSummary(p)} ellipsize={Pango.EllipsizeMode.MIDDLE} xalign={0} cssClasses={['dim-label', 'monospace']} />
         <Gtk.Label label={info.range} visible={info.range !== ''} cssClasses={['caption', 'dim-label']} />
         <Gtk.Box hexpand />
         <Gtk.Button
@@ -347,17 +345,17 @@ interface Unfold {
   value: boolean;
 }
 
-function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold; generic?: boolean }): JSX.Element {
-  if (!generic && (p.tool === 'todowrite' || p.tool === 'todoread')) return <TodoToolLine part={p} open={open} />;
-  if (!generic && (p.tool === 'edit' || p.tool === 'write') && p.state?.status !== 'error') {
+function ToolLine({ tool: p, open, generic = false }: { tool: ToolCall; open: Unfold; generic?: boolean }): JSX.Element {
+  if (!generic && (p.name === 'todowrite' || p.name === 'todoread')) return <TodoToolLine tool={p} open={open} />;
+  if (!generic && (p.name === 'edit' || p.name === 'write') && p.status !== 'error') {
     const patch = editPatch(p);
-    if (patch !== null) return <EditToolLine part={p} patch={patch} open={open} />;
+    if (patch !== null) return <EditToolLine tool={p} patch={patch} open={open} />;
   }
-  if (!generic && p.tool === 'read' && p.state?.status !== 'error') {
-    const info = readInfo(p.state);
-    if (info !== null) return <ReadToolLine part={p} info={info} open={open} />;
+  if (!generic && p.name === 'read' && p.status !== 'error') {
+    const info = readInfo(p);
+    if (info !== null) return <ReadToolLine tool={p} info={info} open={open} />;
   }
-  const waiting = p.tool === 'question' && (p.state?.status === 'running' || p.state?.status === 'pending');
+  const waiting = p.name === 'question' && (p.status === 'running' || p.status === 'streaming');
   // détails (entrée, commande, sortie) construits au dépliage : la plupart des outils restent
   // repliés, et leur sortie peut être longue (#158)
   const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
@@ -365,7 +363,7 @@ function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold
   const build = (): void => {
     if (built) return;
     built = true;
-    const details = ToolDetails({ part: p });
+    const details = ToolDetails({ tool: p });
     if (details instanceof Gtk.Widget) body.append(details);
   };
   if (open.value) build();
@@ -378,10 +376,10 @@ function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold
       }}
     >
       <Gtk.Box $type="label" spacing={8}>
-        <StatusIcon status={p.state?.status ?? 'pending'} />
-        <Gtk.Label label={waiting ? 'question' : (p.tool ?? 'outil')} cssClasses={['heading']} />
+        <StatusIcon status={p.status} />
+        <Gtk.Label label={waiting ? 'question' : p.name === '' ? 'outil' : p.name} cssClasses={['heading']} />
         <Gtk.Label
-          label={waiting ? 'en attente de réponse…' : toolSummary(p.tool ?? '', p.state)}
+          label={waiting ? 'en attente de réponse…' : toolSummary(p)}
           ellipsize={Pango.EllipsizeMode.END}
           xalign={0}
           hexpand
@@ -393,34 +391,41 @@ function ToolLine({ part: p, open, generic = false }: { part: Part; open: Unfold
   );
 }
 
-/** Rapport final d'un sous-agent, sans l'enveloppe `<task …><task_result>`. */
-const taskReport = (output: unknown): string => {
-  const raw = asText(output);
-  const m = /<task_result>\n?([\s\S]*?)\n?<\/task_result>/u.exec(raw);
-  return (m?.[1] ?? raw).trim();
+/** Rapport final d'un sous-agent, sans l'enveloppe `<task …><task_result>` (v1). */
+const taskReport = (output: string): string => {
+  const m = /<task_result>\n?([\s\S]*?)\n?<\/task_result>/u.exec(output);
+  return (m?.[1] ?? output).trim();
 };
+
+/** Délégation à un sous-agent : outil `subagent` (v2), `task` (v1). */
+const isSubagent = (name: string): boolean => name === 'subagent' || name === 'task';
+
+/** Session du sous-agent d'un appel (métadonnées de l'appel, ou session reprise donnée en entrée). */
+const childSession = (t: ToolCall): string | null => field(t.metadata, 'sessionID') ?? field(t.metadata, 'sessionId') ?? field(t.input, 'sessionID') ?? null;
 
 const SUBAGENT_WAITING: Partial<Record<Activity, string>> = { permission: 'Permission demandée', question: 'Question en attente' };
 
+const running = (st: ToolCall['status']): boolean => st === 'streaming' || st === 'running';
+
 /**
- * Délégation à un sous-agent (outil `task`) : carte toujours visible, avec l'avancement en direct
- * (outils appelés, outil en cours), les demandes en attente du sous-agent et son rapport final.
- * Un clic ouvre la conversation du sous-agent.
+ * Délégation à un sous-agent : carte toujours visible, avec l'avancement en direct (outils
+ * appelés, outil en cours), les demandes en attente du sous-agent et son rapport final. Un clic
+ * ouvre la conversation du sous-agent.
  */
-function SubagentCard({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): JSX.Element {
-  const childID = part((p) => field(p.state?.metadata, 'sessionId') ?? null);
-  const status = part((p) => p.state?.status ?? 'pending');
-  const running = status((st) => st === 'pending' || st === 'running');
+function SubagentCard({ tool, ctx }: { tool: Accessor<ToolCall>; ctx: FlowContext }): JSX.Element {
+  const childID = tool(childSession);
+  const status = tool((t) => t.status);
+  const busy = status(running);
   // suivi en direct de la session du sous-agent, dès qu'il travaille et tant que la carte existe
   // (les sous-agents déjà terminés au chargement ne sont pas suivis : pas de décompte d'outils)
   const [tracker, setTracker] = createState<Conversation | null>(null);
   const follow = (): void => {
     const id = childID.peek();
-    if (tracker.peek() !== null || id === null || ctx.subagents === undefined || !running.peek()) return;
+    if (tracker.peek() !== null || id === null || ctx.subagents === undefined || !busy.peek()) return;
     setTracker(ctx.subagents.track(id));
   };
   follow();
-  const unsubscribe = [childID.subscribe(follow), running.subscribe(follow)];
+  const unsubscribe = [childID.subscribe(follow), busy.subscribe(follow)];
   onCleanup(() => {
     for (const u of unsubscribe) u();
     tracker.peek()?.dispose();
@@ -432,25 +437,26 @@ function SubagentCard({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext })
     return ctx.subagents.activity(id);
   });
   const progress = createComputed((): string => {
-    const p = part();
-    const st = p.state?.status ?? 'pending';
+    const t = tool();
     const c = tracker();
-    const tools = c === null ? [] : c.blocks().filter((b) => b.kind === 'tool').map((b) => b.part());
+    const tools = c === null ? [] : c.blocks().flatMap((b) => {
+      const i = b.item();
+      return i.kind === 'tool' ? [i.tool] : [];
+    });
     const count = tools.length === 0 ? '' : `${tools.length} outil${tools.length > 1 ? 's' : ''}`;
-    if (st === 'pending' || st === 'running') {
-      const current = tools.findLast((t) => t.state?.status === 'running' || t.state?.status === 'pending');
-      const now = current === undefined ? 'en cours…' : `${current.tool ?? 'outil'} · ${toolSummary(current.tool ?? '', current.state)}`;
+    if (running(t.status)) {
+      const current = tools.findLast((x) => running(x.status));
+      const now = current === undefined ? 'en cours…' : `${current.name} · ${toolSummary(current)}`;
       return count === '' ? now : `${count} · ${now}`;
     }
-    const { start, end } = p.state?.time ?? {};
-    const took = start === undefined || end === undefined ? '' : fmtDuration(end - start);
-    const verdict = st === 'error' ? 'Échec' : 'Terminé';
+    const took = t.time.end === undefined ? '' : fmtDuration(t.time.end - t.time.start);
+    const verdict = t.status === 'error' ? 'Échec' : 'Terminé';
     return [took === '' ? verdict : `${verdict} en ${took}`, count].filter((x) => x !== '').join(' · ');
   });
-  const report = part((p) => (p.state?.status === 'completed' ? taskReport(p.state.output) : ''));
-  const error = part((p) => (p.state?.status === 'error' ? asText(p.state.error) : ''));
-  const p0 = part.peek();
-  const agent = field(p0.state?.input, 'subagent_type') ?? 'sous-agent';
+  const report = tool((t) => (t.status === 'completed' ? taskReport(t.output) : ''));
+  const error = tool((t) => (t.status === 'error' ? (t.error ?? '') : ''));
+  const t0 = tool.peek();
+  const agent = field(t0.input, 'agent') ?? field(t0.input, 'subagent_type') ?? 'sous-agent';
   return (
     <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['card', 'subagent-card']}>
       <Gtk.Button
@@ -463,7 +469,7 @@ function SubagentCard({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext })
         }}
       >
         <Gtk.Box spacing={10}>
-          <Gtk.Stack visibleChildName={status((st) => (st === 'pending' || st === 'running' ? 'run' : st === 'error' ? 'error' : 'done'))} valign={Gtk.Align.CENTER}>
+          <Gtk.Stack visibleChildName={status((st) => (running(st) ? 'run' : st === 'error' ? 'error' : 'done'))} valign={Gtk.Align.CENTER}>
             <Adw.Spinner $type="named" name="run" />
             <Gtk.Image $type="named" name="error" iconName="dialog-error-symbolic" cssClasses={['error']} />
             <Gtk.Image $type="named" name="done" iconName="object-select-symbolic" cssClasses={['dim-label']} />
@@ -471,13 +477,7 @@ function SubagentCard({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext })
           <Gtk.Box orientation={Gtk.Orientation.VERTICAL} hexpand spacing={2}>
             <Gtk.Box spacing={8}>
               <Gtk.Label label={`@${agent}`} cssClasses={['heading', 'accent']} />
-              <Gtk.Label
-                label={part((pp) => field(pp.state?.input, 'description') ?? pp.state?.title ?? '')}
-                ellipsize={Pango.EllipsizeMode.END}
-                xalign={0}
-                hexpand
-                cssClasses={['heading']}
-              />
+              <Gtk.Label label={tool((t) => field(t.input, 'description') ?? '')} ellipsize={Pango.EllipsizeMode.END} xalign={0} hexpand cssClasses={['heading']} />
             </Gtk.Box>
             <Gtk.Label label={progress} ellipsize={Pango.EllipsizeMode.END} xalign={0} cssClasses={['dim-label', 'caption']} />
           </Gtk.Box>
@@ -504,31 +504,30 @@ function SubagentCard({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext })
  * Appel d'outil. Si une permission ou une question attend une réponse pour cet appel, la carte
  * correspondante est affichée à sa place, dans le flux. Une question répondue devient un rappel replié.
  */
-function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): JSX.Element {
+function ToolBlock({ tool, ctx }: { tool: Accessor<ToolCall>; ctx: FlowContext }): JSX.Element {
   const pending = createMemo(
     (): Pending | null => {
-      const callID = part().callID;
-      if (callID === undefined) return null;
+      const callID = tool().callID;
       return pendingList(ctx.conversation).find((p) => p.request.tool?.callID === callID) ?? null;
     },
     // la carte n'est reconstruite que si la demande change (conserve les choix en cours)
     { equals: (a, b) => a?.request.id === b?.request.id },
   );
-  // sous-agent : carte dédiée, toujours visible (le nom de l'outil ne change pas) ; une permission
-  // demandée pour l'appel lui-même (`permission.task: ask`) s'affiche au-dessus
-  if (part.peek().tool === 'task') {
+  // sous-agent : carte dédiée, toujours visible ; une permission demandée pour l'appel lui-même
+  // s'affiche au-dessus
+  if (isSubagent(tool.peek().name)) {
     return (
       <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={8}>
         <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
           <With value={pending}>{(pd: Pending | null) => (pd === null ? <Gtk.Box /> : RequestCard({ pending: pd, ctx }))}</With>
         </Gtk.Box>
-        <SubagentCard part={part} ctx={ctx} />
+        <SubagentCard tool={tool} ctx={ctx} />
       </Gtk.Box>
     );
   }
   const open: Unfold = { value: false };
   // masqué par la bascule, sauf demande en attente, erreur ou question
-  const visible = createComputed(() => ctx.showTools() || pending() !== null || alwaysShown(part()));
+  const visible = createComputed(() => ctx.showTools() || pending() !== null || alwaysShown(tool()));
   return (
     <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['tool-call']} visible={visible}>
       <With value={pending}>
@@ -536,11 +535,7 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
           pd === null ? (
             // Box intermédiaire : gnim ne gère pas les Fragments imbriqués (With dans With)
             <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
-              <With value={part}>
-                {(p: Part) =>
-                  p.tool === 'question' && (p.state?.status === 'completed' || p.state?.status === 'error') ? <AnsweredQuestions part={p} /> : <ToolLine part={p} open={open} />
-                }
-              </With>
+              <With value={tool}>{(t: ToolCall) => (t.name === 'question' && (t.status === 'completed' || t.status === 'error') ? <AnsweredQuestions tool={t} /> : <ToolLine tool={t} open={open} />)}</With>
             </Gtk.Box>
           ) : (
             RequestCard({ pending: pd, ctx })
@@ -551,11 +546,13 @@ function ToolBlock({ part, ctx }: { part: Accessor<Part>; ctx: FlowContext }): J
   );
 }
 
-const text = (part: Accessor<Part>): Accessor<string> => part((p) => p.text ?? '');
+/** Texte d'un bloc (texte, réflexion, message, erreur). */
+const text = (item: Accessor<Item>): Accessor<string> => item((i) => ('text' in i ? i.text : ''));
 
 /** « Réflexion · 5,5 s », « Réflexion… » pendant la génération. */
-const reasoningLabel = (p: Part): string => {
-  const { start, end } = p.time ?? {};
+const reasoningLabel = (i: Item): string => {
+  if (i.kind !== 'reasoning') return 'Réflexion';
+  const { start, end } = i.time;
   if (start === undefined) return 'Réflexion';
   if (end === undefined) return 'Réflexion…';
   // réflexion instantanée (résumé vide) : pas de « 0,0 s »
@@ -673,6 +670,34 @@ function Copyable({ text: source, css, active, onFork, readable = false }: { tex
   );
 }
 
+/** Outil d'un bloc `tool` (accessor dérivé). */
+const toolOf = (item: Accessor<Item>): Accessor<ToolCall> =>
+  item((i) => (i.kind === 'tool' ? i.tool : { callID: '', name: '', status: 'completed', input: {}, output: '', metadata: {}, time: { start: 0 } }));
+
+/** Titre d'un bloc de compaction. */
+function compactionLabel(i: Item): string {
+  if (i.kind !== 'compaction') return '';
+  if (i.status === 'running') return 'Compaction de la conversation…';
+  return i.status === 'failed' ? 'Compaction échouée' : 'Conversation compactée';
+}
+
+/** Commande shell lancée par l'utilisateur (`!commande`) et sa sortie. */
+function ShellBlock({ item }: { item: Accessor<Item> }): JSX.Element {
+  const shell = item((i) => (i.kind === 'shell' ? i : null));
+  const s0 = shell.peek();
+  const command = s0?.command ?? '';
+  return (
+    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={6} cssClasses={['tool-call']}>
+      {ShellCommand(command) ?? <Code text={`$ ${command}`} />}
+      <With value={shell}>
+        {(sh: Extract<Item, { kind: 'shell' }> | null) =>
+          sh === null || sh.output === '' ? <Gtk.Box /> : ScrolledOutput(truncate(sh.output), sh.exit === undefined || sh.exit === 0 ? [] : ['error'])
+        }
+      </With>
+    </Gtk.Box>
+  );
+}
+
 function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widget {
   let widget: JSX.Element;
   switch (block.kind) {
@@ -682,14 +707,14 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
           {block.first === true ? <Stamp ms={block.created} /> : null}
           <Copyable
             active={ctx.active}
-            text={block.part((p) => stripImageMarkers(p.text ?? ''))}
+            text={block.item((i) => stripImageMarkers('text' in i ? i.text : ''))}
             css="user-message"
             onFork={
               ctx.fork === undefined
                 ? undefined
                 : () => {
-                    const p = block.part.peek();
-                    ctx.fork?.(p.messageID, stripImageMarkers(p.text ?? ''));
+                    const i = block.item.peek();
+                    ctx.fork?.(i.messageID, stripImageMarkers('text' in i ? i.text : ''));
                   }
             }
           />
@@ -700,38 +725,59 @@ function BlockView({ block, ctx }: { block: Block; ctx: FlowContext }): Gtk.Widg
       widget = <TurnFooter turn={block.turn} />;
       break;
     case 'text':
-      widget = <Copyable text={text(block.part)} css="assistant-message" active={ctx.active} readable />;
+      widget = <Copyable text={text(block.item)} css="assistant-message" active={ctx.active} readable />;
       break;
     case 'reasoning':
       widget = (
         <Gtk.Overlay cssClasses={['copyable']}>
-          <Gtk.Expander label={block.part(reasoningLabel)} cssClasses={['reasoning']}>
+          <Gtk.Expander label={block.item(reasoningLabel)} cssClasses={['reasoning']}>
             <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
-              <With value={throttled(text(block.part), ctx.active)}>{(t: string) => MarkdownView({ text: t })}</With>
+              <With value={throttled(text(block.item), ctx.active)}>{(t: string) => MarkdownView({ text: t })}</With>
             </Gtk.Box>
           </Gtk.Expander>
           <Gtk.Box $type="overlay" halign={Gtk.Align.END} valign={Gtk.Align.START}>
-            {ReadButton(() => block.part.peek().text ?? '', 'Lire la réflexion à voix haute', ['flat', 'circular', 'copy-button'])}
+            {ReadButton(() => text(block.item).peek(), 'Lire la réflexion à voix haute', ['flat', 'circular', 'copy-button'])}
           </Gtk.Box>
         </Gtk.Overlay>
       );
       break;
     case 'tool':
       // sortie en direct, état, cartes : suspendus quand la page est cachée (#161)
-      widget = <ToolBlock part={paused(block.part, ctx.active)} ctx={ctx} />;
+      widget = <ToolBlock tool={toolOf(paused(block.item, ctx.active))} ctx={ctx} />;
       break;
     case 'file': {
       // contenu figé : une pièce jointe ne change pas une fois envoyée
-      const p = block.part.peek();
-      widget = (
-        <Gtk.Box halign={Gtk.Align.START} cssClasses={['message-attachment']}>
-          <AttachmentView mime={p.mime} filename={p.filename} url={p.url ?? ''} />
-        </Gtk.Box>
-      );
+      const i = block.item.peek();
+      widget =
+        i.kind === 'file' ? (
+          <Gtk.Box halign={Gtk.Align.START} cssClasses={['message-attachment']}>
+            <AttachmentView mime={i.mime} filename={i.filename} url={i.url} />
+          </Gtk.Box>
+        ) : (
+          <Gtk.Box />
+        );
       break;
     }
     case 'error':
-      widget = <Gtk.Label label={text(block.part)} xalign={0} wrap selectable cssClasses={['error']} />;
+      widget = <Gtk.Label label={text(block.item)} xalign={0} wrap selectable cssClasses={['error']} />;
+      break;
+    case 'shell':
+      widget = <ShellBlock item={block.item} />;
+      break;
+    case 'compaction':
+      widget = (
+        <Gtk.Expander
+          label={block.item(compactionLabel)}
+          cssClasses={['reasoning']}
+        >
+          <Gtk.Box cssClasses={['dim-label']} marginTop={6} marginStart={18}>
+            <With value={block.item((i) => (i.kind === 'compaction' ? i.summary : ''))}>{(t: string) => MarkdownView({ text: t })}</With>
+          </Gtk.Box>
+        </Gtk.Expander>
+      );
+      break;
+    case 'notice':
+      widget = <Gtk.Label label={text(block.item)} xalign={0} wrap cssClasses={['dim-label', 'caption']} />;
       break;
     default:
       widget = <Gtk.Label label="" />;
@@ -944,10 +990,10 @@ export function ConversationView({
   // demandes non rattachées à un appel d'outil affiché : en fin de conversation
   const orphans = createComputed((): Pending[] => {
     const callIDs = new Set(
-      conversation
-        .blocks()
-        .filter((b) => b.kind === 'tool')
-        .map((b) => b.part().callID),
+      conversation.blocks().flatMap((b) => {
+        const i = b.item();
+        return i.kind === 'tool' ? [i.tool.callID] : [];
+      }),
     );
     return pendingList(conversation).filter((p) => p.request.tool === undefined || !callIDs.has(p.request.tool.callID));
   });
@@ -1046,7 +1092,7 @@ export function ConversationView({
   const reveal = async (messageID: string, partID?: string): Promise<void> => {
     const findBlock = (): Block | undefined => {
       const blocks = conversation.blocks.peek();
-      return blocks.find((b) => b.id === partID) ?? blocks.find((b) => b.kind !== 'turn' && b.part.peek().messageID === messageID);
+      return blocks.find((b) => b.id === partID) ?? blocks.find((b) => b.kind !== 'turn' && b.item.peek().messageID === messageID);
     };
     // historique chargé (premier chargement, puis pages précédentes) jusqu'à trouver le message
     for (let i = 0; i < 200; i += 1) {

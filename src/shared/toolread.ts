@@ -1,6 +1,5 @@
 // Appel d'outil `read` : fichier lu, plage de lignes et contenu, depuis metadata.display
 // (opencode récent) ou la sortie brute (<path>…<content>12: texte…</content>).
-import type { ToolState } from './schemas.ts';
 
 const field = (v: unknown, key: string): string | undefined => {
   if (typeof v !== 'object' || v === null || !(key in v)) return undefined;
@@ -31,9 +30,18 @@ function numbered(start: number, lines: readonly string[]): string {
 }
 
 /** Informations d'un appel `read`, depuis metadata.display (opencode récent) ou la sortie brute. */
-export function readInfo(state: ToolState | undefined): ReadInfo | null {
+/** État d'un appel d'outil : entrée, sortie, métadonnées. */
+export interface ToolIO {
+  readonly status?: string;
+  readonly input?: unknown;
+  readonly output?: unknown;
+  readonly metadata?: unknown;
+}
+
+export function readInfo(state: ToolIO | undefined): ReadInfo | null {
   const input = state?.input;
-  const path = field(input, 'filePath');
+  // v2 : `path` ; v1 : `filePath`
+  const path = field(input, 'path') ?? field(input, 'filePath');
   if (path === undefined || path === '') return null;
   const output = typeof state?.output === 'string' ? state.output : '';
   const directory = /^<type>directory<\/type>$/mu.test(output);

@@ -1,13 +1,17 @@
-// Conversation d'une session : messages chargés puis mis à jour en direct (streaming des parties).
+// Conversation d'une session OpenCode 2 (#171) : historique paginé, puis mis à jour en direct par
+// les événements de la session (étapes de l'agent, blocs de texte et de réflexion, outils).
 //
-// Chaque partie visible est un « bloc » stable (même objet tant que la partie existe) dont le contenu
-// est un Accessor : un delta de streaming ne met à jour que le widget du bloc concerné, sans
-// reconstruire la liste.
+// Chaque élément visible est un « bloc » stable (même objet tant que l'élément existe) dont le
+// contenu est un Accessor : un delta de streaming ne met à jour que le widget du bloc concerné,
+// sans reconstruire la liste.
 import GLib from 'gi://GLib';
 import { createState, type Accessor, type Setter } from 'gnim';
+import * as z from 'zod/mini';
 import { errorMessage } from './errors.ts';
-import type { MessageInfo, MessageWithParts, Part, PermissionRequest, QuestionRequest, SessionEvent, Todo } from './schemas.ts';
-import type { Store } from './store.ts';
+import type { PermissionRequest, QuestionRequest, Todo } from './schemas.ts';
+import type { SessionEventV2, Store } from './store.ts';
+import * as E from './v2/events.ts';
+import { HistoryEntry, type AssistantMessage, type ToolContentBlock } from './v2/messages.ts';
 
 export interface ContextUsage {
   /** tokens présents dans le contexte au dernier tour */
@@ -22,27 +26,56 @@ export interface ContextUsage {
   readonly cacheRead: number;
 }
 
-/** Tokens du contexte d'un tour : entrée (y compris cache) + sortie, comme le TUI d'opencode. */
-export const contextTokens = (info: MessageInfo): number => {
-  const t = info.tokens;
-  if (t === undefined) return 0;
-  return t.input + t.output + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0);
-};
+interface Tokens {
+  readonly input: number;
+  readonly output: number;
+  readonly reasoning: number;
+  readonly cache: { readonly read: number; readonly write: number };
+}
 
-export type BlockKind = 'user' | 'text' | 'reasoning' | 'tool' | 'file' | 'error' | 'turn';
+/** Tokens du contexte d'un tour : entrée (y compris cache) + sortie, comme le TUI d'opencode. */
+export const contextTokens = (t: Tokens | undefined): number => (t === undefined ? 0 : t.input + t.output + t.reasoning + t.cache.read + t.cache.write);
+
+/** Appel d'outil (état v2 : streaming → running → completed / error). */
+export interface ToolCall {
+  readonly callID: string;
+  readonly name: string;
+  readonly status: 'streaming' | 'running' | 'completed' | 'error';
+  readonly input: Readonly<Record<string, unknown>>;
+  /** sortie textuelle (blocs de texte, fichiers en `[nom]`) */
+  readonly output: string;
+  readonly error?: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly time: { readonly start: number; readonly end?: number };
+}
+
+/** Contenu d'un bloc. */
+export type Item =
+  | { readonly kind: 'user'; readonly id: string; readonly messageID: string; readonly text: string }
+  | { readonly kind: 'file'; readonly id: string; readonly messageID: string; readonly mime: string; readonly filename: string; readonly url: string }
+  | { readonly kind: 'text'; readonly id: string; readonly messageID: string; readonly text: string }
+  | { readonly kind: 'reasoning'; readonly id: string; readonly messageID: string; readonly text: string; readonly time: { readonly start?: number; readonly end?: number } }
+  | { readonly kind: 'tool'; readonly id: string; readonly messageID: string; readonly tool: ToolCall }
+  | { readonly kind: 'error'; readonly id: string; readonly messageID: string; readonly text: string }
+  | { readonly kind: 'shell'; readonly id: string; readonly messageID: string; readonly command: string; readonly status: string; readonly output: string; readonly exit?: number | string }
+  | { readonly kind: 'compaction'; readonly id: string; readonly messageID: string; readonly status: string; readonly summary: string }
+  | { readonly kind: 'notice'; readonly id: string; readonly messageID: string; readonly text: string }
+  | { readonly kind: 'turn'; readonly id: string; readonly messageID: string };
+
+export type BlockKind = Item['kind'];
 
 /** Fin d'un tour de l'agent (pied de bloc) : heure et durée depuis le message utilisateur. */
 export interface TurnInfo {
   /** heure du message utilisateur */
   readonly created: number;
-  /** fin du dernier message de l'agent ; absent tant que le tour est en cours */
+  /** fin du tour ; absent tant qu'il est en cours */
   readonly completed?: number;
 }
 
 export interface Block {
   readonly id: string;
   readonly kind: BlockKind;
-  readonly part: Accessor<Part>;
+  readonly item: Accessor<Item>;
   /** heure de création du message (en-tête des messages utilisateur) */
   readonly created: number;
   /** premier bloc visible de son message (porte l'heure) */
@@ -51,62 +84,76 @@ export interface Block {
   readonly turn?: Accessor<TurnInfo>;
 }
 
+interface ItemEntry {
+  block: Block;
+  set: Setter<Item>;
+  value: Item;
+  dirty: boolean;
+}
+
+/** Message (entrée de l'historique) : ses éléments, dans l'ordre. */
+interface Message {
+  readonly id: string;
+  type: string;
+  created: number;
+  completed?: number;
+  /** réponse de l'agent : modèle, jetons, coût */
+  assistant?: { agent: string; providerID: string; modelID: string; variant?: string; tokens?: Tokens; cost?: number };
+  readonly items: string[];
+}
+
 interface TurnEntry {
   readonly block: Block;
   readonly set: Setter<TurnInfo>;
   value: TurnInfo;
 }
 
-interface PartEntry {
-  readonly block: Block;
-  readonly set: Setter<Part>;
-  value: Part;
-  dirty: boolean;
-}
-
-interface MessageEntry {
-  info: MessageInfo;
-  readonly parts: string[];
-}
-
 /** Délai de regroupement des mises à jour (ms) : le streaming émet des dizaines de deltas par seconde. */
 const FLUSH_MS = 80;
 /**
- * Messages chargés à l'ouverture (et au rechargement) : peu, pour une ouverture rapide (#141) ; un
- * message est une étape de l'agent (texte, réflexion, appels d'outils), souvent plusieurs blocs.
+ * Entrées chargées à l'ouverture (et au rechargement) : peu, pour une ouverture rapide (#141) ;
+ * une entrée est une étape de l'agent (texte, réflexion, appels d'outils), souvent plusieurs blocs.
  */
 const INITIAL_PAGE = 20;
-/** messages chargés à chaque « messages précédents » (en remontant en haut, ou par le bouton) */
+/** entrées chargées à chaque « messages précédents » */
 const PAGE = 100;
-/** rechargement après reconnexion : large, pour couvrir les messages arrivés pendant la coupure */
+/** rechargement après reconnexion : large, pour couvrir ce qui est arrivé pendant la coupure */
 const RELOAD_PAGE = 200;
 const TIMING = GLib.getenv('OPENCODE_GNOME_TIMING') !== null;
 
 /** Retire les repères « [Image N] » insérés par le TUI à la place des images collées. */
 export const stripImageMarkers = (text: string): string => text.replaceAll(/\[Image \d+\] ?/gu, '');
 
-function kindOf(role: string, part: Part): BlockKind | null {
-  switch (part.type) {
-    case 'text':
-      if (part.synthetic === true || part.ignored === true) return null;
-      if (role !== 'user') return 'text';
-      // texte réduit aux repères « [Image N] » du TUI : les miniatures suffisent
-      return stripImageMarkers(part.text ?? '').trim() === '' ? null : 'user';
-    case 'reasoning':
-      return (part.text ?? '').trim() === '' ? null : 'reasoning';
-    case 'tool':
-      return 'tool';
-    case 'file':
-      return 'file';
-    default:
-      return null; // step-start, step-finish, snapshot, patch, agent…
-  }
+/** Élément visible ? (réflexion vide, texte réduit aux repères d'images : non) */
+function visible(item: Item): boolean {
+  if (item.kind === 'user') return stripImageMarkers(item.text).trim() !== '';
+  if (item.kind === 'reasoning' || item.kind === 'text') return item.text.trim() !== '';
+  return true;
 }
 
-const errorPart = (info: MessageInfo): Part | null =>
-  info.error === undefined
-    ? null
-    : { id: `${info.id}-error`, type: 'error', messageID: info.id, sessionID: info.sessionID, text: `${info.error.name ?? 'Erreur'} : ${info.error.data?.message ?? ''}` };
+const textItemID = (messageID: string, kind: 'text' | 'reasoning', n: number): string => `${messageID}:${kind}:${n}`;
+const toolItemID = (messageID: string, callID: string): string => `${messageID}:tool:${callID}`;
+
+type ToolContentList = z.output<typeof E.ToolContent>[];
+const toolOutput = (content: ToolContentList | undefined): string => (content ?? []).map((c) => (c.type === 'text' ? c.text : `[${c.name ?? c.uri}]`)).join('\n');
+
+function toolFromHistory(t: ToolContentBlock): ToolCall {
+  const s = t.state;
+  const time = { start: t.time.ran ?? t.time.created, ...(t.time.completed === undefined ? {} : { end: t.time.completed }) };
+  const base = { callID: t.id, name: t.name, time };
+  if (s.status === 'streaming') return { ...base, status: 'streaming', input: {}, output: '', metadata: {} };
+  if (s.status === 'running') return { ...base, status: 'running', input: s.input, output: '', metadata: s.metadata };
+  if (s.status === 'completed') return { ...base, status: 'completed', input: s.input, output: toolOutput(s.content), metadata: s.metadata ?? {} };
+  return { ...base, status: 'error', input: s.input, output: toolOutput(s.content), error: s.error.message, metadata: s.metadata ?? {} };
+}
+
+/** Appel d'outil visé par un événement. */
+const ToolRef = z.object({ assistantMessageID: z.string(), id: z.string() });
+
+const parse = <S extends z.ZodMiniType>(s: S, data: unknown): z.output<S> | null => {
+  const r = s.safeParse(data);
+  return r.success ? r.data : null;
+};
 
 export class Conversation {
   readonly sessionID: string;
@@ -116,18 +163,17 @@ export class Conversation {
   /** Demandes en attente d'une réponse de l'utilisateur pour cette session. */
   readonly permissions: Accessor<readonly PermissionRequest[]>;
   readonly questions: Accessor<readonly QuestionRequest[]>;
-  /** Contexte utilisé par la session (dernier message de l'assistant ayant des tokens). */
+  /** Contexte utilisé par la session (dernière réponse de l'agent ayant des tokens). */
   readonly context: Accessor<ContextUsage | null>;
-  /** Incrémenté quand la session modifie des fichiers (`session.diff`, outils d'édition terminés). */
+  /** Incrémenté quand la session modifie des fichiers (outils d'édition, shell terminés). */
   readonly diffVersion: Accessor<number>;
-  /** Liste de tâches de la session (remplacée en entier à chaque `todo.updated`). */
+  /** Liste de tâches de la session (désactivée par défaut en v2 : vide). */
   readonly todos: Accessor<readonly Todo[]>;
   /** des messages plus anciens restent à charger (`loadOlder`) */
   readonly hasOlder: Accessor<boolean>;
   readonly loadingOlder: Accessor<boolean>;
 
   readonly #store: Store;
-  readonly #setTodos: Setter<readonly Todo[]>;
   readonly #setBlocks: Setter<readonly Block[]>;
   readonly #setLoading: Setter<boolean>;
   readonly #setError: Setter<string | null>;
@@ -137,26 +183,25 @@ export class Conversation {
   readonly #setContext: Setter<ContextUsage | null>;
   readonly #setHasOlder: Setter<boolean>;
   readonly #setLoadingOlder: Setter<boolean>;
-  /** curseur des messages plus anciens que ceux chargés ; null : début de la session atteint */
+  /** curseur des entrées plus anciennes que celles chargées ; null : début de la session atteint */
   #older: string | null = null;
   /** au moins une page ancienne chargée : un rechargement ne touche plus au curseur */
   #olderLoaded = false;
   #directory: string | null = null;
-  readonly #messages = new Map<string, MessageEntry>();
-  readonly #parts = new Map<string, PartEntry>();
+  readonly #messages = new Map<string, Message>();
+  readonly #items = new Map<string, ItemEntry>();
   /** message utilisateur -> bloc de fin de tour */
   readonly #turns = new Map<string, TurnEntry>();
+  /** messages utilisateur en file d'attente : texte connu à l'envoi, affiché à la remise */
+  readonly #inbox = new Map<string, string>();
   #structureChanged = false;
   #contextDirty = false;
   #flushQueued = false;
+  #reloadQueued = 0;
   #signature = '';
   #unsubscribe: (() => void) | null = null;
   #unreconnect: (() => void) | null = null;
   #requestsGeneration = 0;
-  /** chargements de l'historique en cours */
-  #reloading = 0;
-  /** deltas reçus pendant un chargement pour des parties encore inconnues */
-  readonly #early = new Map<string, { field: string; delta: string }[]>();
   #disposed = false;
   /** premier message annulé (masqué avec les suivants) */
   #revert: string | null = null;
@@ -172,13 +217,13 @@ export class Conversation {
     [this.diffVersion, this.#setDiffVersion] = createState(0);
     [this.hasOlder, this.#setHasOlder] = createState(false);
     [this.loadingOlder, this.#setLoadingOlder] = createState(false);
-    [this.todos, this.#setTodos] = createState<readonly Todo[]>([], { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
+    [this.todos] = createState<readonly Todo[]>([]);
     [this.context, this.#setContext] = createState<ContextUsage | null>(null, {
       equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.variant === b?.variant && a?.cost === b?.cost && a?.cacheRead === b?.cacheRead,
     });
   }
 
-  /** Répertoire de la session (requis par les appels qui ciblent une instance opencode). */
+  /** Répertoire de la session (requis par les appels qui ciblent un dossier). */
   get directory(): string | null {
     return this.#directory ?? this.#store.session(this.sessionID)?.directory ?? this.#store.children.peek().get(this.sessionID)?.session.directory ?? null;
   }
@@ -201,50 +246,44 @@ export class Conversation {
 
   /** Charge l'historique et suit les événements. Les événements reçus pendant le chargement sont conservés. */
   async start(): Promise<void> {
-    this.#unsubscribe ??= this.#store.onSessionEvents(this.sessionID, (e) => this.#apply(e));
+    this.#unsubscribe ??= this.#store.onSessionEventsV2(this.sessionID, (e) => this.#apply(e));
     // flux reconnecté : les événements de la coupure sont perdus, tout est relu (#60)
     this.#unreconnect ??= this.#store.onReconnect(() => {
-      void Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]);
+      void Promise.all([this.reload(), this.reloadRequests()]);
     });
-    // répertoire inconnu avant le chargement (session de sous-agent) : demandes rechargées ensuite
-    const known = this.directory !== null;
-    await (known ? Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]) : this.reload());
-    if (!known) await Promise.all([this.reloadRequests(), this.reloadTodos()]);
+    // sous-agent pas encore connu du store : dossier lu sur sa session
+    if (this.directory === null) {
+      try {
+        this.#directory = (await this.#store.client.session(this.sessionID)).directory;
+      } catch {
+        // affiché par le chargement
+      }
+    }
+    await Promise.all([this.reload(), this.reloadRequests()]);
   }
 
+  /** Liste de tâches : pas d'équivalent en v2 (outil expérimental désactivé). */
   async reloadTodos(): Promise<void> {
-    const dir = this.directory;
-    if (dir === null) return;
-    try {
-      const todos = await this.#store.client.todos(this.sessionID, dir);
-      if (!this.#disposed) this.#setTodos(todos);
-    } catch {
-      // liste absente : rien à afficher
-    }
+    // rien à recharger
   }
 
   async reload(): Promise<void> {
     this.#setLoading(true);
-    this.#reloading += 1;
     const t0 = Date.now();
     let count = 0;
     try {
       const limit = this.#messages.size === 0 ? INITIAL_PAGE : RELOAD_PAGE;
-      const { messages, older } = await this.#store.client.messagePage(this.sessionID, limit);
-      count = messages.length;
+      const page = await this.#store.client.v2.messages({ sessionID: this.sessionID, limit });
+      count = page.items.length;
       if (this.#disposed) return;
-      this.#ingest(messages);
-      this.#replayEarly();
+      this.#ingest(page.items);
       if (!this.#olderLoaded) {
-        this.#older = older;
-        this.#setHasOlder(older !== null);
+        this.#older = page.items.length < limit ? null : page.next;
+        this.#setHasOlder(this.#older !== null);
       }
       this.#setError(null);
     } catch (e) {
       this.#setError(errorMessage(e));
-    } finally {
-      this.#reloading -= 1;
-      if (this.#reloading === 0) this.#early.clear();
     }
     const t1 = Date.now();
     this.#setLoading(false);
@@ -254,44 +293,13 @@ export class Conversation {
   }
 
   /**
-   * Deltas reçus pendant le chargement pour des parties encore inconnues : l'instantané en
-   * contient une partie (ceux arrivés avant sa création). Le texte de l'instantané se termine
-   * par les premiers deltas ; seuls les suivants sont appliqués (#72).
-   */
-  #replayEarly(): void {
-    for (const [partID, deltas] of this.#early) {
-      const entry = this.#parts.get(partID);
-      if (entry === undefined) continue;
-      this.#early.delete(partID);
-      const byField = new Map<string, string[]>();
-      for (const d of deltas) byField.set(d.field, [...(byField.get(d.field) ?? []), d.delta]);
-      for (const [field, list] of byField) {
-        const prev = entry.value[field];
-        const text = typeof prev === 'string' ? prev : '';
-        // plus grand k : le texte se termine par les k premiers deltas
-        let skip = 0;
-        for (let k = list.length; k > 0; k -= 1) {
-          if (text.endsWith(list.slice(0, k).join(''))) {
-            skip = k;
-            break;
-          }
-        }
-        const rest = list.slice(skip).join('');
-        if (rest === '') continue;
-        entry.value = { ...entry.value, [field]: text + rest };
-        entry.dirty = true;
-      }
-    }
-  }
-
-  /**
    * Actualiser : la conversation est relue comme à son ouverture (dernière page seulement, les
-   * pages précédentes déjà chargées sont libérées), avec ses demandes et sa liste de tâches.
+   * pages précédentes déjà chargées sont libérées), avec ses demandes.
    */
   async refresh(): Promise<void> {
     if (this.#disposed) return;
     this.#messages.clear();
-    this.#parts.clear();
+    this.#items.clear();
     this.#turns.clear();
     this.#older = null;
     this.#olderLoaded = false;
@@ -299,21 +307,22 @@ export class Conversation {
     // blocs retirés d'abord : les widgets (liés aux anciens états) sont libérés, puis reconstruits
     this.#structureChanged = true;
     this.#flush();
-    await Promise.all([this.reload(), this.reloadRequests(), this.reloadTodos()]);
+    await Promise.all([this.reload(), this.reloadRequests()]);
   }
 
-  /** Charge la page de messages précédant les plus anciens déjà chargés. */
+  /** Charge la page d'entrées précédant les plus anciennes déjà chargées. */
   async loadOlder(): Promise<void> {
     const cursor = this.#older;
     if (cursor === null || this.loadingOlder.peek()) return;
     this.#setLoadingOlder(true);
     try {
-      const { messages, older } = await this.#store.client.messagePage(this.sessionID, PAGE, cursor);
+      const page = await this.#store.client.v2.messages({ sessionID: this.sessionID, limit: PAGE, cursor });
       if (this.#disposed) return;
       this.#olderLoaded = true;
-      this.#older = older;
-      this.#ingest(messages);
-      this.#setHasOlder(older !== null);
+      // page vide : le serveur peut annoncer une suite qui n'existe pas
+      this.#older = page.items.length === 0 ? null : page.next;
+      this.#ingest(page.items);
+      this.#setHasOlder(this.#older !== null);
       this.#flush();
     } catch (e) {
       this.#setError(errorMessage(e));
@@ -322,16 +331,76 @@ export class Conversation {
     }
   }
 
-  #ingest(messages: readonly MessageWithParts[]): void {
-    for (const { info, parts } of messages) {
-      const path: unknown = info['path'];
-      if (this.#directory === null && typeof path === 'object' && path !== null && 'cwd' in path && typeof path.cwd === 'string') this.#directory = path.cwd;
-      this.#upsertMessage(info);
-      for (const part of parts) this.#upsertPart(part, true);
+  /** Entrées de l'historique (instantané HTTP, peut-être en retard sur le direct). */
+  #ingest(entries: readonly unknown[]): void {
+    for (const raw of entries) {
+      const e = parse(HistoryEntry, raw);
+      if (e === null) continue;
+      const m = this.#message(e.id, e.type, e.time.created);
+      switch (e.type) {
+        case 'user': {
+          if (!('text' in e) || typeof e.text !== 'string') break;
+          this.#setItem(m, { kind: 'user', id: `${e.id}:user`, messageID: e.id, text: e.text }, true);
+          const files = 'files' in e && Array.isArray(e.files) ? e.files : [];
+          for (const [n, f] of files.entries()) {
+            this.#setItem(m, { kind: 'file', id: `${e.id}:file:${n}`, messageID: e.id, mime: f.mime, filename: f.name ?? '', url: `data:${f.mime};base64,${f.data}` }, true);
+          }
+          break;
+        }
+        case 'assistant':
+          if ('content' in e) this.#ingestAssistant(m, e);
+          break;
+        case 'shell':
+          if ('command' in e)
+            this.#setItem(m, { kind: 'shell', id: `${e.id}:shell`, messageID: e.id, command: e.command, status: e.status, output: e.output?.output ?? '', ...(e.exit === undefined ? {} : { exit: e.exit }) }, true);
+          break;
+        case 'compaction':
+          if ('status' in e) this.#setItem(m, { kind: 'compaction', id: `${e.id}:compaction`, messageID: e.id, status: e.status, summary: 'summary' in e ? (e.summary ?? '') : '' }, true);
+          break;
+        case 'skill':
+          if ('name' in e) this.#setItem(m, { kind: 'notice', id: `${e.id}:notice`, messageID: e.id, text: `Skill « ${e.name} » chargée` }, true);
+          break;
+        case 'agent-switched':
+          if ('agent' in e) this.#setItem(m, { kind: 'notice', id: `${e.id}:notice`, messageID: e.id, text: `Agent : ${e.agent}` }, true);
+          break;
+        case 'model-switched':
+          if ('model' in e && typeof e.model === 'object') this.#setItem(m, { kind: 'notice', id: `${e.id}:notice`, messageID: e.id, text: `Modèle : ${e.model.providerID}/${e.model.id}` }, true);
+          break;
+        case 'idle':
+          if ('outcome' in e && e.outcome === 'failed' && e.error !== undefined) this.#setItem(m, { kind: 'error', id: `${e.id}:error`, messageID: e.id, text: e.error.message }, true);
+          break;
+        default:
+          // synthetic, system (contexte injecté pour le modèle), location-switched… : non affichés
+          break;
+      }
     }
   }
 
-  /** Masque les messages annulés (`/undo`) à partir de `messageID` ; null : tout afficher. */
+  #ingestAssistant(m: Message, e: AssistantMessage): void {
+    if (e.time.completed !== undefined) m.completed = e.time.completed;
+    m.assistant = {
+      agent: e.agent,
+      providerID: e.model.providerID,
+      modelID: e.model.id,
+      ...(e.model.variant === undefined ? {} : { variant: e.model.variant }),
+      ...(e.tokens === undefined ? {} : { tokens: e.tokens }),
+      ...(e.cost === undefined ? {} : { cost: e.cost }),
+    };
+    this.#contextDirty = true;
+    const count = { text: 0, reasoning: 0 };
+    for (const c of e.content) {
+      if (c.type === 'tool') {
+        this.#setItem(m, { kind: 'tool', id: toolItemID(e.id, c.id), messageID: e.id, tool: toolFromHistory(c) }, true);
+        continue;
+      }
+      const n = count[c.type]++;
+      const time = c.type === 'reasoning' ? { ...(c.time === undefined ? {} : { start: c.time.created }), ...(c.time?.completed === undefined ? {} : { end: c.time.completed }) } : {};
+      this.#setItem(m, c.type === 'text' ? { kind: 'text', id: textItemID(e.id, 'text', n), messageID: e.id, text: c.text } : { kind: 'reasoning', id: textItemID(e.id, 'reasoning', n), messageID: e.id, text: c.text, time }, true);
+    }
+    if (e.error !== undefined) this.#setItem(m, { kind: 'error', id: `${e.id}:error`, messageID: e.id, text: e.error.message }, true);
+  }
+
+  /** Masque les messages annulés à partir de `messageID` ; null : tout afficher. */
   setRevert(messageID: string | null): void {
     if (messageID === this.#revert) return;
     this.#revert = messageID;
@@ -339,22 +408,13 @@ export class Conversation {
     this.#flush();
   }
 
-  /**
-   * Messages de l'utilisateur chargés, du plus ancien au plus récent, avec leur texte
-   * (parties `text` non synthétiques, repères « [Image N] » retirés).
-   */
+  /** Messages de l'utilisateur chargés, du plus ancien au plus récent, avec leur texte. */
   userMessages(): { id: string; text: string }[] {
     const out: { id: string; text: string }[] = [];
-    for (const id of [...this.#messages.keys()].toSorted()) {
-      const m = this.#messages.get(id);
-      if (m?.info.role !== 'user') continue;
-      const text = m.parts
-        .map((p) => this.#parts.get(p)?.value)
-        .filter((p): p is Part => p?.type === 'text' && p.synthetic !== true && p.ignored !== true)
-        .map((p) => stripImageMarkers(p.text ?? ''))
-        .join('\n')
-        .trim();
-      out.push({ id, text });
+    for (const m of this.#sorted()) {
+      if (m.type !== 'user') continue;
+      const item = this.#items.get(`${m.id}:user`)?.value;
+      out.push({ id: m.id, text: item?.kind === 'user' ? stripImageMarkers(item.text).trim() : '' });
     }
     return out;
   }
@@ -367,132 +427,225 @@ export class Conversation {
     this.#unreconnect = null;
   }
 
-  #apply(e: SessionEvent): void {
-    switch (e.type) {
+  /** Événement v2 de la session. */
+  #apply({ type, created, data }: SessionEventV2): void {
+    switch (type) {
       case 'permission.asked':
-      case 'permission.v2.asked':
       case 'permission.replied':
-      case 'permission.v2.replied':
-      case 'question.asked':
-      case 'question.v2.asked':
-      case 'question.replied':
-      case 'question.v2.replied':
-      case 'question.rejected':
-      case 'question.v2.rejected':
+      case 'form.created':
+      case 'form.replied':
+      case 'form.cancelled':
         void this.reloadRequests();
         return;
-      case 'session.diff':
-        this.#setDiffVersion(this.diffVersion.peek() + 1);
+      case 'session.inbox.enqueued': {
+        const d = parse(E.InboxEnqueued, data);
+        const user = d?.item.type === 'user' ? parse(E.UserPayload, d.item.payload) : null;
+        if (d !== null && user !== null) this.#inbox.set(d.inboxID, user.text);
         return;
-      case 'todo.updated':
-        this.#setTodos(e.properties.todos);
-        return;
-      case 'message.updated':
-        this.#upsertMessage(e.properties.info);
-        break;
-      case 'message.removed': {
-        const m = this.#messages.get(e.properties.messageID);
-        for (const id of m?.parts ?? []) this.#parts.delete(id);
-        this.#messages.delete(e.properties.messageID);
-        this.#structureChanged = true;
-        break;
       }
-      case 'message.part.updated':
-        this.#upsertPart(e.properties.part);
-        break;
-      case 'message.part.removed': {
-        const m = this.#messages.get(e.properties.messageID);
-        if (m !== undefined) m.parts.splice(m.parts.indexOf(e.properties.partID) >>> 0, 1);
-        this.#parts.delete(e.properties.partID);
-        this.#structureChanged = true;
-        break;
-      }
-      case 'message.part.delta': {
-        const { partID, field, delta } = e.properties;
-        const entry = this.#parts.get(partID);
-        if (entry === undefined) {
-          // chargement en cours : la partie arrivera avec l'instantané (rejoué ensuite) ;
-          // sinon elle arrivera via message.part.updated
-          if (this.#reloading > 0) this.#early.set(partID, [...(this.#early.get(partID) ?? []), { field, delta }]);
+      case 'session.inbox.delivered': {
+        const d = parse(E.InboxDelivered, data);
+        if (d === null) return;
+        const text = this.#inbox.get(d.inboxID);
+        this.#inbox.delete(d.inboxID);
+        // envoyé par un autre client (texte inconnu) : relu
+        if (text === undefined) {
+          this.#reloadSoon();
           return;
         }
-        const prev = entry.value[field];
-        entry.value = { ...entry.value, [field]: (typeof prev === 'string' ? prev : '') + delta };
-        entry.dirty = true;
+        const m = this.#message(d.inboxID, 'user', created);
+        this.#setItem(m, { kind: 'user', id: `${d.inboxID}:user`, messageID: d.inboxID, text });
         break;
       }
+      case 'session.step.started': {
+        const d = parse(E.StepStarted, data);
+        if (d === null) return;
+        const m = this.#message(d.assistantMessageID, 'assistant', d.started);
+        m.assistant = { agent: d.agent, providerID: d.model.providerID, modelID: d.model.id, ...(d.model.variant === undefined ? {} : { variant: d.model.variant }) };
+        break;
+      }
+      case 'session.step.ended':
+      case 'session.step.failed': {
+        const d = parse(type === 'session.step.ended' ? E.StepEnded : E.StepFailed, data);
+        if (d === null) return;
+        const m = this.#message(d.assistantMessageID, 'assistant', created);
+        m.completed = created;
+        if (m.assistant !== undefined) {
+          if (d.tokens !== undefined) m.assistant.tokens = d.tokens;
+          if (d.cost !== undefined) m.assistant.cost = d.cost;
+        }
+        this.#contextDirty = true;
+        const failed = parse(E.StepFailed, data);
+        if (type === 'session.step.failed' && failed !== null) this.#setItem(m, { kind: 'error', id: `${m.id}:error`, messageID: m.id, text: failed.error.message });
+        break;
+      }
+      case 'session.text.started':
+      case 'session.reasoning.started':
+      case 'session.text.delta':
+      case 'session.reasoning.delta':
+      case 'session.text.ended':
+      case 'session.reasoning.ended':
+        this.#applyBlock(type, created, data);
+        break;
+      case 'session.tool.input.started':
+      case 'session.tool.called':
+      case 'session.tool.progress':
+      case 'session.tool.success':
+      case 'session.tool.failed':
+        this.#applyTool(type, created, data);
+        break;
+      case 'session.execution.succeeded':
+      case 'session.execution.failed':
+      case 'session.execution.interrupted': {
+        // fin du tour : entrée « idle » locale (l'historique a la sienne)
+        const m = this.#message(`~idle:${created}`, 'idle', created);
+        const failed = type === 'session.execution.failed' ? parse(E.ExecutionFailed, data) : null;
+        if (failed !== null) this.#setItem(m, { kind: 'error', id: `${m.id}:error`, messageID: m.id, text: failed.error.message });
+        this.#structureChanged = true;
+        break;
+      }
+      case 'session.shell.started':
+      case 'session.shell.ended':
+      case 'session.compaction.started':
+      case 'session.compaction.ended':
+      case 'session.compaction.failed':
+      case 'session.synthetic':
+      case 'session.skill.activated':
+      case 'session.agent.selected':
+      case 'session.model.selected':
+      case 'session.message.content.updated':
+        // entrées rares : relues depuis l'historique
+        this.#reloadSoon();
+        return;
       default:
         return;
     }
     this.#scheduleFlush();
   }
 
-  #message(id: string): MessageEntry | undefined {
-    return this.#messages.get(id);
+  #applyBlock(type: string, created: number, data: unknown): void {
+    const kind = type.startsWith('session.text.') ? 'text' : 'reasoning';
+    const d = parse(E.Block, data);
+    if (d === null) return;
+    const m = this.#message(d.assistantMessageID, 'assistant', created);
+    const id = textItemID(d.assistantMessageID, kind, d.ordinal);
+    const before = this.#items.get(id)?.value;
+    const prev = before?.kind === kind ? before.text : '';
+    const start = before?.kind === 'reasoning' ? before.time.start : created;
+    let text = prev;
+    let end: number | undefined;
+    if (type.endsWith('.delta')) text = prev + (parse(E.BlockDelta, data)?.delta ?? '');
+    else if (type.endsWith('.ended')) {
+      text = parse(E.BlockEnded, data)?.text ?? prev;
+      end = created;
+    }
+    this.#setItem(
+      m,
+      kind === 'text'
+        ? { kind: 'text', id, messageID: m.id, text }
+        : { kind: 'reasoning', id, messageID: m.id, text, time: { ...(start === undefined ? {} : { start }), ...(end === undefined ? {} : { end }) } },
+    );
   }
 
-  /** Recalcule le contexte depuis le dernier message de l'assistant qui a des tokens. */
-  #updateContext(): void {
-    let last: MessageInfo | null = null;
-    let cost = 0;
-    for (const { info } of this.#messages.values()) {
-      cost += info.cost ?? 0;
-      if (info.role !== 'assistant' || contextTokens(info) === 0) continue;
-      if (last === null || info.id > last.id) last = info;
+  #applyTool(type: string, created: number, data: unknown): void {
+    const ref = parse(ToolRef, data);
+    if (ref === null) return;
+    const m = this.#message(ref.assistantMessageID, 'assistant', created);
+    const id = toolItemID(ref.assistantMessageID, ref.id);
+    const before = this.#items.get(id)?.value;
+    const prev: ToolCall = before?.kind === 'tool' ? before.tool : { callID: ref.id, name: '', status: 'streaming', input: {}, output: '', metadata: {}, time: { start: created } };
+    let next: ToolCall = prev;
+    switch (type) {
+      case 'session.tool.input.started': {
+        const d = parse(E.ToolStarted, data);
+        if (d !== null) next = { ...prev, name: d.name };
+        break;
+      }
+      case 'session.tool.called': {
+        const d = parse(E.ToolCalled, data);
+        if (d !== null) next = { ...prev, status: 'running', input: d.input, time: { start: created } };
+        break;
+      }
+      case 'session.tool.progress': {
+        const d = parse(E.ToolProgress, data);
+        if (d !== null) next = { ...prev, metadata: d.metadata };
+        break;
+      }
+      case 'session.tool.success': {
+        const d = parse(E.ToolSuccess, data);
+        if (d !== null) next = { ...prev, status: 'completed', output: toolOutput(d.content), metadata: d.metadata ?? prev.metadata, time: { ...prev.time, end: created } };
+        // fichiers peut-être modifiés : fenêtre des modifications à rafraîchir
+        if (['edit', 'write', 'shell', 'patch'].includes(prev.name)) this.#setDiffVersion(this.diffVersion.peek() + 1);
+        break;
+      }
+      default: {
+        const d = parse(E.ToolFailed, data);
+        if (d !== null) next = { ...prev, status: 'error', error: d.error.message, output: toolOutput(d.content), metadata: d.metadata ?? prev.metadata, time: { ...prev.time, end: created } };
+      }
     }
-    if (last === null) return;
-    this.#setContext({
-      tokens: contextTokens(last),
-      providerID: last.providerID ?? '',
-      modelID: last.modelID ?? '',
-      ...(last.variant === undefined ? {} : { variant: last.variant }),
-      cost,
-      cacheRead: last.tokens?.cache?.read ?? 0,
+    this.#setItem(m, { kind: 'tool', id, messageID: m.id, tool: next });
+  }
+
+  /** Relecture groupée de la dernière page (entrées rares reçues en direct). */
+  #reloadSoon(): void {
+    if (this.#reloadQueued !== 0) return;
+    this.#reloadQueued = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+      this.#reloadQueued = 0;
+      if (!this.#disposed) void this.reload();
+      return GLib.SOURCE_REMOVE;
     });
   }
 
-  #upsertMessage(info: MessageInfo): void {
-    if (info.role === 'assistant') this.#contextDirty = true;
-    const m = this.#messages.get(info.id);
+  /** Message connu, ou créé (heure : la plus ancienne connue). */
+  #message(id: string, type: string, created: number): Message {
+    let m = this.#messages.get(id);
     if (m === undefined) {
-      this.#messages.set(info.id, { info, parts: [] });
+      m = { id, type, created, items: [] };
+      this.#messages.set(id, m);
       this.#structureChanged = true;
-    } else {
-      if ((m.info.error === undefined) !== (info.error === undefined)) this.#structureChanged = true;
-      // message provisoire (partie reçue avant lui) : rôle et heure réels connus maintenant (#98)
-      // (#pushParts recrée alors les blocs dont le type change)
-      if (m.info.role !== info.role || m.info.time.created !== info.time.created) this.#structureChanged = true;
-      m.info = info;
+    } else if (m.type !== type || (created < m.created && created > 0)) {
+      m.type = type;
+      m.created = Math.min(m.created, created);
+      this.#structureChanged = true;
     }
-    const err = errorPart(info);
-    if (err !== null) this.#upsertPart(err);
+    return m;
   }
 
-  /** `snapshot` : partie lue par HTTP, peut-être plus ancienne que les deltas déjà appliqués. */
-  #upsertPart(part: Part, snapshot = false): void {
-    let m = this.#message(part.messageID);
-    if (m === undefined) {
-      // partie reçue avant son message : message provisoire
-      m = { info: { id: part.messageID, role: 'assistant', sessionID: part.sessionID, time: { created: 0 } }, parts: [] };
-      this.#messages.set(part.messageID, m);
-    }
-    const entry = this.#parts.get(part.id);
+  /**
+   * Crée ou met à jour un élément. `snapshot` : lu par HTTP, peut-être plus ancien que le direct :
+   * un texte local plus long qui prolonge celui de l'instantané est gardé (#72).
+   */
+  #setItem(m: Message, item: Item, snapshot = false): void {
+    const entry = this.#items.get(item.id);
     if (entry !== undefined) {
-      // texte local plus long qui prolonge celui de l'instantané : l'instantané est en retard (#72)
-      const live = entry.value['text'];
-      const snap = part['text'];
-      if (snapshot && typeof live === 'string' && typeof snap === 'string' && live.length > snap.length && live.startsWith(snap)) return;
-      entry.value = part;
+      const live = entry.value;
+      if (snapshot && (live.kind === 'text' || live.kind === 'reasoning') && item.kind === live.kind && live.text.length > item.text.length && live.text.startsWith(item.text)) return;
+      if (visible(entry.value) !== visible(item)) this.#structureChanged = true;
+      entry.value = item;
       entry.dirty = true;
-      // une partie peut devenir visible (reasoning vide -> rempli)
-      if (kindOf(m.info.role, part) !== entry.block.kind) this.#structureChanged = true;
       return;
     }
-    const kind = part.type === 'error' ? 'error' : kindOf(m.info.role, part);
-    const [accessor, set] = createState<Part>(part);
-    this.#parts.set(part.id, { block: { id: part.id, kind: kind ?? 'text', part: accessor, created: m.info.time.created }, set, value: part, dirty: false });
-    if (!m.parts.includes(part.id)) m.parts.push(part.id);
+    const [accessor, set] = createState<Item>(item);
+    this.#items.set(item.id, { block: { id: item.id, kind: item.kind, item: accessor, created: m.created }, set, value: item, dirty: false });
+    if (!m.items.includes(item.id)) m.items.push(item.id);
     this.#structureChanged = true;
+  }
+
+  #sorted(): Message[] {
+    return [...this.#messages.values()].toSorted((a, b) => a.created - b.created || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  /** Contexte : dernière réponse de l'agent qui a des tokens ; coût cumulé. */
+  #updateContext(): void {
+    let last: Message | null = null;
+    let cost = 0;
+    for (const m of this.#sorted()) {
+      cost += m.assistant?.cost ?? 0;
+      if (contextTokens(m.assistant?.tokens) > 0) last = m;
+    }
+    const a = last?.assistant;
+    if (a === undefined) return;
+    this.#setContext({ tokens: contextTokens(a.tokens), providerID: a.providerID, modelID: a.modelID, ...(a.variant === undefined ? {} : { variant: a.variant }), cost, cacheRead: a.tokens?.cache.read ?? 0 });
   }
 
   #scheduleFlush(): void {
@@ -510,83 +663,74 @@ export class Conversation {
       this.#contextDirty = false;
       this.#updateContext();
     }
-    for (const entry of this.#parts.values()) {
+    for (const entry of this.#items.values()) {
       if (entry.dirty) {
         entry.dirty = false;
         entry.set(entry.value);
       }
     }
-    this.#updateTurns();
+    const revert = this.#revert;
+    const messages = this.#sorted().filter((m) => revert === null || m.id < revert || m.id.startsWith('~'));
+    this.#updateTurns(messages);
     if (!this.#structureChanged) return;
     this.#structureChanged = false;
     const blocks: Block[] = [];
-    // les identifiants opencode sont triables chronologiquement ; messages annulés masqués
-    const revert = this.#revert;
-    const ids = [...this.#messages.keys()].toSorted().filter((id) => revert === null || id < revert);
-    // dernier message de l'agent de chaque tour : le pied de tour vient après lui
-    const lastOfTurn = new Map<string, string>();
-    for (const id of ids) {
-      const info = this.#messages.get(id)?.info;
-      if (info?.role === 'assistant' && info.parentID !== undefined) lastOfTurn.set(info.parentID, id);
-    }
-    for (const id of ids) {
-      const m = this.#messages.get(id);
-      if (m === undefined) continue;
-      this.#pushParts(m, blocks);
-      const parent = m.info.parentID;
-      if (parent !== undefined && lastOfTurn.get(parent) === id) {
-        const turn = this.#turns.get(parent);
-        if (turn !== undefined) blocks.push(turn.block);
+    // tour : d'un message utilisateur au suivant ; son pied de tour avant le message suivant
+    let turn: string | null = null;
+    const closeTurn = (): void => {
+      const t = turn === null ? undefined : this.#turns.get(turn);
+      if (t !== undefined) blocks.push(t.block);
+    };
+    for (const m of messages) {
+      if (m.type === 'user') {
+        closeTurn();
+        turn = m.id;
+      }
+      let first = true;
+      for (const id of m.items) {
+        const entry = this.#items.get(id);
+        if (entry === undefined || !visible(entry.value)) continue;
+        // heure du message changée (message créé par un événement, puis lu) : nouveau bloc
+        if (entry.block.created !== m.created) {
+          const [accessor, set] = createState<Item>(entry.value);
+          entry.block = { id, kind: entry.value.kind, item: accessor, created: m.created };
+          entry.set = set;
+        }
+        entry.block.first = first;
+        first = false;
+        blocks.push(entry.block);
       }
     }
+    closeTurn();
     const signature = blocks.map((b) => `${b.id}:${b.kind}:${b.first === true ? 1 : 0}`).join(',');
     if (signature === this.#signature) return;
     this.#signature = signature;
     this.#setBlocks(blocks);
   }
 
-  /** Bornes de chaque tour (message utilisateur -> fin du dernier message de l'agent). */
-  #updateTurns(): void {
+  /** Bornes de chaque tour : message utilisateur -> première fin d'exécution (`idle`) qui suit. */
+  #updateTurns(messages: readonly Message[]): void {
+    let user: Message | null = null;
     const ends = new Map<string, number | undefined>();
-    for (const { info } of this.#messages.values()) {
-      if (info.role !== 'assistant' || info.parentID === undefined) continue;
-      // un message de l'agent non terminé rend le tour « en cours »
-      const prev = ends.has(info.parentID) ? ends.get(info.parentID) : 0;
-      ends.set(info.parentID, prev === undefined || info.time.completed === undefined ? undefined : Math.max(prev, info.time.completed));
+    for (const m of messages) {
+      if (m.type === 'user') {
+        user = m;
+        ends.set(m.id, undefined);
+      } else if (user !== null && m.type === 'idle' && ends.get(user.id) === undefined) ends.set(user.id, m.created);
     }
     for (const [userID, end] of ends) {
-      const user = this.#messages.get(userID)?.info;
-      if (user === undefined) continue;
-      const value: TurnInfo = end === undefined ? { created: user.time.created } : { created: user.time.created, completed: end };
+      const created = this.#messages.get(userID)?.created ?? 0;
+      const value: TurnInfo = end === undefined ? { created } : { created, completed: end };
       const entry = this.#turns.get(userID);
       if (entry === undefined) {
         const [accessor, set] = createState<TurnInfo>(value);
-        const [part] = createState<Part>({ id: `${userID}-turn`, type: 'turn', messageID: userID, sessionID: this.sessionID });
-        this.#turns.set(userID, { block: { id: `${userID}-turn`, kind: 'turn', part, created: user.time.created, turn: accessor }, set, value });
+        const [item] = createState<Item>({ kind: 'turn', id: `${userID}:turn`, messageID: userID });
+        this.#turns.set(userID, { block: { id: `${userID}:turn`, kind: 'turn', item, created, turn: accessor }, set, value });
         this.#structureChanged = true;
-      } else if (entry.value.completed !== value.completed) {
+      } else if (entry.value.completed !== value.completed || entry.value.created !== value.created) {
         entry.value = value;
         entry.set(value);
       }
-    }
-  }
-
-  #pushParts(m: MessageEntry, blocks: Block[]): void {
-    let first = true;
-    for (const partID of m.parts) {
-      const entry = this.#parts.get(partID);
-      if (entry === undefined) continue;
-      const kind = entry.value.type === 'error' ? 'error' : kindOf(m.info.role, entry.value);
-      if (kind === null) continue;
-      // le type visible ou l'heure (message provisoire) peut avoir changé : nouveau bloc
-      if (kind !== entry.block.kind || entry.block.created !== m.info.time.created) {
-        const [accessor, set] = createState<Part>(entry.value);
-        this.#parts.set(partID, { block: { id: partID, kind, part: accessor, created: m.info.time.created }, set, value: entry.value, dirty: false });
-      }
-      const block = this.#parts.get(partID)?.block ?? entry.block;
-      block.first = first;
-      first = false;
-      blocks.push(block);
     }
   }
 }

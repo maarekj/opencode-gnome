@@ -4,7 +4,8 @@
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { esc } from '../shared/format.ts';
-import type { Part, PermissionRequest, QuestionInfo, QuestionRequest } from '../shared/schemas.ts';
+import type { ToolCall } from '../shared/conversation.ts';
+import type { PermissionRequest, QuestionInfo, QuestionRequest } from '../shared/schemas.ts';
 import { ShellCommand } from './ShellCommand.ts';
 
 /** Réponses : résolues à false en cas d'échec (erreur déjà affichée). */
@@ -151,10 +152,10 @@ const answersOf = (metadata: unknown): string[][] => {
 };
 
 /** Rappel replié d'un appel de l'outil `question` terminé : questions + réponses choisies. */
-export function AnsweredQuestions({ part }: { part: Part }): JSX.Element {
-  const questions = questionsOf(part.state?.input);
-  const answers = answersOf(part.state?.metadata);
-  const rejected = part.state?.status === 'error';
+export function AnsweredQuestions({ tool }: { tool: ToolCall }): JSX.Element {
+  const questions = questionsOf(tool.input);
+  const answers = answersOf(tool.metadata);
+  const rejected = tool.status === 'error';
   const title = rejected ? 'Questions ignorées' : questions.length > 1 ? `${questions.length} questions répondues` : 'Question répondue';
   return (
     <Gtk.Expander cssClasses={['answered']}>
