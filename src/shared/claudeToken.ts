@@ -94,7 +94,13 @@ function lock(): (() => void) | null {
     file.create(Gio.FileCreateFlags.PRIVATE, null).close(null);
   } catch {
     // verrou laissé par un processus tué : ignoré au-delà de la durée maximale d'un essai
-    const info = file.query_info('time::modified', Gio.FileQueryInfoFlags.NONE, null);
+    let info: Gio.FileInfo;
+    try {
+      info = file.query_info('time::modified', Gio.FileQueryInfoFlags.NONE, null);
+    } catch {
+      // verrou retiré entre-temps par son propriétaire : essai suivant
+      return null;
+    }
     const age = Date.now() / 1000 - info.get_attribute_uint64('time::modified');
     if (age < CLAUDE_TIMEOUT_S + 30) return null;
     file.replace_contents(new Uint8Array(), null, false, Gio.FileCreateFlags.PRIVATE, null);
@@ -121,7 +127,8 @@ async function runClaude(): Promise<void> {
   launcher.setenv('TERM', 'dumb', true);
   launcher.set_cwd(GLib.get_tmp_dir());
   const proc = launcher.spawnv(['claude', '-p', '.', '--model', 'haiku']);
-  const timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, CLAUDE_TIMEOUT_S, () => {
+  let timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, CLAUDE_TIMEOUT_S, () => {
+    timer = 0;
     proc.force_exit();
     return GLib.SOURCE_REMOVE;
   });
@@ -133,7 +140,7 @@ async function runClaude(): Promise<void> {
       throw new Error(`claude : ${why}`);
     }
   } finally {
-    GLib.source_remove(timer);
+    if (timer !== 0) GLib.source_remove(timer);
   }
 }
 

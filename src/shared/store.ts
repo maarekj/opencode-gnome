@@ -429,7 +429,10 @@ export class Store {
         }
         return;
       case 'session.deleted':
-        if (sessionID !== null) this.#forget(sessionID);
+        if (sessionID !== null) {
+          this.#deleted.add(sessionID);
+          this.#forget(sessionID);
+        }
         break;
       case 'session.execution.started':
         if (sessionID === null) return;
@@ -490,6 +493,9 @@ export class Store {
     else this.#children.set(sessionID, next);
   }
 
+  /** sessions supprimées (événement `session.deleted`) : relectures en cours ignorées */
+  readonly #deleted = new Set<string>();
+
   #forget(sessionID: string): void {
     for (const c of this.#children.values()) if (c.parentID === sessionID) this.#children.delete(c.id);
     this.#changes?.info.add(sessionID);
@@ -503,9 +509,12 @@ export class Store {
 
   /** Relit une session (créée, renommée, archivée…) ; archivée : retirée des projets. */
   #refetch(sessionID: string): void {
+    const deletedBefore = this.#deleted.has(sessionID);
     this.client
       .session(sessionID)
       .then((s) => {
+        // supprimée pendant la relecture : pas ressuscitée
+        if (!deletedBefore && this.#deleted.has(s.id)) return null;
         if (s.time.archived !== undefined) this.#forget(s.id);
         else if (s.parentID === undefined) this.#sessions.set(s.id, s);
         else this.#children.set(s.id, s);

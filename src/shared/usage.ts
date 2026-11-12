@@ -117,12 +117,13 @@ const ClaudeCredentials = z.object({ claudeAiOauth: z.object({ accessToken: z.st
  * Claude Code (`~/.claude/.credentials.json`), utilisé par OpenCode 2 (#174) et par le plugin.
  */
 function readToken(): string | null {
-  const r = Auth.safeParse(readJson(GLib.build_filenamev([GLib.get_user_data_dir(), 'opencode', 'auth.json'])));
-  const a = r.success ? r.data.anthropic : undefined;
-  if (a?.type === 'oauth' && a.access !== undefined) return a.access;
+  // Claude Code d'abord : tenu à jour par lui-même ; auth.json n'est plus renouvelé en v2
   const dir = GLib.getenv('CLAUDE_CONFIG_DIR') ?? GLib.build_filenamev([GLib.get_home_dir(), '.claude']);
   const c = ClaudeCredentials.safeParse(readJson(GLib.build_filenamev([dir, '.credentials.json'])));
-  return c.success ? c.data.claudeAiOauth.accessToken : null;
+  if (c.success) return c.data.claudeAiOauth.accessToken;
+  const r = Auth.safeParse(readJson(GLib.build_filenamev([GLib.get_user_data_dir(), 'opencode', 'auth.json'])));
+  const a = r.success ? r.data.anthropic : undefined;
+  return a?.type === 'oauth' && a.access !== undefined ? a.access : null;
 }
 
 /** profil du jeton courant (lu une fois par jeton, seulement s'il a réussi) */
