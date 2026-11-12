@@ -9,7 +9,8 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   conversation en direct (`conversation.ts`), ouverture de terminal (`terminal.ts`).
 - `src/app/` : application `Adw.Application` en TSX avec gnim (`gnim/gtk4`).
 - `src/cli/` : CLI `ocg` (GJS) : `ocg terminal` (terminaux persistants), `ocg link` (liens épinglés),
-  `ocg task` (tâches planifiées) ; aide complète : `ocg help all`. Tâches dans `src/shared/tasks.ts` (config
+  `ocg task` (tâches planifiées), `ocg claude` (jeton du compte Claude, renouvelé par le timer
+  `opencode-gnome-claude-refresh`) ; aide complète : `ocg help all`. Tâches dans `src/shared/tasks.ts` (config
   `tasks.json`, timers systemd utilisateur générés, journal `runs.jsonl`). Tests : lanceur avec
   `OCG_NAMESPACE=test`, `OCG_UNIT_DIR=$XDG_RUNTIME_DIR/systemd/user`, `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
   dans /tmp, `OPENCODE_GNOME_URL` du serveur de test, `OPENCODE_GNOME_TEST_NOTIFY=1`.

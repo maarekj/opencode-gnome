@@ -84,6 +84,12 @@ export const STYLESHEET = `
 .usage-bar {
   padding: 6px 12px 8px;
 }
+.usage-alert {
+  padding-bottom: 6px;
+}
+image.usage-critical {
+  color: var(--error-color);
+}
 .usage-bar levelbar trough {
   min-height: 4px;
 }

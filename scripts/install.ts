@@ -149,6 +149,37 @@ fs.rmSync(path.join(binDir, `ogt${suffix}`), { force: true });
 // unités des tâches existantes : régénérées vers le lanceur à jour (`ocg task exec`)
 execFileSync(path.join(binDir, OCG), ['task', 'sync'], { stdio: 'inherit' });
 
+// jeton du compte Claude (#167) : `ocg claude refresh` chaque minute (lit l'expiration, ne lance
+// claude qu'à son approche) ; installation principale uniquement
+const REFRESH = 'opencode-gnome-claude-refresh';
+if (variant === '') {
+  write(
+    path.join(unitDir, `${REFRESH}.service`),
+    `[Unit]
+Description=Renouvellement du jeton Claude des agents opencode (opencode-gnome)
+
+[Service]
+Type=oneshot
+Environment=${unitQuote(`PATH=${userPath}`)}
+ExecStart=${unitQuote(path.join(binDir, OCG))} claude refresh --quiet
+`,
+  );
+  write(
+    path.join(unitDir, `${REFRESH}.timer`),
+    `[Unit]
+Description=Renouvellement du jeton Claude des agents opencode (chaque minute)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+`,
+  );
+}
+
 // Icône (data/icons) installée sous l'identifiant de l'application ; worktree : pastille numérotée.
 const iconsDir = path.join(home, '.local', 'share', 'icons', 'hicolor');
 const badge =
@@ -196,6 +227,7 @@ if (variant === '') {
   console.log('systemd…');
   execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'inherit' });
   execFileSync('systemctl', ['--user', 'enable', '--now', UNIT], { stdio: 'inherit' });
+  execFileSync('systemctl', ['--user', 'enable', '--now', `${REFRESH}.timer`], { stdio: 'inherit' });
   // pas de redémarrage : il couperait les sessions en cours des agents
   if (pluginChanged) console.log(`plugin direnv installé ou mis à jour : redémarrer le serveur partagé quand aucune session ne tourne (systemctl --user restart ${UNIT})`);
   console.log(`ok — serveur : http://127.0.0.1:${PORT}  ·  console : oc  ·  app : ${LAUNCHER}`);

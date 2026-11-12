@@ -5,6 +5,7 @@ import system from 'system';
 import { errorMessage } from '../shared/errors.ts';
 import { readGuide, repoRoot } from '../shared/help.ts';
 import { UsageError } from './args.ts';
+import { CLAUDE_HELP, claudeCommand } from './claude.ts';
 import { DEVENV_HELP, devenvCommand } from './devenvs.ts';
 import { FOLDER_HELP, folderCommand } from './folders.ts';
 import { LINK_HELP, linkCommand } from './links.ts';
@@ -24,7 +25,8 @@ Usage :
   ocg devenv …     services devenv d'un projet (process manager de devenv up)
   ocg folder …     dossiers de la barre du projet (terminaux, liens et devenv regroupés)
   ocg task …       tâches planifiées (prompts envoyés à heures régulières ou à la main)
-  ocg help [terminal | link | devenv | folder | task | all | guide]   (guide : guide d'utilisation de l'application)
+  ocg claude …     jeton du compte Claude des agents (état, renouvellement)
+  ocg help [terminal | link | devenv | folder | task | claude | all | guide]   (guide : guide d'utilisation de l'application)
 
 Options communes : --project DIR (défaut : projet du dossier courant), --json, -h / --help.
 
@@ -45,8 +47,8 @@ function main(argv: readonly string[]): Promise<number> | number {
       return 0;
     case 'help': {
       const topic = rest[0];
-      const all = [HELP, TERMINAL_HELP, LINK_HELP, DEVENV_HELP, FOLDER_HELP, TASK_HELP];
-      const by: Record<string, string> = { terminal: TERMINAL_HELP, link: LINK_HELP, devenv: DEVENV_HELP, folder: FOLDER_HELP, task: TASK_HELP, all: all.join(`\n\n${'─'.repeat(72)}\n\n`), guide: readGuide(repoRoot(import.meta.url)) };
+      const all = [HELP, TERMINAL_HELP, LINK_HELP, DEVENV_HELP, FOLDER_HELP, TASK_HELP, CLAUDE_HELP];
+      const by: Record<string, string> = { terminal: TERMINAL_HELP, link: LINK_HELP, devenv: DEVENV_HELP, folder: FOLDER_HELP, task: TASK_HELP, claude: CLAUDE_HELP, all: all.join(`\n\n${'─'.repeat(72)}\n\n`), guide: readGuide(repoRoot(import.meta.url)) };
       print(topic === undefined ? HELP : (by[topic] ?? HELP));
       return 0;
     }
@@ -64,6 +66,8 @@ function main(argv: readonly string[]): Promise<number> | number {
     case 'task':
     case 'tasks':
       return taskCommand(rest);
+    case 'claude':
+      return claudeCommand(rest);
     default:
       throw new UsageError(`commande inconnue : ${command} (ocg help)`);
   }
