@@ -367,7 +367,7 @@ export class OpencodeClient {
 
   /** État des serveurs MCP du répertoire (projet ou global). */
   async mcpStatus(directory: string): Promise<Record<string, McpStatus>> {
-    return Object.fromEntries((await this.v2.mcp(directory)).map((m) => [m.name, 'error' in m.status ? { status: m.status.status, error: m.status.error } : { status: m.status.status }]));
+    return Object.fromEntries((await this.v2.mcp(directory)).map((m) => [m.name, 'error' in m.status && m.status.error !== undefined ? { status: m.status.status, error: m.status.error } : { status: m.status.status }]));
   }
 
   /** Serveurs MCP déclarés dans les fichiers de configuration (`null` : configuration globale). */

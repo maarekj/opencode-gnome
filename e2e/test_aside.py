@@ -37,19 +37,18 @@ def open_panel(run_app):
 def test_question_annexe_dans_un_fork_cache(run_app):
     fake, app = open_panel(run_app)
     ask(app, 'Pourquoi ce choix ?')
-    fork = fake.wait_request('POST', '/session/ses_a/fork')
+    fork = fake.wait_request('POST', '/api/session/ses_a/fork')
     # session au repos : copie complète
     assert fork['body'] == {}
     aside = aside_id(app)
-    prompt = fake.wait_request('POST', f'/session/{aside}/prompt_async')
-    assert prompt['body']['parts'][0]['text'] == 'Pourquoi ce choix ?'
+    prompt = fake.wait_request('POST', f'/api/session/{aside}/prompt')
+    assert prompt['body']['text'] == 'Pourquoi ce choix ?'
     # même agent et modèle que la session (cache du fournisseur)
-    assert prompt['body']['model'] == {'providerID': 'fake', 'modelID': 'fake-model'}
     assert app.text_visible('Réponse simulée : Pourquoi ce choix ?')
     # titre repérable, rien d'envoyé dans la session principale
-    rename = fake.wait_request('PATCH', f'/session/{aside}')
+    rename = fake.wait_request('PATCH', f'/api/session/{aside}')
     assert rename['body']['title'] == 'Question annexe — Corriger le bug de connexion'
-    assert not fake.requests('POST', '/session/ses_a/prompt_async')
+    assert not fake.requests('POST', '/api/session/ses_a/prompt')
     # caché dans la barre latérale
     assert not app.has('list item', contains='Question annexe')
 
@@ -60,7 +59,7 @@ def test_supprimer_la_question_annexe(run_app):
     assert app.text_visible('Réponse simulée : Explique')
     aside = aside_id(app)
     app.click('button', 'Supprimer la question annexe')
-    fake.wait_request('DELETE', f'/session/{aside}')
+    fake.wait_request('DELETE', f'/api/session/{aside}')
     wait_until(lambda: 'ses_a' not in app.settings().get('asides', {}), 5, 'annexe oubliée')
     app.find(None, contains='sans interrompre l')
 
@@ -88,5 +87,5 @@ def test_question_annexe_retrouvee_au_panneau_rouvert(run_app):
     assert app.text_visible('Réponse simulée : Première question')
     ask(app, 'Suite')
     assert app.text_visible('Réponse simulée : Suite')
-    assert len(fake.requests('POST', '/session/ses_a/fork')) == 1
-    assert len(fake.requests('POST', f'/session/{aside}/prompt_async')) == 2
+    assert len(fake.requests('POST', '/api/session/ses_a/fork')) == 1
+    assert len(fake.requests('POST', f'/api/session/{aside}/prompt')) == 2

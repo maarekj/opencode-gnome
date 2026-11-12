@@ -8,6 +8,7 @@ import { errorMessage, HttpError } from '../shared/errors.ts';
 import type { Session } from '../shared/schemas.ts';
 import type { Settings } from '../shared/settings.ts';
 import type { Store } from '../shared/store.ts';
+import { AssistantMessage } from '../shared/v2/messages.ts';
 import { Composer, type ComposerProps } from './Composer.tsx';
 import { ConversationView } from './ConversationView.tsx';
 import type { RequestActions } from './Requests.tsx';
@@ -49,8 +50,15 @@ export interface AsideHandle {
  * la session principale, copié à moitié sinon) ; undefined : toute la session.
  */
 async function forkPoint(o: AsideOptions): Promise<string | undefined> {
-  const messages = await o.store.client.messages(o.parentID, 200);
-  return messages.find((m) => m.info.role === 'assistant' && m.info.time.completed === undefined)?.info.id;
+  const page = await o.store.client.v2.messages({ sessionID: o.parentID, limit: 200 });
+  // page la plus récente d'abord : remise dans l'ordre chronologique
+  return page.items
+    .toReversed()
+    .flatMap((raw) => {
+      const a = AssistantMessage.safeParse(raw);
+      return a.success ? [a.data] : [];
+    })
+    .find((m) => m.time.completed === undefined)?.id;
 }
 
 /**

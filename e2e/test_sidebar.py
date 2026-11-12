@@ -9,7 +9,7 @@ BETA = '/tmp/opencode-fake/beta'
 
 
 def busy(data: dict, session: str) -> dict:
-    data['statuses'] = {session: {'type': 'busy'}}
+    data['active'] = [session]
     return data
 
 
@@ -59,9 +59,9 @@ def test_recherche_sans_resultat(run_app):
 
 def test_recharger_relit_les_sessions(run_app):
     fake, app = run_app(scenario('projects'))
-    before = len(fake.requests('GET', '/experimental/session'))
+    before = len(fake.requests('GET', '/api/session'))
     app.click('button', 'Recharger')
-    wait_until(lambda: len(fake.requests('GET', '/experimental/session')) > before, 5, 'sessions relues')
+    wait_until(lambda: len(fake.requests('GET', '/api/session')) > before, 5, 'sessions relues')
 
 
 def test_session_ouverte_sous_son_projet_et_repli(run_app):
@@ -88,7 +88,7 @@ def test_projet_signale_une_session_en_cours(run_app):
 
 def test_projet_signale_une_demande_en_attente(run_app):
     data = scenario('projects')
-    data['permissions'] = [{'id': 'per_1', 'sessionID': 'ses_a2', 'permission': 'bash', 'patterns': ['ls']}]
+    data['permissions'] = [{'id': 'per_1', 'sessionID': 'ses_a2', 'action': 'shell', 'resources': ['ls']}]
     _, app = run_app(data)
     # pastille : texte « 1 », infobulle en description accessible
     badge = app.find('label', '1')
@@ -103,8 +103,8 @@ def test_session_ouverte_affiche_son_activite(run_app):
 def test_menu_projet_nouvelle_session(run_app):
     fake, app = run_app(scenario('projects'))
     app.menu(app.find('list item', 'béta-projet'), 'Nouvelle session')
-    req = fake.wait_request('POST', '/session')
-    assert req['query']['directory'] == BETA
+    req = fake.wait_request('POST', '/api/session')
+    assert req['body']['location'] == {'directory': BETA}
     # la nouvelle session s'ouvre (compositeur affiché)
     app.composer()
 
@@ -124,8 +124,8 @@ def test_menu_projet_toutes_les_sessions(run_app):
 def test_menu_projet_recharger_la_configuration(run_app):
     fake, app = run_app(scenario('projects'))
     app.menu(app.find('list item', 'alpha'), 'Recharger la configuration')
-    req = fake.wait_request('POST', '/instance/dispose')
-    assert req['query']['directory'] == ALPHA
+    req = fake.wait_request('POST', '/api/location/reload')
+    assert req['query']['location[directory]'] == ALPHA
 
 
 def test_menu_projet_mcp(run_app):
@@ -147,7 +147,7 @@ def test_menu_session_renommer(run_app):
     field = app.find('text', None)
     field.text = 'API v2'
     app.click('button', 'Renommer')
-    req = fake.wait_request('PATCH', '/session/ses_a1')
+    req = fake.wait_request('PATCH', '/api/session/ses_a1')
     assert req['body'] == {'title': 'API v2'}
     app.find('list item', 'API v2')
 
@@ -155,7 +155,7 @@ def test_menu_session_renommer(run_app):
 def test_menu_session_forker(run_app):
     fake, app = run_app(scenario('projects'), settings={'openSessions': ['ses_a1']})
     app.menu(app.all('list item', "Refonte de l'API")[0], 'Forker')
-    fake.wait_request('POST', '/session/ses_a1/fork')
+    fake.wait_request('POST', '/api/session/ses_a1/fork')
     assert app.text_visible("Refonte de l'API (fork #1)")
 
 
@@ -168,7 +168,7 @@ def test_menu_session_supprimer_avec_confirmation(run_app):
     assert not fake.requests('DELETE')
     app.menu(app.all('list item', "Refonte de l'API")[0], 'Supprimer…')
     app.click('button', 'Supprimer', within=app.dialog())
-    fake.wait_request('DELETE', '/session/ses_a1')
+    fake.wait_request('DELETE', '/api/session/ses_a1')
     wait_until(lambda: 'ses_a1' not in app.settings().get('openSessions', []), 5, 'session retirée des sessions ouvertes')
 
 

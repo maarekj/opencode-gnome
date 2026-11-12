@@ -1,11 +1,13 @@
-// Faux serveur opencode pour les tests de bout en bout : imite les routes HTTP et le flux
-// d'événements (`/global/event`) utilisés par l'application, à partir d'un scénario JSON.
-// Aucun modèle n'est appelé : un prompt reçoit une réponse simulée (« Réponse simulée : … »).
+// Faux serveur OpenCode 2 pour les tests de bout en bout (#175) : imite les routes `/api/…` et le
+// flux d'événements (`/api/event`) utilisés par l'application, à partir d'un scénario JSON au
+// format v2 (projets, sessions, entrées d'historique, permissions, formulaires…). Aucun modèle
+// n'est appelé : un prompt reçoit une réponse simulée (« Réponse simulée : … »), en direct
+// (étape, bloc de texte par morceaux, fin d'exécution).
 //
 // Usage : node scripts/fake-opencode.ts [--port 4790] [--scenario fichier.json]
 // Pilotage par le test (préfixe /__test) :
 //   GET  /__test/requests          requêtes reçues (méthode, chemin, requête, corps), dans l'ordre
-//   POST /__test/emit              émet un événement : { directory?, payload: { type, properties } }
+//   POST /__test/emit              émet un événement v2 : { type, data, location? }
 //   POST /__test/scenario          remplace l'état par un nouveau scénario
 //   POST /__test/reset             vide le journal des requêtes
 import fs from 'node:fs';
@@ -20,66 +22,65 @@ type Json = Record<string, unknown>;
 
 const isJson = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 const obj = (v: unknown): Json => (isJson(v) ? v : {});
-const list = (v: unknown): Json[] => (Array.isArray(v) ? v.filter((x) => isJson(x)) : []);
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
 const num = (v: unknown): number => (typeof v === 'number' ? v : 0);
 
 const Entity = z.looseObject({ id: z.string() });
-const Message = z.object({ info: z.looseObject({ id: z.string(), role: z.string(), sessionID: z.string() }), parts: z.array(z.looseObject({ id: z.string(), type: z.string() })) });
-type Message = z.output<typeof Message>;
+const Entry = z.looseObject({ id: z.string(), type: z.string(), time: z.looseObject({ created: z.number() }) });
+type Entry = z.output<typeof Entry>;
 
-/** Scénario : état initial du faux serveur. */
+/** Scénario : état initial du faux serveur (format OpenCode 2). */
 const Scenario = z.object({
-  /** projets : `{ id, worktree, name?, vcs? }` */
-  projects: z.optional(z.array(z.looseObject({ id: z.string(), worktree: z.string() }))),
-  /** sessions (racines et sous-agents) : `{ id, projectID, directory, title, … }` */
-  sessions: z.optional(z.array(z.looseObject({ id: z.string(), directory: z.string(), title: z.string() }))),
-  /** messages par session, du plus ancien au plus récent */
-  messages: z.optional(z.record(z.string(), z.array(Message))),
-  /** statut des sessions actives : `{ ses_x: { type: 'busy' } }` */
-  statuses: z.optional(z.record(z.string(), z.looseObject({ type: z.string() }))),
+  /** projets : `{ id, canonical, name?, vcs?, time }` */
+  projects: z.optional(z.array(z.looseObject({ id: z.string(), canonical: z.string() }))),
+  /** sessions (racines et sous-agents) : `{ id, projectID, location: { directory }, title, … }` */
+  sessions: z.optional(z.array(z.looseObject({ id: z.string(), location: z.looseObject({ directory: z.string() }), title: z.string() }))),
+  /** entrées d'historique par session (user, assistant, idle…), de la plus ancienne à la plus récente */
+  messages: z.optional(z.record(z.string(), z.array(Entry))),
+  /** sessions en cours d'exécution */
+  active: z.optional(z.array(z.string())),
   permissions: z.optional(z.array(Entity)),
-  questions: z.optional(z.array(Entity)),
-  /** `{ nom: { status } }` */
-  mcp: z.optional(z.record(z.string(), z.looseObject({ status: z.string() }))),
-  /** configuration (`GET /config`, fusion projet + global) */
+  forms: z.optional(z.array(Entity)),
+  /** `[{ name, status: { status, error? } }]` */
+  mcp: z.optional(z.array(z.looseObject({ name: z.string() }))),
+  /** configuration du projet et globale : écrites dans les fichiers opencode.json par le test (pas servies) */
   config: z.optional(z.looseObject({})),
-  /** configuration globale seule (`GET /global/config`) ; défaut : `config` */
   globalConfig: z.optional(z.looseObject({})),
-  agents: z.optional(z.array(z.looseObject({ name: z.string() }))),
-  providers: z.optional(z.looseObject({})),
+  agents: z.optional(z.array(z.looseObject({ id: z.string() }))),
+  models: z.optional(z.array(z.looseObject({ id: z.string() }))),
+  defaultModel: z.optional(z.object({ providerID: z.string(), modelID: z.string() })),
   commands: z.optional(z.array(z.looseObject({ name: z.string() }))),
-  skills: z.optional(z.array(z.looseObject({ name: z.string() }))),
-  /** fichiers modifiés de l'arbre de travail (`GET /vcs/diff`) : `{ file, status, additions, deletions, patch }` */
+  skills: z.optional(z.array(z.looseObject({ id: z.string() }))),
+  plugins: z.optional(z.array(z.looseObject({}))),
+  /** fichiers modifiés de l'arbre de travail : `{ file, status, additions, deletions, patch }` */
   vcsDiff: z.optional(z.array(z.looseObject({ file: z.string() }))),
-  /** fichiers du projet pour la complétion `@` (`GET /find/file`) ; un dossier finit par `/` */
-  files: z.optional(z.array(z.string())),
-  /** liste de tâches par session (`GET /session/:id/todo`) */
-  todos: z.optional(z.record(z.string(), z.array(z.looseObject({ content: z.string(), status: z.string() })))),
-  /** requêtes qui échouent une fois (HTTP 500), ex. `GET /session/ses_a/message` */
+  /** fichiers du projet pour la complétion `@` : `{ path, type: 'file' | 'directory' }` */
+  files: z.optional(z.array(z.looseObject({ path: z.string(), type: z.string() }))),
+  /** listes de tâches (non servies en v2, gardées pour mémoire) */
+  todos: z.optional(z.record(z.string(), z.array(z.looseObject({})))),
+  /** requêtes qui échouent une fois (HTTP 500), ex. `POST /api/session/ses_a/prompt` */
   failOnce: z.optional(z.array(z.string())),
   /** réponse simulée envoyée après un prompt (`false` : aucune) */
   reply: z.optional(z.union([z.string(), z.literal(false)])),
 });
 type Scenario = z.output<typeof Scenario>;
-type Ses = Json & { id: string; directory: string; title: string };
+type Ses = Json & { id: string; location: { directory: string }; title: string };
 
-const DEFAULT_SCENARIO: Scenario = { projects: [{ id: 'prj_demo', worktree: '/tmp/opencode-fake/demo', name: 'demo', vcs: 'git' }] };
+const DEFAULT_SCENARIO: Scenario = { projects: [{ id: 'prj_demo', canonical: '/tmp/opencode-fake/demo', name: 'demo', vcs: 'git', time: { created: 1, updated: 2 } }] };
 
 const DEFAULT_AGENTS = [
-  { name: 'build', mode: 'primary', description: 'Agent par défaut' },
-  { name: 'plan', mode: 'primary', description: 'Planification' },
-  { name: 'general', mode: 'subagent', description: 'Sous-agent' },
+  { id: 'build', name: 'build', mode: 'primary', hidden: false, description: 'Agent par défaut' },
+  { id: 'plan', name: 'plan', mode: 'primary', hidden: false, description: 'Planification' },
+  { id: 'general', name: 'general', mode: 'subagent', hidden: false, description: 'Sous-agent' },
 ];
-const DEFAULT_PROVIDERS = {
-  providers: [{ id: 'fake', name: 'Fournisseur simulé', models: { 'fake-model': { id: 'fake-model', name: 'Modèle simulé', limit: { context: 200_000 }, variants: { low: {}, high: {} } } } }],
-  default: { fake: 'fake-model' },
-};
+const model = (providerID: string, id: string, name: string, variants: string[]): Json => ({ id, modelID: id, providerID, name, variants: variants.map((v) => ({ id: v })), enabled: true, limit: { context: 200_000, output: 32_000 } });
+const DEFAULT_MODELS = [model('fake', 'fake-model', 'Modèle simulé', ['low', 'high'])];
+const ZERO_TOKENS = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
 
 // ---------------------------------------------------------------- état
 
-/** Champs de date (ms depuis 1970) des scénarios : session.time, message.info.time, part.time, state.time… */
-const TIME_KEYS = new Set(['created', 'updated', 'completed', 'start', 'end', 'archived', 'compacting']);
+/** Champs de date (ms depuis 1970) des scénarios. */
+const TIME_KEYS = new Set(['created', 'updated', 'completed', 'start', 'end', 'archived', 'ran', 'streamed']);
 /** En deçà : pas une date (ordres relatifs comme `created: 1`, laissés tels quels). */
 const EPOCH_MIN = 1_000_000_000_000;
 
@@ -109,43 +110,37 @@ export function shiftDates(scenario: Scenario, now: number): Scenario {
 class State {
   scenario: Scenario = {};
   readonly sessions = new Map<string, Ses>();
-  readonly messages = new Map<string, Message[]>();
+  readonly messages = new Map<string, Entry[]>();
   permissions: Json[] = [];
-  questions: Json[] = [];
-  statuses: Record<string, Json> = {};
-  mcp: Record<string, Json> = {};
-  todos: Record<string, Json[]> = {};
+  forms: Json[] = [];
+  active = new Set<string>();
+  mcp: Json[] = [];
   failOnce = new Set<string>();
   #seq = 0;
 
   load(scenario: Scenario): void {
-    // dates du scénario recalées sur l'heure de lancement (#135) : l'app ignore l'activité des
-    // sessions mises à jour il y a plus de 24 h, un scénario daté vieillirait
+    // dates du scénario recalées sur l'heure de lancement (#135)
     const s = shiftDates(scenario, Date.now());
     this.scenario = s;
     this.sessions.clear();
     this.messages.clear();
-    for (const ses of s.sessions ?? []) this.sessions.set(ses.id, { time: { created: Date.now(), updated: Date.now() }, ...structuredClone(ses) });
+    for (const ses of s.sessions ?? []) this.sessions.set(ses.id, { cost: 0, tokens: ZERO_TOKENS, projectID: 'global', time: { created: Date.now(), updated: Date.now() }, ...structuredClone(ses) });
     for (const [id, msgs] of Object.entries(s.messages ?? {})) this.messages.set(id, structuredClone(msgs));
     this.permissions = structuredClone(s.permissions ?? []);
-    this.questions = structuredClone(s.questions ?? []);
-    this.statuses = structuredClone(s.statuses ?? {});
-    this.mcp = structuredClone(s.mcp ?? {});
-    this.todos = structuredClone(s.todos ?? {});
+    this.forms = structuredClone(s.forms ?? []);
+    this.active = new Set(s.active ?? []);
+    this.mcp = structuredClone(s.mcp ?? []);
     this.failOnce = new Set(s.failOnce ?? []);
   }
 
-  /**
-   * Identifiant croissant (l'app trie messages et parties par identifiant) ; « z » : après les
-   * identifiants des scénarios (`msg_001`…).
-   */
+  /** Identifiant croissant (« z » : après les identifiants des scénarios `msg_001`…). */
   id(prefix: string): string {
     this.#seq += 1;
     return `${prefix}_z${Date.now().toString(36).padStart(10, '0')}${this.#seq.toString(36).padStart(4, '0')}`;
   }
 
   projectOf(directory: string): Json | undefined {
-    return (this.scenario.projects ?? []).find((p) => directory === p.worktree || directory.startsWith(`${p.worktree}/`));
+    return (this.scenario.projects ?? []).find((p) => directory === p.canonical || directory.startsWith(`${p.canonical}/`));
   }
 }
 
@@ -156,96 +151,97 @@ const state = new State();
 state.load(args.values.scenario === undefined ? DEFAULT_SCENARIO : z.parse(Scenario, JSON.parse(fs.readFileSync(path.resolve(args.values.scenario), 'utf8'))));
 const requests: { method: string; path: string; query: Record<string, string>; body: unknown }[] = [];
 const streams = new Set<http.ServerResponse>();
+let eventSeq = 0;
 
-function emit(type: string, properties: unknown, directory: string | null = null): void {
-  const data = `data: ${JSON.stringify({ directory, payload: { type, properties } })}\n\n`;
-  for (const res of streams) res.write(data);
+/** Événement v2 : `{ id, created, type, location?, data }`. */
+function emit(type: string, data: unknown, directory: string | null = null): void {
+  eventSeq += 1;
+  const event = { id: `evt_${eventSeq}`, created: Date.now(), type, ...(directory === null ? {} : { location: { directory } }), data };
+  const line = `data: ${JSON.stringify(event)}\n\n`;
+  for (const res of streams) res.write(line);
 }
 
-function send(res: http.ServerResponse, status: number, body?: unknown, headers: Record<string, string> = {}): void {
-  res.writeHead(status, { 'content-type': 'application/json', ...headers });
+function send(res: http.ServerResponse, status: number, body?: unknown): void {
+  res.writeHead(status, { 'content-type': 'application/json' });
   res.end(body === undefined ? '' : JSON.stringify(body));
 }
 
-const notFound = (res: http.ServerResponse, what: string): void => {
-  send(res, 404, { name: 'NotFoundError', data: { message: `${what} introuvable` } });
+/** Réponse `{ data }` (enveloppe v2), avec la location demandée. */
+const data = (res: http.ServerResponse, value: unknown, directory?: string): void => {
+  send(res, 200, { ...(directory === undefined ? {} : { location: { directory } }), data: value });
 };
+
+const notFound = (res: http.ServerResponse, what: string): void => {
+  send(res, 404, { _tag: 'NotFoundError', message: `${what} introuvable` });
+};
+
+const dirOf = (ses: Ses): string => ses.location.directory;
 
 function touch(ses: Ses): void {
   ses['time'] = { ...obj(ses['time']), updated: Date.now() };
-  emit('session.updated', { info: ses });
 }
 
-function setIdle(sessionID: string): void {
-  delete state.statuses[sessionID];
-  emit('session.status', { sessionID, status: { type: 'idle' } });
+/** Fin d'exécution : entrée « idle », événement de fin. */
+function finishExecution(ses: Ses, outcome: 'succeeded' | 'interrupted'): void {
+  if (!state.active.delete(ses.id)) return;
+  (state.messages.get(ses.id) ?? []).push({ id: state.id('msg'), type: 'idle', time: { created: Date.now() }, outcome });
+  emit(outcome === 'succeeded' ? 'session.execution.succeeded' : 'session.execution.interrupted', { sessionID: ses.id, ...(outcome === 'interrupted' ? { reason: 'user' } : {}) });
+  touch(ses);
 }
 
-/** Réponse simulée à un prompt : message utilisateur, tour de l'assistant, puis repos. */
-function simulateTurn(ses: Ses, text: string, body: Json): void {
+/** Réponse simulée à un prompt : message utilisateur, étape de l'agent en direct, fin d'exécution. */
+function simulateTurn(ses: Ses, text: string): string {
   const msgs = state.messages.get(ses.id) ?? [];
   state.messages.set(ses.id, msgs);
-  const model = obj(body['model']);
-  const agent = str(body['agent'], 'build');
   const userID = state.id('msg');
-  const user: Message = {
-    info: { id: userID, role: 'user', sessionID: ses.id, time: { created: Date.now() }, agent, model },
-    parts: [{ id: state.id('prt'), type: 'text', messageID: userID, sessionID: ses.id, text }],
-  };
-  msgs.push(user);
-  emit('message.updated', { sessionID: ses.id, info: user.info });
-  for (const p of user.parts) emit('message.part.updated', { sessionID: ses.id, part: p });
+  const now = Date.now();
+  msgs.push({ id: userID, type: 'user', time: { created: now }, text });
+  emit('session.inbox.enqueued', { sessionID: ses.id, inboxID: userID, item: { type: 'user', payload: { text }, delivery: 'steer' } }, dirOf(ses));
   const reply = state.scenario.reply;
-  if (reply === false) return;
-  state.statuses[ses.id] = { type: 'busy' };
-  emit('session.status', { sessionID: ses.id, status: { type: 'busy' } });
+  state.active.add(ses.id);
+  emit('session.execution.started', { sessionID: ses.id });
+  emit('session.inbox.delivered', { sessionID: ses.id, inboxID: userID }, dirOf(ses));
+  touch(ses);
+  if (reply === false) return userID;
+  const agent = str(ses['agent'], 'build');
+  const m = obj(ses['model']);
+  const ref = { id: str(m['id'], 'fake-model'), providerID: str(m['providerID'], 'fake') };
   setTimeout(() => {
     const id = state.id('msg');
-    const info = {
-      id,
-      role: 'assistant',
-      sessionID: ses.id,
-      parentID: userID,
-      time: { created: Date.now(), completed: Date.now() + 1 },
-      agent,
-      providerID: str(model['providerID'], 'fake'),
-      modelID: str(model['modelID'], 'fake-model'),
-      tokens: { input: 100, output: 20, cache: { read: 0, write: 0 } },
-      cost: 0,
-    };
-    const part = { id: state.id('prt'), type: 'text', messageID: id, sessionID: ses.id, text: reply ?? `Réponse simulée : ${text}` };
-    msgs.push({ info, parts: [part] });
-    emit('message.updated', { sessionID: ses.id, info });
-    emit('message.part.updated', { sessionID: ses.id, part });
-    setIdle(ses.id);
-    emit('session.idle', { sessionID: ses.id });
-    touch(ses);
+    const answer = reply ?? `Réponse simulée : ${text}`;
+    const tokens = { input: 100, output: 20, reasoning: 0, cache: { read: 0, write: 0 } };
+    emit('session.step.started', { sessionID: ses.id, agent, model: ref, assistantMessageID: id, started: Date.now() });
+    emit('session.text.started', { sessionID: ses.id, assistantMessageID: id, ordinal: 0 });
+    // deux morceaux : l'application assemble les deltas
+    const cut = Math.floor(answer.length / 2);
+    emit('session.text.delta', { sessionID: ses.id, assistantMessageID: id, ordinal: 0, delta: answer.slice(0, cut) });
+    emit('session.text.delta', { sessionID: ses.id, assistantMessageID: id, ordinal: 0, delta: answer.slice(cut) });
+    emit('session.text.ended', { sessionID: ses.id, assistantMessageID: id, ordinal: 0, text: answer });
+    emit('session.step.ended', { sessionID: ses.id, assistantMessageID: id, finish: 'stop', tokens, cost: 0 });
+    msgs.push({ id, type: 'assistant', time: { created: Date.now(), completed: Date.now() + 1 }, agent, model: ref, content: [{ type: 'text', text: answer }], tokens, cost: 0, finish: 'stop' });
+    finishExecution(ses, 'succeeded');
   }, 300);
+  return userID;
 }
 
 /** Appel d'outil lié à une demande : terminé (sortie simulée) ou en erreur (refus). */
-function finishTool(request: Json, output: string | null): void {
-  const tool = obj(request['tool']);
-  const sid = str(request['sessionID']);
-  const msg = (state.messages.get(sid) ?? []).find((x) => x.info.id === tool['messageID']);
-  const part = msg?.parts.find((x) => x['callID'] === tool['callID']);
-  if (part === undefined) return;
-  const prev = obj(part['state']);
-  part['state'] = output === null ? { ...prev, status: 'error', error: 'Permission refusée' } : { ...prev, status: 'completed', output };
-  emit('message.part.updated', { sessionID: sid, part });
-  setIdle(sid);
-}
-
-function finishQuestion(request: Json, answers: unknown): void {
-  const tool = obj(request['tool']);
-  const sid = str(request['sessionID']);
-  const msg = (state.messages.get(sid) ?? []).find((x) => x.info.id === tool['messageID']);
-  const part = msg?.parts.find((x) => x['callID'] === tool['callID']);
-  if (part === undefined) return;
-  const prev = obj(part['state']);
-  part['state'] = answers === null ? { ...prev, status: 'error', error: 'The user dismissed this question' } : { ...prev, status: 'completed', metadata: { answers }, output: 'ok' };
-  emit('message.part.updated', { sessionID: sid, part });
-  setIdle(sid);
+function finishTool(sid: string, source: Json, result: { output: string; metadata?: Json } | null): void {
+  const msg = (state.messages.get(sid) ?? []).find((x) => x.id === source['messageID']);
+  const raw: unknown = msg?.['content'];
+  const content: Json[] = Array.isArray(raw) ? raw.filter((x): x is Json => isJson(x)) : [];
+  const call = content.find((x) => x['type'] === 'tool' && x['id'] === source['id']);
+  if (msg === undefined || call === undefined) return;
+  const input = obj(obj(call['state'])['input']);
+  call['state'] =
+    result === null
+      ? { status: 'error', input, error: { type: 'PermissionRejected', message: 'Permission refusée' } }
+      : { status: 'completed', input, content: [{ type: 'text', text: result.output }], ...(result.metadata === undefined ? {} : { metadata: result.metadata }) };
+  call['time'] = { ...obj(call['time']), completed: Date.now() };
+  const base = { sessionID: sid, assistantMessageID: msg.id, id: source['id'], executed: true };
+  if (result === null) emit('session.tool.failed', { ...base, error: { type: 'PermissionRejected', message: 'Permission refusée' } });
+  else emit('session.tool.success', { ...base, content: [{ type: 'text', text: result.output }], ...(result.metadata === undefined ? {} : { metadata: result.metadata }) });
+  const ses = state.sessions.get(sid);
+  if (ses !== undefined) finishExecution(ses, 'succeeded');
 }
 
 async function readBody(req: http.IncomingMessage): Promise<unknown> {
@@ -260,12 +256,6 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
   }
 }
 
-const textOf = (body: Json): string =>
-  list(body['parts'])
-    .filter((p) => p['type'] === 'text')
-    .map((p) => str(p['text']))
-    .join('\n');
-
 const updatedOf = (s: Json): number => num(obj(s['time'])['updated']);
 
 /** Routes de pilotage du test ; true si la requête a été traitée. */
@@ -279,8 +269,8 @@ function handleTest(p: string, b: Json, res: http.ServerResponse): boolean {
       send(res, 200, true);
       return true;
     case '/__test/emit': {
-      const payload = obj(b['payload']);
-      emit(str(payload['type']), payload['properties'], typeof b['directory'] === 'string' ? b['directory'] : null);
+      const location = obj(b['location']);
+      emit(str(b['type']), b['data'] ?? {}, typeof location['directory'] === 'string' ? location['directory'] : null);
       send(res, 200, true);
       return true;
     }
@@ -293,182 +283,208 @@ function handleTest(p: string, b: Json, res: http.ServerResponse): boolean {
   }
 }
 
-/** Routes en lecture simple ; la valeur renvoyée, ou undefined si la route n'est pas connue. */
+/** Page de sessions : filtres v2 (racines, dossier), plus récentes d'abord, curseur = index. */
+function sessionPage(query: Record<string, string>): Json {
+  const roots = query['parentID'] === 'null';
+  const all = [...state.sessions.values()]
+    .filter((x) => !roots || x['parentID'] === undefined)
+    .filter((x) => query['directory'] === undefined || dirOf(x) === query['directory'])
+    .toSorted((x, y) => updatedOf(y) - updatedOf(x));
+  const start = query['cursor'] === undefined ? 0 : Number(Buffer.from(query['cursor'], 'base64url').toString('utf8'));
+  const limit = Number(query['limit'] ?? 50);
+  const end = start + limit;
+  return { data: all.slice(start, end), cursor: { previous: null, next: end < all.length ? Buffer.from(String(end)).toString('base64url') : null } };
+}
+
+/** Page d'historique : la plus récente d'abord (`order=desc`), curseur = index (exclu) dans la liste. */
+function messagePage(msgs: readonly Entry[], query: Record<string, string>): Json {
+  const limit = Number(query['limit'] ?? msgs.length);
+  const end = query['cursor'] === undefined ? msgs.length : Number(Buffer.from(query['cursor'], 'base64url').toString('utf8'));
+  const start = Math.max(0, end - limit);
+  return { data: msgs.slice(start, end).toReversed(), cursor: { previous: null, next: start > 0 ? Buffer.from(String(start)).toString('base64url') : null } };
+}
+
+/** Routes en lecture simple ; la valeur renvoyée (déjà enveloppée), ou undefined si inconnue. */
 function simpleRoute(p: string, query: Record<string, string>): unknown {
   const s = state.scenario;
+  const directory = query['location[directory]'] ?? '/';
+  const located = (value: unknown): Json => ({ location: { directory }, data: value });
   switch (p) {
-    case '/global/health':
-      return { healthy: true, version: 'fake' };
-    case '/project':
-      return s.projects ?? [];
-    case '/agent':
-      return s.agents ?? DEFAULT_AGENTS;
-    case '/config/providers':
-      return s.providers ?? DEFAULT_PROVIDERS;
-    case '/config':
-      return s.config ?? {};
-    case '/global/config':
-      return s.globalConfig ?? s.config ?? {};
-    case '/command':
-      return s.commands ?? [];
-    case '/skill':
-      return s.skills ?? [];
-    case '/mcp':
-      return state.mcp;
-    case '/vcs':
-      return { branch: 'main' };
-    case '/vcs/diff':
-      return s.vcsDiff ?? [];
-    case '/find/file': {
+    case '/api/info':
+      return { version: 'fake', pid: process.pid, urls: [], paths: { tmp: '/tmp' } };
+    case '/api/project':
+      return (s.projects ?? []).map((x) => Object.assign({ sandboxes: [], time: { created: 1, updated: 2 } }, x));
+    case '/api/session':
+      return sessionPage(query);
+    case '/api/session/active':
+      return { data: Object.fromEntries([...state.active].map((id) => [id, { type: 'running' }])) };
+    case '/api/agent':
+      return located(s.agents ?? DEFAULT_AGENTS);
+    case '/api/model':
+      return located(s.models ?? DEFAULT_MODELS);
+    case '/api/model/default': {
+      const models = s.models ?? DEFAULT_MODELS;
+      const d = s.defaultModel;
+      return located((d === undefined ? models[0] : models.find((m) => m['providerID'] === d.providerID && m['modelID'] === d.modelID)) ?? null);
+    }
+    case '/api/command':
+      return located(s.commands ?? []);
+    case '/api/skill':
+      return located(s.skills ?? []);
+    case '/api/plugin': {
+      // `global: true` : plugin de la configuration globale ; les autres, seulement dans un projet
+      const inProject = state.projectOf(directory) !== undefined;
+      return located((s.plugins ?? []).filter((x) => inProject || x['global'] === true));
+    }
+    case '/api/mcp':
+      return located(state.mcp);
+    case '/api/vcs':
+      return located({ branch: { current: 'main' } });
+    case '/api/vcs/diff':
+      return located(s.vcsDiff ?? []);
+    case '/api/fs/find': {
       // comme opencode : correspondance approximative sur le chemin, dossiers avec `type=directory`
       const q = (query['query'] ?? '').toLowerCase();
-      const dirs = query['type'] === 'directory';
-      return (s.files ?? [])
-        .filter((f) => f.endsWith('/') === dirs && f.toLowerCase().includes(q))
-        .slice(0, Number(query['limit'] ?? 20));
+      const type = query['type'] ?? 'file';
+      return located(
+        (s.files ?? [])
+          .filter((f) => f['type'] === type && f.path.toLowerCase().includes(q))
+          .slice(0, Number(query['limit'] ?? 20)),
+      );
     }
-    case '/instance/dispose':
-      return true;
-    case '/permission':
-      return state.permissions;
-    case '/question':
-      return state.questions;
-    case '/session/status':
-      return state.statuses;
-    case '/experimental/session': {
-      const roots = query['roots'] === 'true';
-      return [...state.sessions.values()]
-        .filter((x) => !roots || x['parentID'] === undefined)
-        .map((x): Ses => Object.assign(structuredClone(x), { project: state.projectOf(x.directory) }))
-        .toSorted((x, y) => updatedOf(y) - updatedOf(x))
-        .slice(0, Number(query['limit'] ?? 500));
-    }
+    case '/api/permission/request':
+      return located(state.permissions.filter((x) => directory === '/' || dirOf(state.sessions.get(str(x['sessionID'])) ?? { id: '', title: '', location: { directory } }) === directory));
+    case '/api/form':
+      return located(state.forms.filter((x) => directory === '/' || dirOf(state.sessions.get(str(x['sessionID'])) ?? { id: '', title: '', location: { directory } }) === directory));
     default:
       return undefined;
   }
 }
 
-/** Réponses aux permissions et questions, connexion des MCP. */
-function handleRequests(method: string, p: string, b: Json, res: http.ServerResponse): boolean {
+/** MCP, rechargement de la configuration ; true si la requête a été traitée. */
+function handleGlobal(method: string, p: string, res: http.ServerResponse): boolean {
   if (method !== 'POST') return false;
-  let m = /^\/permission\/([^/]+)\/reply$/u.exec(p);
+  const m = /^\/api\/experimental\/mcp\/([^/]+)\/(connect|disconnect)$/u.exec(p);
   if (m !== null) {
-    const id = m[1];
-    const perm = state.permissions.find((x) => x['id'] === id);
-    if (perm === undefined) notFound(res, 'permission');
-    else {
-      state.permissions = state.permissions.filter((x) => x !== perm);
-      emit('permission.replied', { sessionID: perm['sessionID'], requestID: id, reply: b['reply'] });
-      finishTool(perm, b['reply'] === 'reject' ? null : 'sortie simulée');
-      send(res, 200, true);
-    }
+    const name = decodeURIComponent(m[1] ?? '');
+    const entry = state.mcp.find((x) => x['name'] === name);
+    const status = { status: m[2] === 'connect' ? 'connected' : 'disabled' };
+    if (entry === undefined) state.mcp.push({ name, status });
+    else entry['status'] = status;
+    send(res, 200);
     return true;
   }
-  m = /^\/question\/([^/]+)\/(reply|reject)$/u.exec(p);
-  if (m !== null) {
-    const [, id, verb] = m;
-    const q = state.questions.find((x) => x['id'] === id);
-    if (q === undefined) notFound(res, 'question');
-    else {
-      state.questions = state.questions.filter((x) => x !== q);
-      emit(verb === 'reply' ? 'question.replied' : 'question.rejected', { sessionID: q['sessionID'], requestID: id });
-      // appel de l'outil `question` : terminé avec les réponses (ou en erreur s'il est ignoré)
-      finishQuestion(q, verb === 'reply' ? b['answers'] : null);
-      send(res, 200, true);
-    }
-    return true;
-  }
-  m = /^\/mcp\/([^/]+)\/(connect|disconnect)$/u.exec(p);
-  if (m !== null) {
-    state.mcp[decodeURIComponent(m[1] ?? '')] = { status: m[2] === 'connect' ? 'connected' : 'disabled' };
-    send(res, 200, true);
+  if (p === '/api/location/reload') {
+    send(res, 200);
     return true;
   }
   return false;
 }
 
-/** Actions sur une session existante. */
-function handleSession(method: string, ses: Ses, action: string | undefined, query: Record<string, string>, b: Json, res: http.ServerResponse): void {
+/** Actions sur une session existante (`/api/session/:id/<action…>`). */
+function handleSession(method: string, ses: Ses, action: string, query: Record<string, string>, b: Json, res: http.ServerResponse): void {
   const sid = ses.id;
   const msgs = state.messages.get(sid) ?? [];
-  const route = `${method} ${action ?? ''}`;
+  const route = `${method} ${action}`;
+  // demandes : `permission/<id>/reply`, `form/<id>/reply`, `form/<id>`
+  const req = /^(permission|form)\/([^/]+)(\/reply)?$/u.exec(action);
+  if (req !== null) {
+    const [, kind, id, reply] = req;
+    if (kind === 'permission' && method === 'POST' && reply !== undefined) {
+      const perm = state.permissions.find((x) => x['id'] === id);
+      if (perm === undefined) {
+        notFound(res, 'permission');
+        return;
+      }
+      state.permissions = state.permissions.filter((x) => x !== perm);
+      emit('permission.replied', { sessionID: perm['sessionID'], requestID: id, reply: b['decision'] });
+      finishTool(str(perm['sessionID']), obj(perm['source']), b['decision'] === 'reject' ? null : { output: 'sortie simulée' });
+      send(res, 200);
+      return;
+    }
+    if (kind === 'form' && ((method === 'POST' && reply !== undefined) || (method === 'DELETE' && reply === undefined))) {
+      const form = state.forms.find((x) => x['id'] === id);
+      if (form === undefined) {
+        notFound(res, 'formulaire');
+        return;
+      }
+      state.forms = state.forms.filter((x) => x !== form);
+      const answered = method === 'POST';
+      emit(answered ? 'form.replied' : 'form.cancelled', { id, sessionID: form['sessionID'], ...(answered ? { answer: b['answer'] } : {}) });
+      // question de l'agent : l'appel de l'outil `question` se termine avec les réponses
+      const tool = obj(obj(form['metadata'])['tool']);
+      const answers = Object.values(obj(b['answer'])).map((v): string[] => (Array.isArray(v) ? v.map(String) : [String(v)]));
+      finishTool(str(form['sessionID']), tool, answered ? { output: 'ok', metadata: { answers } } : null);
+      send(res, 200);
+      return;
+    }
+  }
   switch (route) {
     case 'GET ':
-      send(res, 200, ses);
+      data(res, ses);
       return;
     case 'PATCH ':
       if (typeof b['title'] === 'string') ses.title = b['title'];
       touch(ses);
-      send(res, 200, ses);
+      emit('session.renamed', { sessionID: sid, title: ses.title });
+      send(res, 200);
       return;
     case 'DELETE ':
       state.sessions.delete(sid);
       state.messages.delete(sid);
-      emit('session.deleted', { sessionID: sid, info: ses });
-      send(res, 200, true);
+      emit('session.deleted', { sessionID: sid });
+      send(res, 200);
       return;
-    case 'GET message': {
-      // du plus récent au plus ancien, par pages ; curseur = index (exclu) dans la liste
-      const limit = Number(query['limit'] ?? msgs.length);
-      const before = query['before'];
-      const end = before === undefined ? msgs.length : Number(Buffer.from(before, 'base64url').toString('utf8'));
-      const start = Math.max(0, end - limit);
-      send(res, 200, msgs.slice(start, end), start > 0 ? { 'X-Next-Cursor': Buffer.from(String(start)).toString('base64url') } : {});
+    case 'GET message':
+      send(res, 200, messagePage(msgs, query));
+      return;
+    case 'POST prompt': {
+      const id = simulateTurn(ses, str(b['text']));
+      data(res, { id, sessionID: sid, type: 'user', payload: { text: str(b['text']) }, delivery: 'steer' });
       return;
     }
-    case 'GET todo':
-      send(res, 200, state.todos[sid] ?? []);
-      return;
-    case 'GET children':
-      send(res, 200, [...state.sessions.values()].filter((x) => x['parentID'] === sid));
-      return;
-    case 'POST prompt_async':
-    case 'POST message':
-      simulateTurn(ses, textOf(b), b);
-      send(res, 204);
-      return;
     case 'POST command':
-      simulateTurn(ses, `/${str(b['command'])} ${str(b['arguments'])}`.trim(), b);
-      send(res, 200, {});
+      simulateTurn(ses, `/${str(b['name'])} ${str(b['text'])}`.trim());
+      send(res, 200);
       return;
-    case 'POST abort':
-      setIdle(sid);
-      send(res, 200, true);
+    case 'POST agent':
+      ses['agent'] = b['agent'];
+      send(res, 200);
+      return;
+    case 'POST model':
+      ses['model'] = b['model'];
+      send(res, 200);
+      return;
+    case 'POST interrupt':
+      finishExecution(ses, 'interrupted');
+      data(res, { interrupted: true });
+      return;
+    case 'POST compact':
+      data(res, { id: state.id('msg'), sessionID: sid, type: 'compaction', delivery: 'steer' });
       return;
     case 'POST fork': {
-      const until = typeof b['messageID'] === 'string' ? msgs.findIndex((x) => x.info.id === b['messageID']) : -1;
+      const until = typeof b['before'] === 'string' ? msgs.findIndex((x) => x.id === b['before']) : -1;
       const kept = until === -1 ? msgs : msgs.slice(0, until);
       const n = [...state.sessions.values()].filter((x) => x.title.startsWith(`${ses.title} (fork #`)).length + 1;
       const id = state.id('ses');
       const copy: Ses = { ...structuredClone(ses), id, title: `${ses.title} (fork #${n})`, time: { created: Date.now(), updated: Date.now() } };
-      // comme opencode : la copie n'a ni agent ni modèle
-      delete copy['model'];
-      delete copy['agent'];
       state.sessions.set(id, copy);
-      state.messages.set(
-        id,
-        kept.map((x) => ({ info: { ...structuredClone(x.info), sessionID: id }, parts: x.parts.map((pt) => ({ ...structuredClone(pt), sessionID: id })) })),
-      );
-      emit('session.created', { info: copy });
-      send(res, 200, copy);
+      state.messages.set(id, structuredClone(kept));
+      emit('session.created', { sessionID: id, projectID: copy['projectID'], location: copy.location, slug: id, title: copy.title });
+      data(res, copy);
       return;
     }
-    case 'POST revert':
+    case 'POST revert/stage':
       ses['revert'] = { messageID: b['messageID'] };
       touch(ses);
-      send(res, 200, ses);
+      emit('session.revert.staged', { sessionID: sid, revert: ses['revert'] });
+      data(res, ses['revert']);
       return;
-    case 'POST unrevert':
+    case 'DELETE revert':
       delete ses['revert'];
       touch(ses);
-      send(res, 200, ses);
-      return;
-    case 'POST share':
-    case 'DELETE share':
-      send(res, 200, { ...ses, share: method === 'DELETE' ? null : { url: `https://example.invalid/s/${sid}` } });
-      return;
-    case 'POST summarize':
-      send(res, 200, true);
+      emit('session.revert.cleared', { sessionID: sid });
+      send(res, 200);
       return;
     default:
       notFound(res, `route ${route}`);
@@ -477,10 +493,11 @@ function handleSession(method: string, ses: Ses, action: string | undefined, que
 
 function openStream(req: http.IncomingMessage, res: http.ServerResponse): void {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-  res.write(`data: ${JSON.stringify({ directory: null, payload: { type: 'server.connected', properties: {} } })}\n\n`);
+  res.write(`data: ${JSON.stringify({ id: 'evt_0', type: 'server.connected', data: {} })}\n\n`);
   streams.add(res);
+  // battement : ligne de commentaire, comme OpenCode 2
   const beat = setInterval(() => {
-    res.write(`data: ${JSON.stringify({ directory: null, payload: { type: 'server.heartbeat', properties: {} } })}\n\n`);
+    res.write(': heartbeat\n\n');
   }, 5000);
   req.on('close', () => {
     clearInterval(beat);
@@ -495,7 +512,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   const body = method === 'GET' ? undefined : await readBody(req);
   const p = url.pathname;
   const b = obj(body);
-  if (p === '/global/event') {
+  if (p === '/api/event') {
     openStream(req, res);
     return;
   }
@@ -505,7 +522,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   }
   requests.push({ method, path: p, query, body });
   if (state.failOnce.delete(`${method} ${p}`)) {
-    send(res, 500, { name: 'FakeError', data: { message: 'échec simulé' } });
+    send(res, 500, { _tag: 'FakeError', message: 'échec simulé' });
     return;
   }
   if (method === 'GET') {
@@ -515,31 +532,40 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return;
     }
   }
-  if (handleRequests(method, p, b, res)) return;
-  if (p === '/session' && method === 'POST') {
-    const directory = query['directory'] ?? '/';
+  if (handleGlobal(method, p, res)) return;
+  if (p === '/api/session' && method === 'POST') {
+    const directory = str(obj(b['location'])['directory'], '/');
     const id = state.id('ses');
-    const ses: Ses = { id, projectID: str(state.projectOf(directory)?.['id'], 'global'), directory, title: str(b['title'], `New session - ${new Date().toISOString()}`), time: { created: Date.now(), updated: Date.now() } };
+    const ses: Ses = {
+      id,
+      projectID: str(state.projectOf(directory)?.['id'], 'global'),
+      location: { directory },
+      title: str(b['title'], `New session - ${new Date().toISOString()}`),
+      cost: 0,
+      tokens: ZERO_TOKENS,
+      time: { created: Date.now(), updated: Date.now() },
+      ...(Array.isArray(b['permissions']) ? { permissions: b['permissions'] } : {}),
+    };
     state.sessions.set(id, ses);
     state.messages.set(id, []);
-    emit('session.created', { info: ses });
-    send(res, 200, ses);
+    emit('session.created', { sessionID: id, projectID: ses['projectID'], location: ses.location, slug: id, title: ses.title }, directory);
+    data(res, ses);
     return;
   }
-  const m = /^\/session\/([^/]+)(?:\/([a-z_]+))?$/u.exec(p);
+  const m = /^\/api\/session\/([^/]+)(?:\/(.+))?$/u.exec(p);
   const ses = m === null ? undefined : state.sessions.get(decodeURIComponent(m[1] ?? ''));
   if (m === null || ses === undefined) {
     notFound(res, `${method} ${p}`);
     return;
   }
-  handleSession(method, ses, m[2], query, b, res);
+  handleSession(method, ses, m[2] ?? '', query, b, res);
 }
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((e: unknown) => {
-    send(res, 500, { name: 'FakeError', data: { message: String(e) } });
+    send(res, 500, { _tag: 'FakeError', message: String(e) });
   });
 });
 server.listen(Number(args.values.port), '127.0.0.1', () => {
-  console.log(`faux opencode : http://127.0.0.1:${args.values.port}`);
+  console.log(`faux opencode (v2) : http://127.0.0.1:${args.values.port}`);
 });

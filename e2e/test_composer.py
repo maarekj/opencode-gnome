@@ -19,7 +19,7 @@ def start(run_app, session='ses_a', **kw):
 
 
 def prompt_body(fake) -> dict:
-    return fake.wait_request('POST', '/session/ses_a/prompt_async')['body']
+    return fake.wait_request('POST', '/api/session/ses_a/prompt')['body']
 
 
 def test_ctrl_entree_envoie(run_app):
@@ -27,16 +27,16 @@ def test_ctrl_entree_envoie(run_app):
     app.focus_composer()
     app.type('Bonjour')
     app.key('<Control>Return')
-    assert prompt_body(fake)['parts'][0]['text'] == 'Bonjour'
+    assert prompt_body(fake)['text'] == 'Bonjour'
     wait_until(lambda: app.composer().text == '', 5, 'compositeur vidé')
 
 
 def test_echec_d_envoi_conserve_le_texte(run_app):
     data = scenario('composer')
-    data['failOnce'] = ['POST /session/ses_a/prompt_async']
+    data['failOnce'] = ['POST /api/session/ses_a/prompt']
     fake, app = start(run_app, data=data)
     app.type_in_composer('Texte précieux')
-    fake.wait_request('POST', '/session/ses_a/prompt_async')
+    fake.wait_request('POST', '/api/session/ses_a/prompt')
     assert app.text_visible('Envoi impossible')
     wait_until(lambda: app.composer().text == 'Texte précieux', 5, 'texte rendu au compositeur')
 
@@ -47,7 +47,9 @@ def test_choix_de_l_agent(run_app):
     app.choose('plan')
     app.find('toggle button', 'plan')
     app.type_in_composer('Planifie')
-    assert prompt_body(fake)['agent'] == 'plan'
+    # OpenCode 2 : agent réglé sur la session avant l'envoi
+    assert fake.wait_request('POST', '/api/session/ses_a/agent')['body'] == {'agent': 'plan'}
+    prompt_body(fake)
 
 
 def test_choix_du_modele(run_app):
@@ -56,7 +58,8 @@ def test_choix_du_modele(run_app):
     app.choose('fake/other-model')
     app.find('toggle button', 'fake/other-model')
     app.type_in_composer('Autre')
-    assert prompt_body(fake)['model'] == {'providerID': 'fake', 'modelID': 'other-model'}
+    assert fake.wait_request('POST', '/api/session/ses_a/model')['body']['model'] == {'id': 'other-model', 'providerID': 'fake'}
+    prompt_body(fake)
 
 
 def test_niveau_de_raisonnement_et_ctrl_t(run_app):
@@ -65,7 +68,8 @@ def test_niveau_de_raisonnement_et_ctrl_t(run_app):
     app.choose('high')
     app.find('toggle button', 'high')
     app.type_in_composer('Réfléchis')
-    assert prompt_body(fake)['variant'] == 'high'
+    assert fake.wait_request('POST', '/api/session/ses_a/model')['body']['model']['variant'] == 'high'
+    prompt_body(fake)
     # Ctrl+T : niveau suivant (retour au premier)
     app.focus_composer()
     app.key('<Control>t')
@@ -82,7 +86,7 @@ def test_jauge_de_contexte_apres_une_reponse(run_app):
 def test_interrompre(run_app):
     fake, app = start(run_app, session='ses_b')
     app.click('button', 'Interrompre')
-    fake.wait_request('POST', '/session/ses_b/abort')
+    fake.wait_request('POST', '/api/session/ses_b/interrupt')
 
 
 def test_completion_des_commandes(run_app):
@@ -95,9 +99,9 @@ def test_completion_des_commandes(run_app):
     wait_until(lambda: app.composer().text.startswith('/review '), 5, 'commande complétée')
     app.type('main')
     app.key('<Control>Return')
-    req = fake.wait_request('POST', '/session/ses_a/command')
-    assert req['body']['command'] == 'review'
-    assert req['body']['arguments'] == 'main'
+    req = fake.wait_request('POST', '/api/session/ses_a/command')
+    assert req['body']['name'] == 'review'
+    assert req['body']['text'] == 'main'
 
 
 def test_completion_badges(run_app):
@@ -105,7 +109,7 @@ def test_completion_badges(run_app):
     app.focus_composer()
     app.type('/')
     app.find('label', '/pdf')
-    app.find('label', 'skill')
+    # OpenCode 2 : plus de provenance des commandes (badge « skill ») ; commandes intégrées seules
     app.find('label', 'intégrée')
     app.key('Escape')
     wait_until(lambda: not app.has('label', '/pdf'), 5, 'complétion fermée')
@@ -123,48 +127,46 @@ def builtin(app, text: str) -> None:
 def test_compact(run_app):
     fake, app = start(run_app)
     builtin(app, '/compact')
-    fake.wait_request('POST', '/session/ses_a/summarize')
+    fake.wait_request('POST', '/api/session/ses_a/compact')
 
 
 def test_undo_puis_redo(run_app):
     fake, app = start(run_app)
     builtin(app, '/undo')
-    req = fake.wait_request('POST', '/session/ses_a/revert')
+    req = fake.wait_request('POST', '/api/session/ses_a/revert/stage')
     assert req['body']['messageID'] == 'msg_001'
     # le prompt annulé revient dans le compositeur
     wait_until(lambda: 'La connexion échoue' in app.composer().text, 5, 'prompt rendu')
     app.composer().text = ''
     builtin(app, '/redo')
-    fake.wait_request('POST', '/session/ses_a/unrevert')
+    fake.wait_request('DELETE', '/api/session/ses_a/revert')
 
 
 def test_new(run_app):
     fake, app = start(run_app)
     builtin(app, '/new')
-    req = fake.wait_request('POST', '/session')
-    assert req['query']['directory'] == DIR
+    req = fake.wait_request('POST', '/api/session')
+    assert req['body']['location'] == {'directory': DIR}
 
 
-def test_share_et_unshare(run_app):
-    fake, app = start(run_app)
+def test_share_absent_d_opencode_2(run_app):
+    _, app = start(run_app)
     builtin(app, '/share')
-    fake.wait_request('POST', '/session/ses_a/share')
-    wait_until(lambda: app.clipboard() == 'https://example.invalid/s/ses_a', 5, 'lien copié')
-    builtin(app, '/unshare')
-    fake.wait_request('DELETE', '/session/ses_a/share')
+    # partage retiré d'OpenCode 2 (#172) : erreur explicite, aucune requête
+    app.find(None, contains='n’existe plus dans OpenCode 2')
 
 
 def test_rename(run_app):
     fake, app = start(run_app)
     builtin(app, '/rename Nouveau titre')
-    req = fake.wait_request('PATCH', '/session/ses_a')
+    req = fake.wait_request('PATCH', '/api/session/ses_a')
     assert req['body'] == {'title': 'Nouveau titre'}
 
 
 def test_fork(run_app):
     fake, app = start(run_app)
     builtin(app, '/fork')
-    fake.wait_request('POST', '/session/ses_a/fork')
+    fake.wait_request('POST', '/api/session/ses_a/fork')
     assert app.text_visible('Corriger le bug de connexion (fork #1)')
 
 
@@ -177,9 +179,9 @@ def test_mention_de_fichier(run_app):
     app.key('Tab')
     wait_until(lambda: '@src/app.ts' in app.composer().text, 5, 'mention insérée')
     app.key('<Control>Return')
-    parts = prompt_body(fake)['parts']
-    files = [p for p in parts if p['type'] == 'file']
-    assert files and files[0]['url'] == f'file://{DIR}/src/app.ts'
+    files = prompt_body(fake)['files']
+    assert files and files[0]['uri'] == f'file://{DIR}/src/app.ts'
+    assert files[0]['mention']['text'] == '@src/app.ts'
 
 
 def test_mention_d_un_dossier_puis_descente(run_app):
@@ -212,6 +214,5 @@ def test_coller_une_image_puis_la_retirer(run_app):
     app.key('<Control>v')
     app.find('button', 'Retirer')
     app.type_in_composer('Voici une capture')
-    parts = prompt_body(fake)['parts']
-    images = [p for p in parts if p['type'] == 'file']
-    assert images and images[0]['mime'] == 'image/png' and images[0]['url'].startswith('data:image/png;base64,')
+    images = prompt_body(fake)['files']
+    assert images and images[0]['uri'].startswith('data:image/png;base64,')

@@ -1,5 +1,7 @@
 """Conversation : contenu, outils, cartes de demande, sous-agent, liste de tâches, erreurs."""
 
+import pytest
+
 import json
 import time
 
@@ -80,8 +82,8 @@ def test_question_choix_unique(run_app):
     fake, app = run_app(conv(), '--session', 'ses_c')
     app.click('radio button', contains='Production')
     app.click('button', 'Répondre')
-    req = fake.wait_request('POST', '/question/que_1/reply')
-    assert req['body']['answers'] == [['Production']]
+    req = fake.wait_request('POST', '/api/session/ses_c/form/que_1/reply')
+    assert req['body']['answer'] == {'q0': 'Production'}
     app.find(None, contains='Question répondue')
 
 
@@ -93,30 +95,30 @@ def test_question_autre_reponse(run_app):
     assert len(editable) == 2
     editable[0].text = 'Préproduction'
     app.click('button', 'Répondre')
-    req = fake.wait_request('POST', '/question/que_1/reply')
-    assert req['body']['answers'] == [['Préproduction']]
+    req = fake.wait_request('POST', '/api/session/ses_c/form/que_1/reply')
+    assert req['body']['answer'] == {'q0': 'Préproduction'}
 
 
 def test_question_ignoree(run_app):
     fake, app = run_app(conv(), '--session', 'ses_c')
     app.click('button', 'Ignorer')
-    fake.wait_request('POST', '/question/que_1/reject')
+    fake.wait_request('DELETE', '/api/session/ses_c/form/que_1')
     app.find(None, contains='Questions ignorées')
 
 
 def test_permission_refusee(run_app):
     fake, app = run_app(conv(), '--session', 'ses_p')
     app.click('button', 'Refuser')
-    req = fake.wait_request('POST', '/permission/per_p/reply')
-    assert req['body']['reply'] == 'reject'
+    req = fake.wait_request('POST', '/api/session/ses_p/permission/per_p/reply')
+    assert req['body']['decision'] == 'reject'
     wait_until(lambda: not app.has('button', 'Refuser'), 5, 'carte retirée')
 
 
 def test_permission_toujours(run_app):
     fake, app = run_app(conv(), '--session', 'ses_p')
     app.click('button', 'Toujours')
-    req = fake.wait_request('POST', '/permission/per_p/reply')
-    assert req['body']['reply'] == 'always'
+    req = fake.wait_request('POST', '/api/session/ses_p/permission/per_p/reply')
+    assert req['body']['decision'] == 'always'
 
 
 def test_sous_titre_signale_la_demande(run_app):
@@ -124,6 +126,7 @@ def test_sous_titre_signale_la_demande(run_app):
     app.find('label', 'Permission demandée')
 
 
+@pytest.mark.skip(reason='listes de tâches désactivées par défaut en OpenCode 2 (experimental.todo) : à décider à la bascule (#176)')
 def test_liste_de_taches(run_app):
     _, app = run_app(conv(), '--session', 'ses_c')
     app.find('label', 'Tâches')
@@ -138,8 +141,7 @@ def test_pastille_des_demandes_hors_ecran(run_app):
     msgs = data['messages']['ses_p']
     # longue conversation : la carte de permission est hors de l'écran
     filler = [
-        {'info': {'id': f'msg_0{i:03d}', 'role': 'user', 'sessionID': 'ses_p', 'time': {'created': 1792800000000 + i}},
-         'parts': [{'id': f'prt_0{i:03d}', 'type': 'text', 'messageID': f'msg_0{i:03d}', 'sessionID': 'ses_p', 'text': f'Ligne de remplissage {i}'}]}
+        {'type': 'user', 'id': f'msg_0{i:03d}', 'time': {'created': 1792800000000 + i}, 'text': f'Ligne de remplissage {i}'}
         for i in range(40)
     ]
     data['messages']['ses_p'] = filler + msgs
@@ -150,7 +152,7 @@ def test_pastille_des_demandes_hors_ecran(run_app):
 
 def test_erreur_de_chargement_puis_reessayer(run_app):
     data = conv()
-    data['failOnce'] = ['GET /session/ses_c/message']
+    data['failOnce'] = ['GET /api/session/ses_c/message']
     _, app = run_app(data, '--session', 'ses_c')
     app.click('button', 'Réessayer')
     assert app.text_visible('Change le port et explique.')
@@ -171,7 +173,8 @@ BASH = 'git add -A && git commit -q -m "Conversation : 20 messages chargés à l
 
 def test_bash_commande_structuree(run_app):
     _, app = run_app(conv(), '--session', 'ses_c', env={'OPENCODE_GNOME_TEST_SCROLL': 'top'})
-    app.click('label', 'Commit et vérification')
+    # OpenCode 2 : pas de titre d'appel, la commande résume la ligne
+    app.click('label', contains='git add -A && git commit')
     # une ligne par étape, opérateurs en tête ; message de commit replié
     assert app.text_visible('git fetch -q')
     assert app.text_visible('tail -1')
@@ -185,7 +188,7 @@ def test_bash_commande_structuree(run_app):
 
 def test_bash_heredoc(run_app):
     _, app = run_app(conv(), '--session', 'ses_c', env={'OPENCODE_GNOME_TEST_SCROLL': 'top'})
-    app.click('label', 'Version et ports')
+    app.click('label', contains='cd /tmp/opencode-fake/conv && python3')
     # corps du heredoc replié avec son nombre de lignes, commandes suivantes sur leur ligne
     app.find('label', contains='(4 lignes)')
     assert app.text_visible('uniq -c')
@@ -198,3 +201,28 @@ def test_permission_bash_commande_structuree(run_app):
     assert app.text_visible('tail -5')
     app.click('toggle button', 'Commande brute')
     assert app.text_visible('$ rm -rf .cache node_modules/.vite && pnpm install')
+
+
+def test_formulaire_types_et_conditions(run_app):
+    """#173 : formulaire OpenCode 2 : cases à cocher, interrupteur, nombre, champ conditionnel."""
+    data = conv()
+    data['forms'] = [{
+        'id': 'frm_t', 'sessionID': 'ses_c', 'title': 'Déploiement', 'metadata': {},
+        'fields': [
+            {'key': 'cibles', 'type': 'multiselect', 'description': 'Quelles cibles ?', 'options': [{'value': 'web', 'label': 'Web'}, {'value': 'api', 'label': 'API'}]},
+            {'key': 'notifier', 'type': 'boolean', 'description': 'Notifier l’équipe ?', 'default': False},
+            {'key': 'canal', 'type': 'string', 'description': 'Quel canal ?', 'placeholder': '#general', 'when': [{'key': 'notifier', 'op': 'eq', 'value': True}]},
+            {'key': 'instances', 'type': 'integer', 'description': 'Combien d’instances ?', 'minimum': 1, 'maximum': 9, 'default': 2},
+        ],
+    }]
+    fake, app = run_app(data, '--session', 'ses_c')
+    app.find('label', 'Déploiement')
+    # champ conditionnel masqué tant que « notifier » est faux
+    assert not app.has('label', 'Quel canal ?')
+    app.click('check box', 'Web')
+    app.click('check box', 'API')
+    app.toggle('switch', 'Notifier l’équipe ?')
+    app.find('label', 'Quel canal ?')
+    app.click('button', 'Répondre')
+    req = fake.wait_request('POST', '/api/session/ses_c/form/frm_t/reply')
+    assert req['body']['answer'] == {'cibles': ['web', 'api'], 'notifier': True, 'instances': 2}

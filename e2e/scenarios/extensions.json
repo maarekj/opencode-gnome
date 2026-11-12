@@ -2,16 +2,32 @@
  "projects": [
   {
    "id": "prj_x",
-   "worktree": "/tmp/opencode-fake/ext",
-   "name": "ext"
+   "canonical": "/tmp/opencode-fake/ext",
+   "name": "ext",
+   "time": {
+    "created": 1,
+    "updated": 2
+   }
   }
  ],
  "sessions": [
   {
    "id": "ses_x",
    "projectID": "prj_x",
-   "directory": "/tmp/opencode-fake/ext",
+   "location": {
+    "directory": "/tmp/opencode-fake/ext"
+   },
    "title": "Extensions",
+   "cost": 0,
+   "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   },
    "time": {
     "created": 1,
     "updated": 2
@@ -21,6 +37,27 @@
  "messages": {
   "ses_x": []
  },
+ "mcp": [
+  {
+   "name": "notes",
+   "status": {
+    "status": "connected"
+   }
+  },
+  {
+   "name": "casse",
+   "status": {
+    "status": "failed",
+    "error": "ENOENT: /nexistepas/mcp"
+   }
+  },
+  {
+   "name": "globale",
+   "status": {
+    "status": "needs_auth"
+   }
+  }
+ ],
  "config": {
   "mcp": {
    "notes": {
@@ -35,16 +72,8 @@
     "command": [
      "/nexistepas/mcp"
     ]
-   },
-   "globale": {
-    "type": "remote",
-    "url": "http://127.0.0.1:9/mcp"
    }
-  },
-  "plugin": [
-   "file:///tmp/opencode-fake/ext/.opencode/plugin/local.ts",
-   "opencode-wakatime@1.2.0"
-  ]
+  }
  },
  "globalConfig": {
   "mcp": {
@@ -52,33 +81,44 @@
     "type": "remote",
     "url": "http://127.0.0.1:9/mcp"
    }
-  },
-  "plugin": [
-   "opencode-wakatime@1.2.0"
-  ]
- },
- "mcp": {
-  "notes": {
-   "status": "connected"
-  },
-  "casse": {
-   "status": "failed",
-   "error": "ENOENT: /nexistepas/mcp"
-  },
-  "globale": {
-   "status": "needs_auth"
   }
  },
  "skills": [
   {
+   "id": "pdf",
    "name": "pdf",
    "description": "Lire des PDF",
-   "location": "/tmp/opencode-fake/ext/.opencode/skill/pdf/SKILL.md"
+   "path": "/tmp/opencode-fake/ext/.opencode/skill/pdf/SKILL.md"
   },
   {
+   "id": "customize-opencode",
    "name": "customize-opencode",
    "description": "Configurer opencode",
-   "location": "<built-in>"
+   "path": "<built-in>"
+  }
+ ],
+ "plugins": [
+  {
+   "source": {
+    "type": "local",
+    "path": "/tmp/opencode-fake/ext/.opencode/plugin/local.ts"
+   },
+   "features": {},
+   "state": {
+    "status": "active"
+   }
+  },
+  {
+   "source": {
+    "type": "package",
+    "target": "opencode-wakatime",
+    "version": "1.2.0"
+   },
+   "features": {},
+   "state": {
+    "status": "active"
+   },
+   "global": true
   }
  ]
 }

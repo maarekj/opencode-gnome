@@ -2,20 +2,36 @@
  "projects": [
   {
    "id": "prj_conv",
-   "worktree": "/tmp/opencode-fake/conv",
-   "name": "conv"
+   "canonical": "/tmp/opencode-fake/conv",
+   "name": "conv",
+   "time": {
+    "created": 1,
+    "updated": 2
+   }
   }
  ],
  "sessions": [
   {
    "id": "ses_c",
    "projectID": "prj_conv",
-   "directory": "/tmp/opencode-fake/conv",
+   "location": {
+    "directory": "/tmp/opencode-fake/conv"
+   },
    "title": "Changer le port",
    "agent": "build",
    "model": {
     "id": "fake-model",
     "providerID": "fake"
+   },
+   "cost": 0,
+   "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
    },
    "time": {
     "created": 1792900000000,
@@ -25,9 +41,21 @@
   {
    "id": "ses_child",
    "projectID": "prj_conv",
-   "directory": "/tmp/opencode-fake/conv",
-   "parentID": "ses_c",
+   "location": {
+    "directory": "/tmp/opencode-fake/conv"
+   },
    "title": "Relire le changement (@general subagent)",
+   "parentID": "ses_c",
+   "cost": 0,
+   "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   },
    "time": {
     "created": 1792900000000,
     "updated": 1792900040000
@@ -36,9 +64,21 @@
   {
    "id": "ses_p",
    "projectID": "prj_conv",
-   "directory": "/tmp/opencode-fake/conv",
+   "location": {
+    "directory": "/tmp/opencode-fake/conv"
+   },
    "title": "Nettoyage",
    "agent": "build",
+   "cost": 0,
+   "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   },
    "time": {
     "created": 1792900000000,
     "updated": 1792900030000
@@ -48,59 +88,49 @@
  "messages": {
   "ses_c": [
    {
-    "info": {
-     "id": "msg_001",
-     "role": "user",
-     "sessionID": "ses_c",
-     "time": {
-      "created": 1792900000000
-     }
+    "type": "user",
+    "id": "msg_001",
+    "time": {
+     "created": 1792900000000
     },
-    "parts": [
-     {
-      "id": "prt_001",
-      "type": "text",
-      "text": "Change le port et explique.",
-      "messageID": "msg_001",
-      "sessionID": "ses_c"
-     }
-    ]
+    "text": "Change le port et explique."
    },
    {
-    "info": {
-     "id": "msg_002",
-     "role": "assistant",
-     "sessionID": "ses_c",
-     "time": {
-      "created": 1792900001000,
-      "completed": 1792900006000
-     },
-     "parentID": "msg_001",
-     "providerID": "fake",
-     "modelID": "fake-model"
+    "type": "assistant",
+    "id": "msg_002",
+    "time": {
+     "created": 1792900001000,
+     "completed": 1792900006000
     },
-    "parts": [
+    "agent": "build",
+    "model": {
+     "id": "fake-model",
+     "providerID": "fake"
+    },
+    "content": [
      {
-      "id": "prt_002",
       "type": "reasoning",
       "text": "Il faut modifier la constante port.",
       "time": {
-       "start": 1792900001000,
-       "end": 1792900004000
-      },
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+       "created": 1792900001000,
+       "completed": 1792900004000
+      }
      },
      {
-      "id": "prt_002b",
       "type": "tool",
-      "tool": "read",
-      "callID": "call_r1",
+      "id": "call_r1",
+      "name": "read",
       "state": {
        "status": "completed",
        "input": {
-        "filePath": "/tmp/opencode-fake/conv/src/app.ts"
+        "path": "/tmp/opencode-fake/conv/src/app.ts"
        },
+       "content": [
+        {
+         "type": "text",
+         "text": "<path>/tmp/opencode-fake/conv/src/app.ts</path>\n<type>file</type>\n<content>\n1: const port = 80;\n2: console.log(port);\n\n(End of file - total 2 lines)\n</content>"
+        }
+       ],
        "metadata": {
         "preview": "const port = 80;",
         "truncated": false,
@@ -113,210 +143,217 @@
          "totalLines": 2,
          "truncated": false
         }
-       },
-       "output": "<path>/tmp/opencode-fake/conv/src/app.ts</path>\n<type>file</type>\n<content>\n1: const port = 80;\n2: console.log(port);\n\n(End of file - total 2 lines)\n</content>",
-       "title": "src/app.ts"
+       }
       },
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900001000
+      }
      },
      {
-      "id": "prt_002c",
       "type": "tool",
-      "tool": "read",
-      "callID": "call_r2",
+      "id": "call_r2",
+      "name": "read",
       "state": {
        "status": "completed",
        "input": {
-        "filePath": "/tmp/opencode-fake/conv/src/server.ts",
         "offset": 120,
-        "limit": 40
+        "limit": 40,
+        "path": "/tmp/opencode-fake/conv/src/server.ts"
        },
-       "metadata": {},
-       "output": "<path>/tmp/opencode-fake/conv/src/server.ts</path>\n<type>file</type>\n<content>\n120: export function listen() {\n121:   return port;\n\n(Showing lines 120-159 of 300. Use offset=160 to continue.)\n</content>",
-       "title": "src/server.ts"
+       "content": [
+        {
+         "type": "text",
+         "text": "<path>/tmp/opencode-fake/conv/src/server.ts</path>\n<type>file</type>\n<content>\n120: export function listen() {\n121:   return port;\n\n(Showing lines 120-159 of 300. Use offset=160 to continue.)\n</content>"
+        }
+       ]
       },
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900001000
+      }
      },
      {
-      "id": "prt_003",
       "type": "tool",
-      "tool": "edit",
-      "callID": "call_e",
+      "id": "call_e",
+      "name": "edit",
       "state": {
        "status": "completed",
        "input": {
-        "filePath": "/tmp/opencode-fake/conv/src/app.ts",
         "oldString": "80",
-        "newString": "8080"
+        "newString": "8080",
+        "path": "/tmp/opencode-fake/conv/src/app.ts"
        },
+       "content": [
+        {
+         "type": "text",
+         "text": "ok"
+        }
+       ],
        "metadata": {
         "diff": "Index: src/app.ts\n===\n--- src/app.ts\n+++ src/app.ts\n@@ -1,2 +1,2 @@\n-const port = 80;\n+const port = 8080;\n console.log(port);\n"
-       },
-       "output": "ok",
-       "title": "src/app.ts"
+       }
       },
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900001000
+      }
      },
      {
-      "id": "prt_004",
       "type": "tool",
-      "tool": "bash",
-      "callID": "call_b",
+      "id": "call_b",
+      "name": "shell",
       "state": {
        "status": "completed",
        "input": {
         "command": "pnpm test"
        },
-       "output": "tout passe",
-       "title": "pnpm test"
+       "content": [
+        {
+         "type": "text",
+         "text": "tout passe"
+        }
+       ]
       },
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900001000
+      }
      },
      {
-      "id": "prt_004b",
       "type": "tool",
-      "tool": "bash",
-      "callID": "call_b2",
+      "id": "call_b2",
+      "name": "shell",
       "state": {
        "status": "completed",
        "input": {
         "command": "git add -A && git commit -q -m \"Conversation : 20 messages chargés à l'ouverture et à l'actualisation (au lieu de 30). Closes #142\" && git fetch -q && git rebase origin/main 2>&1 | tail -1 && pnpm check >/dev/null 2>&1; echo check=$?",
         "description": "Commit et vérification"
        },
-       "output": "** WARNING: connection is not using a post-quantum key exchange algorithm. This session may be vulnerable to \"store now, decrypt later\" attacks.\nLa branche courante issue-142 est à jour.\ncheck=0",
-       "title": "Commit et vérification"
+       "content": [
+        {
+         "type": "text",
+         "text": "** WARNING: connection is not using a post-quantum key exchange algorithm. This session may be vulnerable to \"store now, decrypt later\" attacks.\nLa branche courante issue-142 est à jour.\ncheck=0"
+        }
+       ]
       },
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900001000
+      }
      },
      {
-      "id": "prt_004c",
       "type": "tool",
-      "tool": "bash",
-      "callID": "call_b3",
+      "id": "call_b3",
+      "name": "shell",
       "state": {
        "status": "completed",
        "input": {
         "command": "cd /tmp/opencode-fake/conv && python3 - <<'EOF'\nimport json\nd = json.load(open('package.json'))\nprint(d['version'])\nEOF\ngrep -rn \"port\" src | sort | uniq -c | head -5",
         "description": "Version et ports"
        },
-       "output": "0.1.0\n      2 src/app.ts:1:const port = 8080;",
-       "title": "Version et ports"
+       "content": [
+        {
+         "type": "text",
+         "text": "0.1.0\n      2 src/app.ts:1:const port = 8080;"
+        }
+       ]
       },
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900001000
+      }
      },
      {
-      "id": "prt_005",
       "type": "text",
-      "text": "Le port vaut **8080**. Voir la [documentation](https://example.com/doc).",
-      "messageID": "msg_002",
-      "sessionID": "ses_c"
+      "text": "Le port vaut **8080**. Voir la [documentation](https://example.com/doc)."
      }
     ]
    },
    {
-    "info": {
-     "id": "msg_003",
-     "role": "user",
-     "sessionID": "ses_c",
-     "time": {
-      "created": 1792900010000
-     }
+    "type": "idle",
+    "id": "msg_002_idle",
+    "time": {
+     "created": 1792900006000
     },
-    "parts": [
-     {
-      "id": "prt_006",
-      "type": "text",
-      "text": "Délègue la revue à un sous-agent.",
-      "messageID": "msg_003",
-      "sessionID": "ses_c"
-     }
-    ]
+    "outcome": "succeeded"
    },
    {
-    "info": {
-     "id": "msg_004",
-     "role": "assistant",
-     "sessionID": "ses_c",
-     "time": {
-      "created": 1792900011000,
-      "completed": 1792900016000
-     },
-     "parentID": "msg_003",
-     "providerID": "fake",
-     "modelID": "fake-model"
+    "type": "user",
+    "id": "msg_003",
+    "time": {
+     "created": 1792900010000
     },
-    "parts": [
+    "text": "Délègue la revue à un sous-agent."
+   },
+   {
+    "type": "assistant",
+    "id": "msg_004",
+    "time": {
+     "created": 1792900011000,
+     "completed": 1792900016000
+    },
+    "agent": "build",
+    "model": {
+     "id": "fake-model",
+     "providerID": "fake"
+    },
+    "content": [
      {
-      "id": "prt_007",
       "type": "tool",
-      "tool": "task",
-      "callID": "call_t",
+      "id": "call_t",
+      "name": "subagent",
       "state": {
        "status": "completed",
        "input": {
         "description": "Relire le changement",
-        "subagent_type": "general",
-        "prompt": "relis"
+        "prompt": "relis",
+        "agent": "general"
        },
+       "content": [
+        {
+         "type": "text",
+         "text": "<task_result>\nRAS : le changement est **correct**.\n</task_result>"
+        }
+       ],
        "metadata": {
-        "sessionId": "ses_child"
-       },
-       "output": "<task_result>\nRAS : le changement est **correct**.\n</task_result>",
-       "title": "Relire le changement",
-       "time": {
-        "start": 1792900011000,
-        "end": 1792900040000
+        "sessionID": "ses_child"
        }
       },
-      "messageID": "msg_004",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900011000,
+       "completed": 1792900040000
+      }
      }
     ]
    },
    {
-    "info": {
-     "id": "msg_005",
-     "role": "user",
-     "sessionID": "ses_c",
-     "time": {
-      "created": 1792900050000
-     }
+    "type": "idle",
+    "id": "msg_004_idle",
+    "time": {
+     "created": 1792900016000
     },
-    "parts": [
-     {
-      "id": "prt_008",
-      "type": "text",
-      "text": "Pose-moi une question.",
-      "messageID": "msg_005",
-      "sessionID": "ses_c"
-     }
-    ]
+    "outcome": "succeeded"
    },
    {
-    "info": {
-     "id": "msg_006",
-     "role": "assistant",
-     "sessionID": "ses_c",
-     "time": {
-      "created": 1792900051000,
-      "completed": 1792900056000
-     },
-     "parentID": "msg_005",
-     "providerID": "fake",
-     "modelID": "fake-model"
+    "type": "user",
+    "id": "msg_005",
+    "time": {
+     "created": 1792900050000
     },
-    "parts": [
+    "text": "Pose-moi une question."
+   },
+   {
+    "type": "assistant",
+    "id": "msg_006",
+    "time": {
+     "created": 1792900051000,
+     "completed": 1792900056000
+    },
+    "agent": "build",
+    "model": {
+     "id": "fake-model",
+     "providerID": "fake"
+    },
+    "content": [
      {
-      "id": "prt_009",
       "type": "tool",
-      "tool": "question",
-      "callID": "call_q",
+      "id": "call_q",
+      "name": "question",
       "state": {
        "status": "running",
        "input": {
@@ -334,160 +371,149 @@
           ]
          }
         ]
-       }
+       },
+       "metadata": {}
       },
-      "messageID": "msg_006",
-      "sessionID": "ses_c"
+      "time": {
+       "created": 1792900051000
+      }
      }
     ]
    }
   ],
   "ses_child": [
    {
-    "info": {
-     "id": "msg_101",
-     "role": "user",
-     "sessionID": "ses_child",
-     "time": {
-      "created": 1792900012000
-     }
+    "type": "user",
+    "id": "msg_101",
+    "time": {
+     "created": 1792900012000
     },
-    "parts": [
+    "text": "relis"
+   },
+   {
+    "type": "assistant",
+    "id": "msg_102",
+    "time": {
+     "created": 1792900013000,
+     "completed": 1792900018000
+    },
+    "agent": "build",
+    "model": {
+     "id": "fake-model",
+     "providerID": "fake"
+    },
+    "content": [
      {
-      "id": "prt_101",
       "type": "text",
-      "text": "relis",
-      "messageID": "msg_101",
-      "sessionID": "ses_child"
+      "text": "Lecture du diff du sous-agent."
      }
     ]
    },
    {
-    "info": {
-     "id": "msg_102",
-     "role": "assistant",
-     "sessionID": "ses_child",
-     "time": {
-      "created": 1792900013000,
-      "completed": 1792900018000
-     },
-     "parentID": "msg_101",
-     "providerID": "fake",
-     "modelID": "fake-model"
+    "type": "idle",
+    "id": "msg_102_idle",
+    "time": {
+     "created": 1792900018000
     },
-    "parts": [
-     {
-      "id": "prt_102",
-      "type": "text",
-      "text": "Lecture du diff du sous-agent.",
-      "messageID": "msg_102",
-      "sessionID": "ses_child"
-     }
-    ]
+    "outcome": "succeeded"
    }
   ],
   "ses_p": [
    {
-    "info": {
-     "id": "msg_201",
-     "role": "user",
-     "sessionID": "ses_p",
-     "time": {
-      "created": 1792900000000
-     }
+    "type": "user",
+    "id": "msg_201",
+    "time": {
+     "created": 1792900000000
     },
-    "parts": [
-     {
-      "id": "prt_201",
-      "type": "text",
-      "text": "Supprime le cache.",
-      "messageID": "msg_201",
-      "sessionID": "ses_p"
-     }
-    ]
+    "text": "Supprime le cache."
    },
    {
-    "info": {
-     "id": "msg_202",
-     "role": "assistant",
-     "sessionID": "ses_p",
-     "time": {
-      "created": 1792900001000,
-      "completed": 1792900006000
-     },
-     "parentID": "msg_201",
-     "providerID": "fake",
-     "modelID": "fake-model"
+    "type": "assistant",
+    "id": "msg_202",
+    "time": {
+     "created": 1792900001000,
+     "completed": 1792900006000
     },
-    "parts": [
+    "agent": "build",
+    "model": {
+     "id": "fake-model",
+     "providerID": "fake"
+    },
+    "content": [
      {
-      "id": "prt_202",
       "type": "tool",
-      "tool": "bash",
-      "callID": "call_p",
+      "id": "call_p",
+      "name": "shell",
       "state": {
        "status": "running",
        "input": {
         "command": "rm -rf .cache node_modules/.vite && pnpm install --frozen-lockfile 2>&1 | tail -5"
-       }
+       },
+       "metadata": {}
       },
-      "messageID": "msg_202",
-      "sessionID": "ses_p"
+      "time": {
+       "created": 1792900001000
+      }
      }
     ]
    }
   ]
  },
- "statuses": {
-  "ses_c": {
-   "type": "busy"
-  },
-  "ses_p": {
-   "type": "busy"
-  }
- },
- "questions": [
-  {
-   "id": "que_1",
-   "sessionID": "ses_c",
-   "questions": [
-    {
-     "question": "Quel environnement ?",
-     "header": "Cible",
-     "options": [
-      {
-       "label": "Production",
-       "description": "serveurs réels"
-      },
-      {
-       "label": "Recette"
-      }
-     ]
-    }
-   ],
-   "tool": {
-    "messageID": "msg_006",
-    "callID": "call_q"
-   }
-  }
+ "active": [
+  "ses_c",
+  "ses_p"
  ],
  "permissions": [
   {
    "id": "per_p",
    "sessionID": "ses_p",
-   "permission": "bash",
-   "patterns": [
+   "action": "shell",
+   "resources": [
     "rm -rf .cache",
     "pnpm install"
    ],
-   "always": [
+   "save": [
     "rm *"
    ],
-   "tool": {
+   "source": {
+    "type": "tool",
     "messageID": "msg_202",
-    "callID": "call_p"
+    "id": "call_p"
+   }
+  }
+ ],
+ "forms": [
+  {
+   "id": "que_1",
+   "sessionID": "ses_c",
+   "title": "Questions",
+   "metadata": {
+    "kind": "question",
+    "tool": {
+     "messageID": "msg_006",
+     "id": "call_q"
+    }
    },
-   "metadata": {}
+   "fields": [
+    {
+     "key": "q0",
+     "description": "Quel environnement ?",
+     "type": "string",
+     "options": [
+      {
+       "value": "Production",
+       "label": "Production",
+       "description": "serveurs réels"
+      },
+      {
+       "value": "Recette",
+       "label": "Recette"
+      }
+     ],
+     "title": "Cible",
+     "custom": true
+    }
+   ]
   }
  ],
  "todos": {

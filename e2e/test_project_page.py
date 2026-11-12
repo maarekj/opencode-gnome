@@ -24,22 +24,22 @@ def test_nouvelle_session_depuis_l_en_tete(run_app):
     fake, app = run_app(scenario('projects'))
     open_project(app, 'alpha')
     app.click('button', 'Nouvelle session')
-    req = fake.wait_request('POST', '/session')
-    assert req['query']['directory'] == ALPHA
+    req = fake.wait_request('POST', '/api/session')
+    assert req['body']['location'] == {'directory': ALPHA}
     app.composer()
 
 
 def test_projet_sans_session(run_app):
     data = scenario('projects')
     data['sessions'] = [s for s in data['sessions'] if s['id'] != 'ses_b1']
-    data['projects'][1]['worktree'] = '/tmp/opencode-fake/beta'
-    data['sessions'].append({'id': 'ses_tmp', 'projectID': 'prj_beta', 'directory': '/tmp/opencode-fake/beta', 'title': 'Temporaire', 'time': {'created': 1, 'updated': 1}})
+    data['projects'][1]['canonical'] = '/tmp/opencode-fake/beta'
+    data['sessions'].append({'id': 'ses_tmp', 'projectID': 'prj_beta', 'location': {'directory': '/tmp/opencode-fake/beta'}, 'title': 'Temporaire', 'time': {'created': 1, 'updated': 1}})
     fake, app = run_app(data)
     open_project(app, 'béta-projet')
     # suppression de la seule session : page « Aucune session »
     app.click('button', 'Supprimer')
     app.click('button', 'Supprimer ?')
-    fake.wait_request('DELETE', '/session/ses_tmp')
+    fake.wait_request('DELETE', '/api/session/ses_tmp')
     assert app.text_visible('Aucune session')
 
 
@@ -105,21 +105,21 @@ def test_recharger_la_configuration_sans_session_en_cours(run_app):
     fake, app = run_app(scenario('projects'))
     open_project(app, 'alpha')
     app.click('button', contains='Recharger la configuration du projet')
-    req = fake.wait_request('POST', '/instance/dispose')
-    assert req['query']['directory'] == ALPHA
+    req = fake.wait_request('POST', '/api/location/reload')
+    assert req['query']['location[directory]'] == ALPHA
 
 
 def test_recharger_la_configuration_demande_confirmation_si_occupe(run_app):
     data = scenario('projects')
-    data['statuses'] = {'ses_a1': {'type': 'busy'}}
+    data['active'] = ['ses_a1']
     fake, app = run_app(data)
     open_project(app, 'alpha')
     app.click('button', contains='Recharger la configuration du projet')
     assert app.text_visible('Recharger la configuration ?')
     time.sleep(0.3)
-    assert not fake.requests('POST', '/instance/dispose')
+    assert not fake.requests('POST', '/api/location/reload')
     app.click('button', 'Recharger', within=app.dialog())
-    fake.wait_request('POST', '/instance/dispose')
+    fake.wait_request('POST', '/api/location/reload')
 
 
 def test_recherche_de_session_vide_puis_effacee(run_app):

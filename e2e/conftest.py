@@ -97,7 +97,7 @@ class Fake:
             path.write_text(json.dumps(scenario))
             args += ['--scenario', str(path)]
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        wait_until(lambda: self._get('/global/health'), 10, 'démarrage du faux opencode')
+        wait_until(lambda: self._get('/api/info'), 10, 'démarrage du faux opencode')
 
     def _get(self, path: str):
         with urllib.request.urlopen(self.url + path, timeout=2) as r:
@@ -135,6 +135,18 @@ class App:
             path = fake.dir / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content if isinstance(content, str) else json.dumps(content))
+        # serveurs MCP déclarés : lus par l'application dans les fichiers de configuration d'opencode
+        # (OpenCode 2 ne renvoie que leur état, #174) ; `globalConfig` du scénario -> configuration globale
+        # et `config` -> opencode.json du (premier) projet
+        data = fake.scenario or {}
+        targets = []
+        if data.get('globalConfig') is not None:
+            targets.append((fake.dir / 'config' / 'opencode' / 'opencode.json', data['globalConfig']))
+        if data.get('config') is not None and data.get('projects'):
+            targets.append((Path(data['projects'][0]['canonical']) / 'opencode.json', data['config']))
+        for path, content in targets:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(content))
         self.config_dir = fake.dir / 'config' / 'opencode-gnome'
         if settings is not None:
             self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -406,9 +418,9 @@ class App:
         """Contenu du presse-papier (écran virtuel)."""
         return subprocess.run(['xclip', '-o', '-selection', 'clipboard'], capture_output=True, text=True, timeout=5).stdout
 
-    def emit(self, type_: str, properties: dict) -> None:
-        """Événement envoyé par le faux opencode."""
-        self.fake.post('/__test/emit', {'payload': {'type': type_, 'properties': properties}})
+    def emit(self, type_: str, data: dict, directory: str | None = None) -> None:
+        """Événement OpenCode 2 envoyé par le faux opencode : `{ type, data, location? }`."""
+        self.fake.post('/__test/emit', {'type': type_, 'data': data, **({'location': {'directory': directory}} if directory else {})})
 
     def stop(self) -> None:
         self.proc.terminate()

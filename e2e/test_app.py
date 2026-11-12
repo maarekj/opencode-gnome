@@ -38,35 +38,34 @@ def test_serveur_injoignable_puis_reconnexion(run_app):
     assert app.logged('SYSTEMCTL', 'start opencode-gnome-server.service')
     fake.start()
     # reconnexion du flux : état rechargé, bandeau retiré
-    wait_until(lambda: fake.requests('GET', '/experimental/session'), 20, 'état rechargé après reconnexion')
+    wait_until(lambda: fake.requests('GET', '/api/session'), 20, 'état rechargé après reconnexion')
     wait_until(lambda: not app.has(None, contains='Serveur opencode injoignable'), 20, 'bandeau retiré')
 
 
 def test_notification_de_permission_et_reponse_par_le_bouton(run_app):
     fake, app = run_app(scenario('demo'))
     # session non affichée : la demande est notifiée
-    app.emit('permission.asked', {'id': 'per_1', 'sessionID': 'ses_b', 'permission': 'bash', 'patterns': ['pnpm test']})
+    app.emit('permission.asked', {'id': 'per_1', 'sessionID': 'ses_b', 'action': 'shell', 'resources': ['pnpm test']})
     line = app.logged('NOTIF', 'permission per_1', timeout=10)
     assert 'Permission en attente' in line
-    # bouton « Autoriser » de la notification : action de l'application
-    app.action('reply-permission', f"('ses_b', '{DIR}', 'per_1', 'once')")
-    req = fake.wait_request('POST', '/permission/per_1/reply')
-    assert req['body']['reply'] == 'once'
+    # bouton « Autoriser » de la notification : action de l'application (session affichée, session de la demande)
+    app.action('reply-permission', "('ses_b', 'ses_b', 'per_1', 'once')")
+    req = fake.wait_request('POST', '/api/session/ses_b/permission/per_1/reply')
+    assert req['body']['decision'] == 'once'
 
 
 def test_notification_de_session_terminee(run_app):
     _, app = run_app(scenario('demo'))
-    app.emit('session.status', {'sessionID': 'ses_a', 'status': {'type': 'busy'}})
+    app.emit('session.execution.started', {'sessionID': 'ses_a'})
     time.sleep(0.5)
-    app.emit('session.status', {'sessionID': 'ses_a', 'status': {'type': 'idle'}})
-    app.emit('session.idle', {'sessionID': 'ses_a'})
+    app.emit('session.execution.succeeded', {'sessionID': 'ses_a'})
     line = app.logged('NOTIF', 'Corriger le bug de connexion', timeout=10)
     assert line
 
 
 def test_notification_de_question(run_app):
     fake, app = run_app(scenario('demo'))
-    fake.post('/__test/emit', {'payload': {'type': 'question.asked', 'properties': {'id': 'que_x', 'sessionID': 'ses_a', 'questions': [{'question': 'Continuer ?', 'options': [{'label': 'Oui'}]}]}}})
+    app.emit('form.created', {'form': {'id': 'frm_x', 'sessionID': 'ses_a', 'title': 'Questions', 'fields': [{'key': 'q0', 'type': 'string', 'description': 'Continuer ?', 'options': [{'value': 'Oui', 'label': 'Oui'}]}]}})
     assert app.logged('NOTIF', 'Corriger le bug de connexion', timeout=10)
 
 
@@ -155,10 +154,10 @@ def test_permission_d_un_sous_agent_signalee_sur_la_session(run_app):
 
     # au départ : ses_c (question) et ses_p (permission) ; la question de ses_c est rejetée
     waiting(2)
-    app.emit('question.rejected', {'sessionID': 'ses_c', 'requestID': 'que_1'})
+    app.emit('form.cancelled', {'id': 'que_1', 'sessionID': 'ses_c'})
     waiting(1)
     # permission demandée par le sous-agent de ses_c : ses_c attend de nouveau
-    app.emit('permission.asked', {'id': 'per_sub', 'sessionID': 'ses_child', 'permission': 'bash', 'patterns': ['rm -rf build']})
+    app.emit('permission.asked', {'id': 'per_sub', 'sessionID': 'ses_child', 'action': 'shell', 'resources': ['rm -rf build']})
     waiting(2)
     # notification sur la session parente, bouton « Autoriser » sur la demande du sous-agent
     assert 'session-ses_c' in app.logged('NOTIF', 'permission per_sub', timeout=10)

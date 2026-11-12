@@ -13,9 +13,9 @@ PATCH = 'diff --git a/app.txt b/app.txt\n--- a/app.txt\n+++ b/app.txt\n@@ -1,1 +
 
 def data_for(repo: Path, diff: bool = True) -> dict:
     return {
-        'projects': [{'id': 'prj_g', 'worktree': str(repo), 'name': 'depot', 'vcs': 'git'}],
-        'sessions': [{'id': 'ses_g', 'projectID': 'prj_g', 'directory': str(repo), 'title': 'Session git', 'time': {'created': 1, 'updated': 2}}],
-        'messages': {'ses_g': [{'info': {'id': 'msg_1', 'role': 'user', 'sessionID': 'ses_g', 'time': {'created': 1792900000000}}, 'parts': [{'id': 'prt_1', 'type': 'text', 'messageID': 'msg_1', 'sessionID': 'ses_g', 'text': 'Travail sur le dépôt'}]}]},
+        'projects': [{'id': 'prj_g', 'canonical': str(repo), 'name': 'depot', 'vcs': 'git', 'time': {'created': 1, 'updated': 2}}],
+        'sessions': [{'id': 'ses_g', 'projectID': 'prj_g', 'location': {'directory': str(repo)}, 'title': 'Session git', 'time': {'created': 1, 'updated': 2}}],
+        'messages': {'ses_g': [{'type': 'user', 'id': 'msg_1', 'time': {'created': 1792900000000}, 'text': 'Travail sur le dépôt'}]},
         'vcsDiff': [{'file': 'app.txt', 'status': 'modified', 'additions': 1, 'deletions': 0, 'patch': PATCH}] if diff else [],
     }
 
@@ -54,12 +54,15 @@ def test_f5_et_rafraichissement_automatique(run_app, repo):
     fake, app = run_app(data_for(repo), '--session', 'ses_g')
     app.click('button', 'Git : modifications, journal, branches')
     app.find('list item', 'Modifié : app.txt')
-    n = len(fake.requests('GET', '/vcs/diff'))
+    n = len(fake.requests('GET', '/api/vcs/diff'))
     app.click('button', 'Rafraîchir (F5)')
-    wait_until(lambda: len(fake.requests('GET', '/vcs/diff')) > n, 5, 'modifications relues (bouton)')
-    n = len(fake.requests('GET', '/vcs/diff'))
-    app.emit('session.diff', {'sessionID': 'ses_g', 'diff': []})
-    wait_until(lambda: len(fake.requests('GET', '/vcs/diff')) > n, 10, 'modifications relues (session.diff)')
+    wait_until(lambda: len(fake.requests('GET', '/api/vcs/diff')) > n, 5, 'modifications relues (bouton)')
+    n = len(fake.requests('GET', '/api/vcs/diff'))
+    # outil d'édition terminé dans la session : fichiers peut-être modifiés
+    ref = {'sessionID': 'ses_g', 'assistantMessageID': 'msg_z', 'id': 'call_e'}
+    app.emit('session.tool.input.started', {**ref, 'name': 'edit'})
+    app.emit('session.tool.success', {**ref, 'content': [{'type': 'text', 'text': 'ok'}], 'executed': True})
+    wait_until(lambda: len(fake.requests('GET', '/api/vcs/diff')) > n, 10, 'modifications relues (outil d’édition)')
 
 
 def test_une_seule_fenetre_et_echap(run_app, repo):
@@ -221,8 +224,8 @@ def test_revue_commentee_envoyee_a_l_agent(run_app, repo):
     comment_all(app, 'Renommer cette ligne', 'ajout dans lib')
     assert app.text_visible('Revue · 2 commentaires')
     app.click('button', 'Envoyer à l’agent')
-    body = fake.wait_request('POST', '/session/ses_g/prompt_async')['body']
-    text = body['parts'][0]['text']
+    body = fake.wait_request('POST', '/api/session/ses_g/prompt')['body']
+    text = body['text']
     assert '2 commentaires sur 2 fichiers' in text
     assert 'app.txt — lignes 1–2 (modifications non commitées)' in text
     assert '+non commité' in text and 'Pourquoi non commité ?' in text

@@ -48,6 +48,8 @@ export interface ToolCall {
   readonly error?: string;
   readonly metadata: Readonly<Record<string, unknown>>;
   readonly time: { readonly start: number; readonly end?: number };
+  /** chemin du fichier visé, relatif au dossier de la session (résumé de la ligne) */
+  readonly title?: string;
 }
 
 /** Contenu d'un bloc. */
@@ -624,7 +626,8 @@ export class Conversation {
    * Crée ou met à jour un élément. `snapshot` : lu par HTTP, peut-être plus ancien que le direct :
    * un texte local plus long qui prolonge celui de l'instantané est gardé (#72).
    */
-  #setItem(m: Message, item: Item, snapshot = false): void {
+  #setItem(m: Message, input: Item, snapshot = false): void {
+    const item = input.kind === 'tool' ? { ...input, tool: this.#titled(input.tool) } : input;
     const entry = this.#items.get(item.id);
     if (entry !== undefined) {
       const live = entry.value;
@@ -638,6 +641,14 @@ export class Conversation {
     this.#items.set(item.id, { block: { id: item.id, kind: item.kind, item: accessor, created: m.created }, set, value: item, dirty: false });
     if (!m.items.includes(item.id)) m.items.push(item.id);
     this.#structureChanged = true;
+  }
+
+  /** Titre d'un appel : chemin visé (`path`) relatif au dossier de la session. */
+  #titled(t: ToolCall): ToolCall {
+    const p = t.input['path'];
+    const dir = this.directory;
+    if (typeof p !== 'string' || dir === null || !p.startsWith(`${dir}/`)) return t;
+    return { ...t, title: p.slice(dir.length + 1) };
   }
 
   #sorted(): Message[] {

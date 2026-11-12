@@ -2,7 +2,7 @@
  "projects": [
   {
    "id": "prj_demo",
-   "worktree": "/tmp/opencode-fake/demo",
+   "canonical": "/tmp/opencode-fake/demo",
    "name": "demo",
    "vcs": "git",
    "time": {
@@ -15,12 +15,24 @@
   {
    "id": "ses_a",
    "projectID": "prj_demo",
-   "directory": "/tmp/opencode-fake/demo",
+   "location": {
+    "directory": "/tmp/opencode-fake/demo"
+   },
    "title": "Corriger le bug de connexion",
    "agent": "build",
    "model": {
     "id": "fake-model",
     "providerID": "fake"
+   },
+   "cost": 0,
+   "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
    },
    "time": {
     "created": 1792900000000,
@@ -30,9 +42,21 @@
   {
    "id": "ses_b",
    "projectID": "prj_demo",
-   "directory": "/tmp/opencode-fake/demo",
+   "location": {
+    "directory": "/tmp/opencode-fake/demo"
+   },
    "title": "Permission en attente",
    "agent": "build",
+   "cost": 0,
+   "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   },
    "time": {
     "created": 1792900000000,
     "updated": 1792900080000
@@ -42,131 +66,109 @@
  "messages": {
   "ses_a": [
    {
-    "info": {
-     "id": "msg_001",
-     "role": "user",
-     "sessionID": "ses_a",
-     "time": {
-      "created": 1792900000000
-     }
+    "type": "user",
+    "id": "msg_001",
+    "time": {
+     "created": 1792900000000
     },
-    "parts": [
+    "text": "La connexion échoue après une mise en veille."
+   },
+   {
+    "type": "assistant",
+    "id": "msg_002",
+    "time": {
+     "created": 1792900060000,
+     "completed": 1792900090000
+    },
+    "agent": "build",
+    "model": {
+     "id": "fake-model",
+     "providerID": "fake"
+    },
+    "content": [
      {
-      "id": "prt_001",
       "type": "text",
-      "messageID": "msg_001",
-      "sessionID": "ses_a",
-      "text": "La connexion échoue après une mise en veille."
+      "text": "Le **chien de garde** du flux SSE ne se réarme pas : je le corrige."
      }
     ]
    },
    {
-    "info": {
-     "id": "msg_002",
-     "role": "assistant",
-     "sessionID": "ses_a",
-     "parentID": "msg_001",
-     "time": {
-      "created": 1792900060000,
-      "completed": 1792900090000
-     },
-     "providerID": "fake",
-     "modelID": "fake-model"
+    "type": "idle",
+    "id": "msg_002_idle",
+    "time": {
+     "created": 1792900090000
     },
-    "parts": [
-     {
-      "id": "prt_002",
-      "type": "text",
-      "messageID": "msg_002",
-      "sessionID": "ses_a",
-      "text": "Le **chien de garde** du flux SSE ne se réarme pas : je le corrige."
-     }
-    ]
+    "outcome": "succeeded"
    }
   ],
   "ses_b": [
    {
-    "info": {
-     "id": "msg_101",
-     "role": "user",
-     "sessionID": "ses_b",
-     "time": {
-      "created": 1792900000000
-     }
+    "type": "user",
+    "id": "msg_101",
+    "time": {
+     "created": 1792900000000
     },
-    "parts": [
-     {
-      "id": "prt_101",
-      "type": "text",
-      "messageID": "msg_101",
-      "sessionID": "ses_b",
-      "text": "Lance les tests."
-     }
-    ]
+    "text": "Lance les tests."
    },
    {
-    "info": {
-     "id": "msg_102",
-     "role": "assistant",
-     "sessionID": "ses_b",
-     "parentID": "msg_101",
-     "time": {
-      "created": 1792900060000
-     },
-     "providerID": "fake",
-     "modelID": "fake-model"
+    "type": "assistant",
+    "id": "msg_102",
+    "time": {
+     "created": 1792900060000
     },
-    "parts": [
+    "agent": "build",
+    "model": {
+     "id": "fake-model",
+     "providerID": "fake"
+    },
+    "content": [
      {
-      "id": "prt_102",
       "type": "tool",
-      "tool": "bash",
-      "callID": "call_1",
-      "messageID": "msg_102",
-      "sessionID": "ses_b",
+      "id": "call_1",
+      "name": "shell",
       "state": {
        "status": "running",
        "input": {
         "command": "pnpm test"
-       }
+       },
+       "metadata": {}
+      },
+      "time": {
+       "created": 1792900060000
       }
      }
     ]
    }
   ]
  },
- "statuses": {
-  "ses_b": {
-   "type": "busy"
-  }
- },
+ "active": [
+  "ses_b"
+ ],
  "permissions": [
   {
    "id": "per_1",
    "sessionID": "ses_b",
-   "permission": "bash",
-   "patterns": [
+   "action": "shell",
+   "resources": [
     "pnpm test"
    ],
-   "always": [
+   "save": [
     "pnpm *"
    ],
-   "tool": {
+   "source": {
+    "type": "tool",
     "messageID": "msg_102",
-    "callID": "call_1"
+    "id": "call_1"
    }
   }
  ],
- "mcp": {
-  "notes": {
-   "status": "connected"
+ "mcp": [
+  {
+   "name": "notes",
+   "status": {
+    "status": "connected"
+   }
   }
- },
- "files": [
-  "src/",
-  "src/app.ts",
-  "src/util.ts",
-  "README.md"
  ],
  "commands": [
   {
@@ -183,35 +185,59 @@
    "source": "skill"
   }
  ],
- "providers": {
-  "providers": [
-   {
-    "id": "fake",
-    "name": "Fournisseur simulé",
-    "models": {
-     "fake-model": {
-      "id": "fake-model",
-      "name": "Modèle simulé",
-      "limit": {
-       "context": 200000
-      },
-      "variants": {
-       "low": {},
-       "high": {}
-      }
-     },
-     "other-model": {
-      "id": "other-model",
-      "name": "Autre modèle",
-      "limit": {
-       "context": 100000
-      }
-     }
-    }
-   }
-  ],
-  "default": {
-   "fake": "fake-model"
+ "files": [
+  {
+   "path": "src",
+   "type": "directory"
+  },
+  {
+   "path": "src/app.ts",
+   "type": "file"
+  },
+  {
+   "path": "src/util.ts",
+   "type": "file"
+  },
+  {
+   "path": "README.md",
+   "type": "file"
   }
+ ],
+ "models": [
+  {
+   "id": "fake-model",
+   "modelID": "fake-model",
+   "providerID": "fake",
+   "name": "Modèle simulé",
+   "variants": [
+    {
+     "id": "low"
+    },
+    {
+     "id": "high"
+    }
+   ],
+   "enabled": true,
+   "limit": {
+    "context": 200000,
+    "output": 32000
+   }
+  },
+  {
+   "id": "other-model",
+   "modelID": "other-model",
+   "providerID": "fake",
+   "name": "Autre modèle",
+   "variants": [],
+   "enabled": true,
+   "limit": {
+    "context": 100000,
+    "output": 32000
+   }
+  }
+ ],
+ "defaultModel": {
+  "providerID": "fake",
+  "modelID": "fake-model"
  }
 }

@@ -41,17 +41,17 @@ def test_dialogue_global_depuis_le_menu(run_app):
 def test_deconnecter_puis_connecter(run_app):
     fake, app, _ = open_project_dialog(run_app)
     app.toggle('switch', 'Déconnecter')
-    fake.wait_request('POST', '/mcp/notes/disconnect')
+    fake.wait_request('POST', '/api/experimental/mcp/notes/disconnect')
     app.find('label', 'Désactivé')
     app.toggle('switch', 'Connecter')
-    assert fake.wait_request('POST', '/mcp/casse/connect') or fake.wait_request('POST', '/mcp/notes/connect')
+    assert fake.wait_request('POST', '/api/experimental/mcp/casse/connect') or fake.wait_request('POST', '/api/experimental/mcp/notes/connect')
 
 
 def test_recharger(run_app):
     fake, app, dialog = open_project_dialog(run_app)
-    n = len(fake.requests('GET', '/mcp'))
+    n = len(fake.requests('GET', '/api/mcp'))
     app.click('button', 'Recharger', within=dialog)
-    wait_until(lambda: len(fake.requests('GET', '/mcp')) > n, 5, 'serveurs MCP relus')
+    wait_until(lambda: len(fake.requests('GET', '/api/mcp')) > n, 5, 'serveurs MCP relus')
 
 
 def test_details_d_un_serveur_en_echec(run_app):

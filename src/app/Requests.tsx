@@ -151,7 +151,8 @@ function fieldInput(f: FormField): FieldInput {
   }
   if (f.type === 'multiselect') return choiceInput(f.key, f.options, true, f.custom === true, f.default ?? []);
   if (f.type === 'boolean') {
-    const sw = new Gtk.Switch({ active: f.default === true, halign: Gtk.Align.START });
+    // infobulle : nom accessible de l'interrupteur (sans libellé propre)
+    const sw = new Gtk.Switch({ active: f.default === true, halign: Gtk.Align.START, tooltipText: f.description ?? f.title ?? '' });
     return { key: f.key, widget: sw, value: () => sw.active, onChange: (fn) => void sw.connect('notify::active', fn) };
   }
   // nombre ou entier

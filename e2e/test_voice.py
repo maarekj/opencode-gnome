@@ -17,10 +17,10 @@ def test_dictee_inseree_puis_envoyee(run_app):
     composer = app.composer()
     wait_until(lambda: composer.text == 'Texte dicté au micro', 5, 'texte dicté dans le compositeur')
     # relu, pas envoyé automatiquement
-    assert not fake.requests('POST', '/session/ses_a/prompt_async')
+    assert not fake.requests('POST', '/api/session/ses_a/prompt')
     app.click('button', contains='Envoyer')
-    req = fake.wait_request('POST', '/session/ses_a/prompt_async')
-    assert req['body']['parts'][0]['text'] == 'Texte dicté au micro'
+    req = fake.wait_request('POST', '/api/session/ses_a/prompt')
+    assert req['body']['text'] == 'Texte dicté au micro'
 
 
 def test_dictee_annulee_par_echap(run_app):
@@ -42,8 +42,8 @@ def test_dictee_envoi_automatique(run_app):
     app.click('button', contains='Dicter')
     app.logged('DICTEE', 'début')
     app.click('button', contains='Terminer la dictée')
-    req = fake.wait_request('POST', '/session/ses_a/prompt_async')
-    assert req['body']['parts'][0]['text'] == 'Texte dicté au micro'
+    req = fake.wait_request('POST', '/api/session/ses_a/prompt')
+    assert req['body']['text'] == 'Texte dicté au micro'
 
 
 def test_lire_une_reponse_puis_arreter(run_app):

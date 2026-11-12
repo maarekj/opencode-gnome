@@ -64,7 +64,8 @@ export const Status = z.object({ type: z.string() });
 export const Message = z.looseObject({
   id: z.string(),
   type: z.string(),
-  time: z.object({ created: z.number() }),
+  // champs propres à chaque type (completed…) gardés : relus par les schémas de messages.ts
+  time: z.looseObject({ created: z.number() }),
 });
 export type MessageV2 = z.infer<typeof Message>;
 export const Messages = z.object({ data: z.array(Message), cursor: Cursor });
@@ -200,7 +201,7 @@ export const VcsDiff = z.object({ data: z.array(z.object({ file: z.string(), pat
 // ------------------------------------------------------------- extensions (#174)
 
 export const McpList = z.object({
-  data: z.array(z.object({ name: z.string(), status: z.union([z.object({ status: z.enum(['connected', 'pending', 'disabled']) }), z.object({ status: z.enum(['failed', 'needs_auth']), error: z.string() })]) })),
+  data: z.array(z.object({ name: z.string(), status: z.union([z.object({ status: z.enum(['connected', 'pending', 'disabled']) }), z.object({ status: z.enum(['failed', 'needs_auth']), error: z.optional(z.string()) })]) })),
 });
 export const SkillList = z.object({ data: z.array(z.object({ id: z.string(), name: z.string(), description: z.optional(z.string()), path: z.string() })) });
 export const PluginList = z.object({

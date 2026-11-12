@@ -12,7 +12,7 @@ def test_recherche_ouvre_le_message(run_app):
     # la session et l'extrait apparaissent
     app.find('list item', contains='Corriger le bug de connexion')
     assert app.text_visible('réarme')
-    assert fake.requests('GET', '/session/ses_a/message')
+    assert fake.requests('GET', '/api/session/ses_a/message')
     app.key('Return')
     # la session s'ouvre sur le message trouvé
     assert app.text_visible('chien de garde')

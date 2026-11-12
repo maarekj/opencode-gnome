@@ -137,7 +137,7 @@ const field = (v: unknown, key: string): string | undefined => {
 function toolSummary(t: ToolCall): string {
   const input = t.input;
   const fromInput = field(input, 'command') ?? field(input, 'path') ?? field(input, 'pattern') ?? field(input, 'url') ?? field(input, 'query') ?? field(input, 'description');
-  const full = fromInput ?? t.name;
+  const full = t.title ?? fromInput ?? t.name;
   const lines = full.trim().split('\n');
   return lines.length > 1 ? `${lines[0] ?? ''} …` : full;
 }
