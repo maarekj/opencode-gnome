@@ -82,12 +82,43 @@ WantedBy=default.target
 `,
 );
 
+/** Version majeure d'opencode installée (OpenCode 2 : `opencode v2.2.7`). */
+const opencodeMajor = (() => {
+  try {
+    const v = execFileSync(which('opencode'), ['--version'], { encoding: 'utf8' });
+    return Number(/(\d+)\./u.exec(v)?.[1] ?? '1');
+  } catch {
+    return 1;
+  }
+})();
+
+// mot de passe du serveur : OpenCode 2 en exige toujours un (sinon il en génère un à chaque
+// démarrage, inconnu des clients) ; généré une fois, gardé dans server.env (lu par l'unité,
+// l'application, `oc` et `ocg`)
+const serverEnv = path.join(home, '.config', 'opencode-gnome', 'server.env');
+if (variant === '') {
+  const env = fs.existsSync(serverEnv) ? fs.readFileSync(serverEnv, 'utf8') : '';
+  if (!/^OPENCODE_SERVER_PASSWORD=/mu.test(env)) {
+    const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const pw = Array.from({ length: 24 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    const base = env === '' ? '# Généré par opencode-gnome : lu par opencode-gnome-server.service\nOPENCODE_GNOME_HOST=127.0.0.1\n' : env.endsWith('\n') ? env : `${env}\n`;
+    write(serverEnv, `${base}OPENCODE_SERVER_PASSWORD="${pw}"\n`, 0o600);
+  }
+}
+
 // plugin opencode : environnement direnv du projet dans les commandes shell des sessions
-// (lu au démarrage du serveur : redémarrer le serveur partagé pour le prendre en compte)
-const pluginFile = path.join(home, '.config', 'opencode', 'plugins', 'opencode-gnome-direnv.js');
+// (lu au démarrage du serveur : redémarrer le serveur partagé pour le prendre en compte).
+// Même source pour les deux versions (#174) : OpenCode 1 lit plugins/<nom>.js, OpenCode 2 un
+// dossier plugins/<nom>/index.js ; OpenCode 2 chargerait aussi le fichier (deux fois le plugin) :
+// seule la forme de la version installée est gardée.
 const pluginSource = fs.readFileSync(path.join(root, 'data', 'opencode-plugin', 'direnv.js'), 'utf8');
-const pluginChanged = variant === '' && (!fs.existsSync(pluginFile) || fs.readFileSync(pluginFile, 'utf8') !== pluginSource);
-if (variant === '') write(pluginFile, pluginSource);
+const pluginsDir = path.join(home, '.config', 'opencode', 'plugins');
+const [pluginFile, pluginOther] = opencodeMajor >= 2 ? [path.join(pluginsDir, 'opencode-gnome-direnv', 'index.js'), path.join(pluginsDir, 'opencode-gnome-direnv.js')] : [path.join(pluginsDir, 'opencode-gnome-direnv.js'), path.join(pluginsDir, 'opencode-gnome-direnv')];
+const pluginChanged = variant === '' && (!fs.existsSync(pluginFile) || fs.readFileSync(pluginFile, 'utf8') !== pluginSource || fs.existsSync(pluginOther));
+if (variant === '') {
+  write(pluginFile, pluginSource);
+  fs.rmSync(pluginOther, { recursive: true, force: true });
+}
 
 if (variant === '') write(
   path.join(binDir, 'oc'),
@@ -104,11 +135,17 @@ if [ -z "\${OPENCODE_SERVER_PASSWORD:-}" ] && [ -r "$env_file" ]; then
 fi
 auth=()
 [ -n "\${OPENCODE_SERVER_PASSWORD:-}" ] && auth=(-u "opencode:$OPENCODE_SERVER_PASSWORD")
-if ! curl -sf "\${auth[@]}" "$url/global/health" >/dev/null 2>&1; then
+if ! curl -sf "\${auth[@]}" "$url${opencodeMajor >= 2 ? '/api/info' : '/global/health'}" >/dev/null 2>&1; then
   systemctl --user start ${UNIT}
-  for _ in $(seq 50); do curl -sf "\${auth[@]}" "$url/global/health" >/dev/null 2>&1 && break; sleep 0.1; done
+  for _ in $(seq 50); do curl -sf "\${auth[@]}" "$url${opencodeMajor >= 2 ? '/api/info' : '/global/health'}" >/dev/null 2>&1 && break; sleep 0.1; done
 fi
-exec opencode attach "$url" --dir "$PWD" "$@"
+${
+  opencodeMajor >= 2
+    ? `# OpenCode 2 : client attaché par --server (mot de passe : OPENCODE_PASSWORD)
+export OPENCODE_PASSWORD="\${OPENCODE_SERVER_PASSWORD:-}"
+exec opencode --server "$url" "$@" "$PWD"`
+    : 'exec opencode attach "$url" --dir "$PWD" "$@"'
+}
 `,
   0o755,
 );

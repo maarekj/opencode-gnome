@@ -85,6 +85,26 @@ async function load(envrc, log) {
   return { stamp: stamp(envrc, watched), env, watched };
 }
 
+/** Environnement direnv du dossier `cwd` (rien si aucun .envrc), chargé ou repris du cache. */
+async function envFor(cwd, log) {
+  const envrc = findEnvrc(cwd);
+  if (envrc === null) return {};
+  let entry = cache.get(envrc);
+  if (entry === undefined || entry.stamp !== stamp(envrc, entry.watched ?? [])) {
+    let p = pending.get(envrc);
+    if (p === undefined) {
+      p = load(envrc, log).finally(() => pending.delete(envrc));
+      pending.set(envrc, p);
+    }
+    entry = await p;
+    cache.set(envrc, entry);
+  }
+  return entry.env;
+}
+
+const direnvAvailable = () => new Promise((resolve) => execFile('direnv', ['version'], (err) => resolve(err === null)));
+
+/** OpenCode 1 : hook `shell.env`, journal par le client. */
 export const OpencodeGnomeDirenv = async ({ client }) => {
   const log = async (level, message) => {
     try {
@@ -93,26 +113,34 @@ export const OpencodeGnomeDirenv = async ({ client }) => {
       // journal indisponible
     }
   };
-  const available = await new Promise((resolve) => execFile('direnv', ['version'], (err) => resolve(err === null)));
-  if (!available) {
+  if (!(await direnvAvailable())) {
     await log('warn', 'direnv introuvable : environnement des projets non chargé');
     return {};
   }
   return {
     'shell.env': async (input, output) => {
-      const envrc = findEnvrc(input.cwd);
-      if (envrc === null) return;
-      let entry = cache.get(envrc);
-      if (entry === undefined || entry.stamp !== stamp(envrc, entry.watched ?? [])) {
-        let p = pending.get(envrc);
-        if (p === undefined) {
-          p = load(envrc, log).finally(() => pending.delete(envrc));
-          pending.set(envrc, p);
-        }
-        entry = await p;
-        cache.set(envrc, entry);
-      }
-      Object.assign(output.env, entry.env);
+      Object.assign(output.env, await envFor(input.cwd, log));
     },
   };
+};
+
+/**
+ * OpenCode 2 (#174) : même plugin, API v2 (`setup`, hook `shell` « create.before ») ; OpenCode 1
+ * (1.18.29 et plus) appelle `server()`. Installé en dossier (`plugins/opencode-gnome-direnv/`).
+ */
+export default {
+  id: 'opencode-gnome.direnv',
+  async setup(ctx) {
+    const log = async (level, message) => {
+      (level === 'warn' ? console.warn : console.log)(`opencode-gnome-direnv : ${message}`);
+    };
+    if (!(await direnvAvailable())) {
+      await log('warn', 'direnv introuvable : environnement des projets non chargé');
+      return;
+    }
+    await ctx.shell.hook('create.before', async (event) => {
+      Object.assign(event.env, await envFor(event.cwd, log));
+    });
+  },
+  server: (input) => OpencodeGnomeDirenv(input),
 };

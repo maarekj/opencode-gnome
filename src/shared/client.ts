@@ -5,8 +5,9 @@ import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
 import { serverPassword } from './server.ts';
-import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, type OpencodeConfig, type Providers, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, type McpStatus, MessageWithParts, type Skill, type OpencodeConfig, type Providers, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
 import { OpencodeV2 } from './v2/client.ts';
+import { declaredMcp } from './v2/config.ts';
 import { appProject, appSession, type FormAnswer, type FormV2, type PermissionV2 } from './v2/schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -365,37 +366,41 @@ export class OpencodeClient {
   }
 
   /** État des serveurs MCP du répertoire (projet ou global). */
-  mcpStatus(directory: string): Promise<Record<string, McpStatus>> {
-    return this.get('/mcp', z.record(z.string(), McpStatus), { directory });
+  async mcpStatus(directory: string): Promise<Record<string, McpStatus>> {
+    return Object.fromEntries((await this.v2.mcp(directory)).map((m) => [m.name, 'error' in m.status ? { status: m.status.status, error: m.status.error } : { status: m.status.status }]));
   }
 
-  /** Serveurs MCP déclarés : configuration fusionnée du répertoire (`null` : configuration globale). */
-  async mcpConfig(directory: string | null): Promise<Record<string, McpConfig>> {
-    const c = directory === null ? await this.get('/global/config', McpSection) : await this.get('/config', McpSection, { directory });
-    return c.mcp ?? {};
+  /** Serveurs MCP déclarés dans les fichiers de configuration (`null` : configuration globale). */
+  mcpConfig(directory: string | null): Promise<Record<string, McpConfig>> {
+    return Promise.resolve(declaredMcp(directory));
   }
 
   /**
-   * Plugins déclarés (configuration fusionnée du répertoire, `null` : globale), y compris les
-   * fichiers découverts dans `.opencode/plugin(s)/` (URL `file://`).
+   * Plugins chargés par le serveur pour le dossier (`null` : dossier personnel), au format des
+   * déclarations : `nom@version`, `file://chemin` ; intégrés exclus.
    */
   async plugins(directory: string | null): Promise<unknown[]> {
-    const c = directory === null ? await this.get('/global/config', PluginSection) : await this.get('/config', PluginSection, { directory });
-    return c.plugin ?? [];
+    const list = await this.v2.plugins(directory ?? GLib.get_home_dir());
+    return list.flatMap((p) => {
+      const src = p.source;
+      if (src.type === 'package') return [src.version === undefined ? src.target : `${src.target}@${src.version}`];
+      if (src.type === 'local') return [GLib.filename_to_uri(src.path, null)];
+      return [];
+    });
   }
 
   async mcpConnect(name: string, directory: string, connect: boolean): Promise<void> {
-    await this.request('POST', `/mcp/${encodeURIComponent(name)}/${connect ? 'connect' : 'disconnect'}`, z.unknown(), { query: { directory }, long: true });
+    await this.v2.mcpConnect(directory, name, connect);
   }
 
-  /** Libère l'instance du répertoire : sa configuration (opencode.json, MCP…) est relue ensuite. */
+  /** Relit la configuration du répertoire (opencode.json, MCP…) : cache des choix vidé. */
   async disposeInstance(directory: string): Promise<void> {
     for (const k of this.#cache.keys()) if (k.endsWith(`\n${directory}`)) this.#cache.delete(k);
-    await this.request('POST', '/instance/dispose', z.unknown(), { query: { directory }, long: true });
+    await this.v2.reload(directory);
   }
 
-  skills(directory: string): Promise<Skill[]> {
-    return this.get('/skill', z.array(Skill), { directory });
+  async skills(directory: string): Promise<Skill[]> {
+    return (await this.v2.skills(directory)).map((s): Skill => (s.description === undefined ? { name: s.name, location: s.path } : { name: s.name, description: s.description, location: s.path }));
   }
 
   /**

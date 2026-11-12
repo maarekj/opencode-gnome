@@ -118,8 +118,10 @@ export function openServerWindow(parent: Gtk.Widget, store: Store): void {
   accessGroup.add(password);
   const dirty = (): boolean => network.active !== access.network || password.text !== access.password;
   const updateApply = (): void => {
-    const pwOk = !PASSWORD_FORBIDDEN.test(password.text);
-    password.title = pwOk ? 'Mot de passe (utilisateur « opencode »)' : 'Mot de passe : espaces, guillemets, \\, $ et ` interdits';
+    // OpenCode 2 exige un mot de passe (#174)
+    const empty = password.text === '';
+    const pwOk = !empty && !PASSWORD_FORBIDDEN.test(password.text);
+    password.title = pwOk ? 'Mot de passe (utilisateur « opencode »)' : empty ? 'Mot de passe obligatoire (OpenCode 2)' : 'Mot de passe : espaces, guillemets, \\, $ et ` interdits';
     if (pwOk) password.remove_css_class('error');
     else password.add_css_class('error');
     apply.sensitive = dirty() && pwOk;

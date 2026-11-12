@@ -101,16 +101,28 @@ export function crossedAlert(before: number | undefined, now: number): number | 
 /** Niveau d'alerte d'un pourcentage. */
 export const usageLevel = (percent: number): 'ok' | 'warning' | 'critical' => (percent >= USAGE_ALERTS[1] ? 'critical' : percent >= USAGE_ALERTS[0] ? 'warning' : 'ok');
 
-function readToken(): string | null {
-  const path = GLib.build_filenamev([GLib.get_user_data_dir(), 'opencode', 'auth.json']);
+const readJson = (path: string): unknown => {
   try {
     const [, bytes] = GLib.file_get_contents(path);
-    const r = Auth.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
-    const a = r.success ? r.data.anthropic : undefined;
-    return a?.type === 'oauth' && a.access !== undefined ? a.access : null;
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return null;
   }
+};
+
+const ClaudeCredentials = z.object({ claudeAiOauth: z.object({ accessToken: z.string() }) });
+
+/**
+ * Jeton du compte Claude : celui d'opencode 1 (`auth.json`, entrée `anthropic`), sinon celui de
+ * Claude Code (`~/.claude/.credentials.json`), utilisé par OpenCode 2 (#174) et par le plugin.
+ */
+function readToken(): string | null {
+  const r = Auth.safeParse(readJson(GLib.build_filenamev([GLib.get_user_data_dir(), 'opencode', 'auth.json'])));
+  const a = r.success ? r.data.anthropic : undefined;
+  if (a?.type === 'oauth' && a.access !== undefined) return a.access;
+  const dir = GLib.getenv('CLAUDE_CONFIG_DIR') ?? GLib.build_filenamev([GLib.get_home_dir(), '.claude']);
+  const c = ClaudeCredentials.safeParse(readJson(GLib.build_filenamev([dir, '.credentials.json'])));
+  return c.success ? c.data.claudeAiOauth.accessToken : null;
 }
 
 /** profil du jeton courant (lu une fois par jeton, seulement s'il a réussi) */

@@ -5,6 +5,9 @@
 // la compilation (entrée et sortie), et chaque schéma zod contre le type officiel (`conforms`).
 import type {
   AgentListOutput,
+  McpListOutput,
+  PluginListOutput,
+  SkillListOutput,
   CommandListOutput,
   FileFindOutput,
   ModelDefaultOutput,
@@ -42,7 +45,7 @@ import type Gio from 'gi://Gio';
 import type { OpencodeClient } from '../client.ts';
 import { HttpError } from '../errors.ts';
 import { conforms } from './conforms.ts';
-import { AgentList, CommandList, FileFind, ModelDefault, ModelList, VcsDiff, FormList, Info, Messages, PermissionList, Project, Session, SessionPage, Status, type FormV2, type MessageV2, type PermissionV2, type ProjectV2, type SessionV2 } from './schemas.ts';
+import { McpList, PluginList, SkillList, AgentList, CommandList, FileFind, ModelDefault, ModelList, VcsDiff, FormList, Info, Messages, PermissionList, Project, Session, SessionPage, Status, type FormV2, type MessageV2, type PermissionV2, type ProjectV2, type SessionV2 } from './schemas.ts';
 import * as z from 'zod/mini';
 
 // les schémas acceptent tout ce que le serveur v2 peut renvoyer (vérifié à la compilation)
@@ -62,6 +65,9 @@ conforms<ModelDefaultOutput, typeof ModelDefault>(true);
 conforms<CommandListOutput, typeof CommandList>(true);
 conforms<FileFindOutput, typeof FileFind>(true);
 conforms<VcsDiffOutput, typeof VcsDiff>(true);
+conforms<McpListOutput, typeof McpList>(true);
+conforms<SkillListOutput, typeof SkillList>(true);
+conforms<PluginListOutput, typeof PluginList>(true);
 
 /** Requête typée : paramètres de requête tels que décrits par le type d'entrée officiel. */
 type Query<T> = { readonly [K in keyof T]?: T[K] extends string | number | boolean | null | undefined ? T[K] : never };
@@ -211,6 +217,29 @@ export class OpencodeV2 {
 
   async vcsDiff(directory: string, mode: VcsDiffInput['mode']): Promise<z.output<typeof VcsDiff>['data']> {
     return (await this.#http.get('/api/vcs/diff', VcsDiff, { 'location[directory]': directory, mode })).data;
+  }
+
+  // ---------------------------------------------------------------- extensions (#174)
+
+  async mcp(directory: string): Promise<z.output<typeof McpList>['data']> {
+    return (await this.#http.get('/api/mcp', McpList, { 'location[directory]': directory })).data;
+  }
+
+  async mcpConnect(directory: string, server: string, connect: boolean): Promise<void> {
+    await this.#http.request('POST', `/api/experimental/mcp/${seg(server)}/${connect ? 'connect' : 'disconnect'}`, z.unknown(), { query: { 'location[directory]': directory }, long: true });
+  }
+
+  async skills(directory: string): Promise<z.output<typeof SkillList>['data']> {
+    return (await this.#http.get('/api/skill', SkillList, { 'location[directory]': directory })).data;
+  }
+
+  async plugins(directory: string): Promise<z.output<typeof PluginList>['data']> {
+    return (await this.#http.get('/api/plugin', PluginList, { 'location[directory]': directory })).data;
+  }
+
+  /** Relit la configuration du dossier (opencode.json, agents, commandes, skills, MCP). */
+  async reload(directory: string): Promise<void> {
+    await this.#http.request('POST', '/api/location/reload', z.unknown(), { query: { 'location[directory]': directory }, long: true });
   }
 
   // ---------------------------------------------------------------- demandes (#173)

@@ -196,3 +196,24 @@ export const ModelDefault = z.object({ data: z.nullable(ModelV2) });
 export const CommandList = z.object({ data: z.array(z.object({ name: z.string(), description: z.optional(z.string()) })) });
 export const FileFind = z.object({ data: z.array(z.object({ path: z.string(), type: z.enum(['file', 'directory']) })) });
 export const VcsDiff = z.object({ data: z.array(z.object({ file: z.string(), patch: z.string(), additions: z.number(), deletions: z.number(), status: z.string() })) });
+
+// ------------------------------------------------------------- extensions (#174)
+
+export const McpList = z.object({
+  data: z.array(z.object({ name: z.string(), status: z.union([z.object({ status: z.enum(['connected', 'pending', 'disabled']) }), z.object({ status: z.enum(['failed', 'needs_auth']), error: z.string() })]) })),
+});
+export const SkillList = z.object({ data: z.array(z.object({ id: z.string(), name: z.string(), description: z.optional(z.string()), path: z.string() })) });
+export const PluginList = z.object({
+  data: z.array(
+    z.object({
+      id: z.optional(z.string()),
+      source: z.union([
+        z.object({ type: z.literal('builtin') }),
+        z.object({ type: z.literal('package'), target: z.string(), version: z.optional(z.string()) }),
+        z.object({ type: z.literal('local'), path: z.string() }),
+        z.object({ type: z.literal('sdk') }),
+      ]),
+      state: z.union([z.object({ status: z.literal('active') }), z.object({ status: z.literal('failed'), error: z.string() })]),
+    }),
+  ),
+});
