@@ -81,6 +81,28 @@ export const STYLESHEET = `
   box-shadow: 0 2px 8px alpha(black, 0.25);
 }
 
+.usage-bar {
+  padding: 6px 12px 8px;
+}
+.usage-bar levelbar trough {
+  min-height: 4px;
+}
+.usage-bar levelbar block.filled {
+  background: var(--accent-bg-color);
+}
+.usage-bar levelbar.usage-warning block.filled {
+  background: var(--warning-bg-color);
+}
+.usage-bar levelbar.usage-critical block.filled {
+  background: var(--error-bg-color);
+}
+label.usage-warning {
+  color: var(--warning-color);
+}
+label.usage-critical {
+  color: var(--error-color);
+}
+
 .waiting-badge {
   background: var(--warning-bg-color);
   color: var(--warning-fg-color);

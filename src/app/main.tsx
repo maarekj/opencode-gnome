@@ -22,6 +22,7 @@ import { STYLESHEET } from './style.ts';
 import { openServerWindow } from './ServerWindow.tsx';
 import { refreshMarkdownColors, setMarkdownStyle, setMonospaceFamily } from './Markdown.tsx';
 import { openTasksWindow, TasksMonitor } from './TasksWindow.tsx';
+import { watchUsageAlerts } from './UsageBar.ts';
 
 // méthode de saisie choisie avant la création de tout widget (#138)
 applyInputMethod();
@@ -258,6 +259,7 @@ app.connect('startup', () => {
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, fontCss, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
 });
 
+let usageAlerts = false;
 app.connect('activate', () => {
   // le jeton de lancement hérité de l'environnement ne sert qu'une fois : le garder ferait
   // réutiliser un jeton périmé (refusé par GNOME) quand une action redemande le premier plan
@@ -269,6 +271,11 @@ app.connect('activate', () => {
   }
   store.start();
   settings.watch();
+  // quotas du forfait Claude : notifications des seuils (#166)
+  if (!usageAlerts) {
+    usageAlerts = true;
+    watchUsageAlerts(app);
+  }
   notifier ??= new Notifier({
     app,
     store,

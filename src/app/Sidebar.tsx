@@ -24,6 +24,7 @@ import type { TerminalContext } from './TerminalBar.tsx';
 import { devenvDir, devenvInstalled, phaseKind, type DevenvState } from '../shared/devenv.ts';
 import { watchWhileMapped } from './DevenvItem.tsx';
 import { askDelete, askRename, type SessionActions } from './SessionMenu.ts';
+import { usageBar } from './UsageBar.ts';
 import { intercepted } from '../shared/sandbox.ts';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
@@ -694,6 +695,7 @@ export function Sidebar({
             <Gtk.Button label="Voir tous les projets" halign={Gtk.Align.CENTER} cssClasses={['pill']} onClicked={() => settings.setSidebarMode('all')} />
           </Adw.StatusPage>
         </Gtk.Stack>
+        <Gtk.Box $type="bottom" $={(self: Gtk.Box) => self.append(usageBar())} />
       </Adw.ToolbarView>
     </Adw.NavigationPage>
   );
