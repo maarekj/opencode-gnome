@@ -136,3 +136,32 @@ export const appProject = (p: ProjectV2): AppProject => ({
   ...(p.name === undefined ? {} : { name: p.name }),
   time: { created: p.time.created, updated: p.time.updated },
 });
+
+// ------------------------------------------------------------- choix du compositeur (#172)
+
+export const AgentV2 = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.optional(z.string()),
+  mode: z.enum(['subagent', 'primary', 'all']),
+  hidden: z.boolean(),
+  model: z.optional(z.object({ id: z.string(), providerID: z.string(), variant: z.optional(z.string()) })),
+});
+export const AgentList = z.object({ data: z.array(AgentV2) });
+
+export const ModelV2 = z.object({
+  id: z.string(),
+  modelID: z.string(),
+  providerID: z.string(),
+  name: z.string(),
+  variants: z.array(z.object({ id: z.string() })),
+  enabled: z.boolean(),
+  limit: z.object({ context: z.number(), output: z.number() }),
+});
+export type ModelV2 = z.infer<typeof ModelV2>;
+export const ModelList = z.object({ data: z.array(ModelV2) });
+export const ModelDefault = z.object({ data: z.nullable(ModelV2) });
+
+export const CommandList = z.object({ data: z.array(z.object({ name: z.string(), description: z.optional(z.string()) })) });
+export const FileFind = z.object({ data: z.array(z.object({ path: z.string(), type: z.enum(['file', 'directory']) })) });
+export const VcsDiff = z.object({ data: z.array(z.object({ file: z.string(), patch: z.string(), additions: z.number(), deletions: z.number(), status: z.string() })) });

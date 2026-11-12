@@ -80,26 +80,40 @@ export function matchRanges(text: string, query: readonly string[]): [number, nu
   return out.toSorted((a, b) => a[0] - b[0]);
 }
 
-/** Textes d'une réponse `GET /session/:id/message` (parties `text` non synthétiques). */
+/** Champ texte d'un objet JSON. */
+const str = (o: object, k: string): string | null => {
+  const v: unknown = Reflect.get(o, k);
+  return typeof v === 'string' ? v : null;
+};
+
+/** Textes d'une page d'historique v2 : messages de l'utilisateur, textes des réponses de l'agent. */
 export function textsOf(messages: unknown): IndexedText[] {
   if (!Array.isArray(messages)) return [];
   const out: IndexedText[] = [];
-  for (const m of messages) {
+  for (const m of messages as unknown[]) {
     if (typeof m !== 'object' || m === null) continue;
-    const info: unknown = Reflect.get(m, 'info');
-    const parts: unknown = Reflect.get(m, 'parts');
-    if (typeof info !== 'object' || info === null || !Array.isArray(parts)) continue;
-    const role: unknown = Reflect.get(info, 'role');
-    const id: unknown = Reflect.get(info, 'id');
-    const time: unknown = Reflect.get(info, 'time');
-    const created: unknown = typeof time === 'object' && time !== null ? Reflect.get(time, 'created') : 0;
-    if ((role !== 'user' && role !== 'assistant') || typeof id !== 'string') continue;
-    for (const p of parts) {
-      if (typeof p !== 'object' || p === null) continue;
-      const text: unknown = Reflect.get(p, 'text');
-      const pid: unknown = Reflect.get(p, 'id');
-      if (Reflect.get(p, 'type') !== 'text' || Reflect.get(p, 'synthetic') === true || typeof text !== 'string' || typeof pid !== 'string' || text.trim() === '') continue;
-      out.push({ message: id, part: pid, role, created: typeof created === 'number' ? created : 0, text });
+    const id = str(m, 'id');
+    const type = str(m, 'type');
+    const time: unknown = Reflect.get(m, 'time');
+    const t: unknown = typeof time === 'object' && time !== null ? Reflect.get(time, 'created') : 0;
+    const created = typeof t === 'number' ? t : 0;
+    if (id === null) continue;
+    if (type === 'user') {
+      const text = str(m, 'text');
+      // identifiants des blocs de la conversation (#171) : reveal() les retrouve
+      if (text !== null && text.trim() !== '') out.push({ message: id, part: `${id}:user`, role: 'user', created, text });
+      continue;
+    }
+    if (type !== 'assistant') continue;
+    const content: unknown = Reflect.get(m, 'content');
+    if (!Array.isArray(content)) continue;
+    let n = 0;
+    for (const c of content as unknown[]) {
+      if (typeof c !== 'object' || c === null || str(c, 'type') !== 'text') continue;
+      const text = str(c, 'text') ?? '';
+      const part = `${id}:text:${n}`;
+      n += 1;
+      if (text.trim() !== '') out.push({ message: id, part, role: 'assistant', created, text });
     }
   }
   return out;
@@ -141,7 +155,8 @@ const SCHEMA = [
   // une ligne par texte : role « title » pour le titre de la session
   "CREATE VIRTUAL TABLE IF NOT EXISTS texts USING fts5(body, session UNINDEXED, message UNINDEXED, part UNINDEXED, role UNINDEXED, created UNINDEXED, tokenize='trigram remove_diacritics 1')",
 ];
-const VERSION = '1';
+// 2 : historique OpenCode 2 (identifiants des blocs v2, #172)
+const VERSION = '2';
 
 /** Laisse passer un tour de boucle principale. */
 const idle = (): Promise<void> =>

@@ -4,6 +4,20 @@
 // main plutôt que `@opencode/client`, dont seuls les types servent : chaque appel est vérifié à
 // la compilation (entrée et sortie), et chaque schéma zod contre le type officiel (`conforms`).
 import type {
+  AgentListOutput,
+  CommandListOutput,
+  FileFindOutput,
+  ModelDefaultOutput,
+  ModelListOutput,
+  SessionCommandInput,
+  SessionCompactInput,
+  SessionInterruptInput,
+  SessionPromptInput,
+  SessionRevertStageInput,
+  SessionSwitchAgentInput,
+  SessionSwitchModelInput,
+  VcsDiffInput,
+  VcsDiffOutput,
   FormListOutput,
   MessageListInput,
   PermissionRequestListOutput,
@@ -21,10 +35,11 @@ import type {
   SessionRemoveInput,
   SessionUpdateInput,
 } from '@opencode/client';
+import type Gio from 'gi://Gio';
 import type { OpencodeClient } from '../client.ts';
 import { HttpError } from '../errors.ts';
 import { conforms } from './conforms.ts';
-import { FormList, Info, Messages, PermissionList, Project, Session, SessionPage, Status, type FormV2, type MessageV2, type PermissionV2, type ProjectV2, type SessionV2 } from './schemas.ts';
+import { AgentList, CommandList, FileFind, ModelDefault, ModelList, VcsDiff, FormList, Info, Messages, PermissionList, Project, Session, SessionPage, Status, type FormV2, type MessageV2, type PermissionV2, type ProjectV2, type SessionV2 } from './schemas.ts';
 import * as z from 'zod/mini';
 
 // les schémas acceptent tout ce que le serveur v2 peut renvoyer (vérifié à la compilation)
@@ -38,6 +53,12 @@ conforms<MessageListOutput, typeof Messages>(true);
 conforms<SessionActiveOutput[string], typeof Status>(true);
 conforms<PermissionRequestListOutput, typeof PermissionList>(true);
 conforms<FormListOutput, typeof FormList>(true);
+conforms<AgentListOutput, typeof AgentList>(true);
+conforms<ModelListOutput, typeof ModelList>(true);
+conforms<ModelDefaultOutput, typeof ModelDefault>(true);
+conforms<CommandListOutput, typeof CommandList>(true);
+conforms<FileFindOutput, typeof FileFind>(true);
+conforms<VcsDiffOutput, typeof VcsDiff>(true);
 
 /** Requête typée : paramètres de requête tels que décrits par le type d'entrée officiel. */
 type Query<T> = { readonly [K in keyof T]?: T[K] extends string | number | boolean | null | undefined ? T[K] : never };
@@ -118,6 +139,75 @@ export class OpencodeV2 {
   /** Formulaires (questions) en attente dans un dossier. */
   async forms(directory: string): Promise<FormV2[]> {
     return (await this.#http.get('/api/form', FormList, { 'location[directory]': directory })).data;
+  }
+
+  // ---------------------------------------------------------------- envoi et actions (#172)
+
+  /** Message utilisateur (remis à l'agent, ou mis en file s'il travaille). */
+  async prompt(input: SessionPromptInput): Promise<void> {
+    const { sessionID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/prompt`, z.unknown(), { body });
+  }
+
+  async command(input: SessionCommandInput): Promise<void> {
+    const { sessionID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/command`, z.unknown(), { body, long: true });
+  }
+
+  async switchAgent(input: SessionSwitchAgentInput): Promise<void> {
+    const { sessionID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/agent`, z.unknown(), { body });
+  }
+
+  async switchModel(input: SessionSwitchModelInput): Promise<void> {
+    const { sessionID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/model`, z.unknown(), { body });
+  }
+
+  async compact(input: SessionCompactInput): Promise<void> {
+    const { sessionID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/compact`, z.unknown(), { body });
+  }
+
+  async interrupt(input: SessionInterruptInput): Promise<void> {
+    const { sessionID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/interrupt`, z.unknown(), { body });
+  }
+
+  /** Annulation préparée : messages masqués à partir de `messageID` (rétablissables). */
+  async revertStage(input: SessionRevertStageInput): Promise<void> {
+    const { sessionID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/revert/stage`, z.unknown(), { body });
+  }
+
+  /** Annulation abandonnée : messages rétablis. */
+  async revertClear(sessionID: string): Promise<void> {
+    await this.#http.request('DELETE', `/api/session/${seg(sessionID)}/revert`, z.unknown());
+  }
+
+  async agents(directory: string): Promise<z.output<typeof AgentList>['data']> {
+    return (await this.#http.get('/api/agent', AgentList, { 'location[directory]': directory })).data;
+  }
+
+  async models(directory: string): Promise<z.output<typeof ModelList>['data']> {
+    return (await this.#http.get('/api/model', ModelList, { 'location[directory]': directory })).data;
+  }
+
+  async defaultModel(directory: string): Promise<z.output<typeof ModelDefault>['data']> {
+    return (await this.#http.get('/api/model/default', ModelDefault, { 'location[directory]': directory })).data;
+  }
+
+  async commands(directory: string): Promise<z.output<typeof CommandList>['data']> {
+    return (await this.#http.get('/api/command', CommandList, { 'location[directory]': directory })).data;
+  }
+
+  async findFiles(directory: string, q: { query: string; type?: 'file' | 'directory'; limit?: number }, cancellable?: Gio.Cancellable): Promise<z.output<typeof FileFind>['data']> {
+    const r = await this.#http.request('GET', '/api/fs/find', FileFind, { query: { 'location[directory]': directory, ...q }, ...(cancellable === undefined ? {} : { cancellable }) });
+    return r.data;
+  }
+
+  async vcsDiff(directory: string, mode: VcsDiffInput['mode']): Promise<z.output<typeof VcsDiff>['data']> {
+    return (await this.#http.get('/api/vcs/diff', VcsDiff, { 'location[directory]': directory, mode })).data;
   }
 
   /** Messages, plus récents d'abord par défaut ; `cursor` : page plus ancienne. */

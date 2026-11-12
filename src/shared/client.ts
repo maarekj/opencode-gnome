@@ -5,7 +5,7 @@ import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
 import { serverPassword } from './server.ts';
-import { type McpConfig, Agent, AppEvent, type Attachment, Command, FileDiff, type Mention, SharedSession, GlobalEnvelope, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, OpencodeConfig, PermissionRequest, Providers, QuestionRequest, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, type OpencodeConfig, PermissionRequest, type Providers, QuestionRequest, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
 import { OpencodeV2 } from './v2/client.ts';
 import { appProject, appSession } from './v2/schemas.ts';
 
@@ -16,6 +16,9 @@ Gio._promisify(Gio.DataInputStream.prototype, 'read_line_async', 'read_line_fini
 type Query = Readonly<Record<string, string | number | boolean | undefined>>;
 
 const decoder = new TextDecoder();
+
+/** Page d'historique v2 sans validation des entrées. */
+const RawPage = z.object({ data: z.array(z.unknown()), cursor: z.object({ next: z.optional(z.nullable(z.string())) }) });
 
 /** Taille des morceaux décodés entre deux tours de boucle principale. */
 const DECODE_CHUNK = 2 * 1024 * 1024;
@@ -68,16 +71,6 @@ export interface PromptOptions {
   files?: readonly Attachment[];
   mentions?: readonly Mention[];
 }
-
-/** Parties `file` des mentions `@chemin`, au format de la TUI (le serveur lit le fichier ou liste le dossier). */
-const mentionParts = (directory: string, mentions: readonly Mention[]): object[] =>
-  mentions.map((m) => ({
-    type: 'file',
-    mime: m.directory ? 'application/x-directory' : 'text/plain',
-    filename: m.path,
-    url: GLib.filename_to_uri(GLib.build_filenamev([directory, m.path]), null),
-    source: { type: 'file', path: m.path, text: { value: `@${m.path}`, start: m.start, end: m.end } },
-  }));
 
 /** Délai sans aucune donnée du flux d'événements avant reconnexion (heartbeat : 10 s). */
 const WATCHDOG_MS = 30_000;
@@ -216,18 +209,13 @@ export class OpencodeClient {
   }
 
   /**
-   * Page de messages non validée (indexation de la recherche : seuls les textes sont lus, la
-   * validation zod des sorties d'outils serait coûteuse : #159).
+   * Page d'entrées de l'historique non validée (indexation de la recherche : seuls les textes
+   * sont lus, la validation des sorties d'outils serait coûteuse : #159), dans l'ordre
+   * chronologique ; `older` : curseur de la page plus ancienne, null au début de la session.
    */
-  async messagePageRaw(sessionID: string, limit: number, before?: string): Promise<{ messages: unknown; older: string | null }> {
-    let older: string | null = null;
-    const messages = await this.request('GET', `/session/${encodeURIComponent(sessionID)}/message`, z.unknown(), {
-      query: { limit, before },
-      headers: (h) => {
-        older = h.get_one('X-Next-Cursor');
-      },
-    });
-    return { messages, older };
+  async messagePageRaw(sessionID: string, limit: number, before?: string): Promise<{ messages: unknown[]; older: string | null }> {
+    const r = await this.request('GET', `/api/session/${encodeURIComponent(sessionID)}/message`, RawPage, { query: before === undefined ? { limit, order: 'desc' } : { limit, cursor: before } });
+    return { messages: r.data.toReversed(), older: r.data.length === 0 ? null : (r.cursor.next ?? null) };
   }
 
   /** Liste de tâches de la session (outil `todowrite`). */
@@ -258,9 +246,32 @@ export class OpencodeClient {
     await this.v2.removeSession({ sessionID });
   }
 
+  /**
+   * Agent et modèle de la session (v2 : réglés sur la session, plus dans chaque message), s'ils
+   * sont donnés.
+   */
+  async #choose(sessionID: string, opts: PromptOptions): Promise<void> {
+    if (opts.agent === undefined && opts.model === undefined) return;
+    // seulement s'ils changent : chaque changement s'inscrit dans l'historique de la session
+    const current = await this.v2.session(sessionID);
+    if (opts.agent !== undefined && opts.agent !== current.agent) await this.v2.switchAgent({ sessionID, agent: opts.agent });
+    const m = opts.model;
+    if (m !== undefined && (m.modelID !== current.model?.id || m.providerID !== current.model.providerID || (opts.variant ?? undefined) !== current.model.variant)) {
+      await this.v2.switchModel({ sessionID, model: { id: m.modelID, providerID: m.providerID, ...(opts.variant === undefined ? {} : { variant: opts.variant }) } });
+    }
+  }
+
+  /** Pièces jointes et mentions `@chemin` → fichiers d'un message v2. */
+  #files(directory: string, files: readonly Attachment[], mentions: readonly Mention[]): { uri: string; name?: string; mention?: { start: number; end: number; text: string } }[] {
+    return [
+      ...files.map((f) => ({ uri: f.url, name: f.filename })),
+      ...mentions.map((m) => ({ uri: GLib.filename_to_uri(GLib.build_filenamev([directory, m.path]), null), name: m.path, mention: { start: m.start, end: m.end, text: `@${m.path}` } })),
+    ];
+  }
+
   /** Envoie un prompt sans attendre la réponse (elle arrive par le flux d'événements). */
   async prompt(sessionID: string, directory: string, text: string, opts: PromptOptions = {}): Promise<void> {
-    const { files = [], mentions = [], ...rest } = opts;
+    const { files = [], mentions = [] } = opts;
     // Les fournisseurs refusent les types non pris en charge (xlsx, zip…), et l'erreur se répète
     // à chaque tour car la pièce jointe reste dans l'historique : ces fichiers sont transmis par
     // leur chemin, l'agent les ouvre avec ses outils.
@@ -268,69 +279,58 @@ export class OpencodeClient {
     const byPath = files.filter((f) => !direct.includes(f));
     const paths = byPath.map((f) => `- ${filePath(f.url)}`);
     const fullText = paths.length === 0 ? text : `${text}${text === '' ? '' : '\n\n'}Fichiers joints :\n${paths.join('\n')}`;
-    const parts = [
-      ...(fullText === '' ? [] : [{ type: 'text', text: fullText }]),
-      ...direct.map((f) => ({ type: 'file', mime: f.mime, filename: f.filename, url: f.url })),
-      ...mentionParts(directory, mentions),
-    ];
-    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/prompt_async`, z.unknown(), {
-      query: { directory },
-      body: { parts, ...rest },
-    });
+    await this.#choose(sessionID, opts);
+    const all = this.#files(directory, direct, mentions);
+    await this.v2.prompt({ sessionID, text: fullText, ...(all.length === 0 ? {} : { files: all }) });
   }
 
   /** Commandes disponibles dans le répertoire (serveur, utilisateur, projet, skills, MCP). */
-  commands(directory: string): Promise<Command[]> {
-    return this.get('/command', z.array(Command), { directory });
+  async commands(directory: string): Promise<Command[]> {
+    return (await this.v2.commands(directory)).map((c): Command => (c.description === undefined ? { name: c.name } : { name: c.name, description: c.description }));
   }
 
-  /**
-   * Exécute une commande comme la TUI. La requête ne répond qu'à la fin du tour de l'agent :
-   * session HTTP sans délai d'expiration, la progression arrive par le flux d'événements.
-   */
+  /** Exécute une commande comme la TUI ; la progression arrive par le flux d'événements. */
   async command(sessionID: string, directory: string, command: string, args: string, opts: PromptOptions = {}): Promise<void> {
-    const { files = [], mentions = [], model, ...rest } = opts;
-    const parts = [...files.map((f) => ({ type: 'file', mime: f.mime, filename: f.filename, url: f.url })), ...mentionParts(directory, mentions)];
-    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/command`, z.unknown(), {
-      query: { directory },
-      body: { command, arguments: args, ...rest, ...(model === undefined ? {} : { model: `${model.providerID}/${model.modelID}` }), ...(parts.length === 0 ? {} : { parts }) },
-      long: true,
-    });
+    const { files = [], mentions = [] } = opts;
+    await this.#choose(sessionID, opts);
+    const all = this.#files(directory, files, mentions);
+    await this.v2.command({ sessionID, name: command, text: args, ...(all.length === 0 ? {} : { files: all }) });
   }
 
-  /** Compacte la session (résumé par le modèle donné), comme `/compact`. */
-  async summarize(sessionID: string, directory: string, model: { providerID: string; modelID: string }): Promise<void> {
-    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/summarize`, z.unknown(), { query: { directory }, body: model, long: true });
+  /** Compacte la session, comme `/compact` (modèle de la session). */
+  async summarize(sessionID: string, _directory: string, _model: { providerID: string; modelID: string }): Promise<void> {
+    await this.v2.compact({ sessionID });
   }
 
   /** Annule les messages à partir de `messageID` (et les modifications de fichiers associées). */
-  async revert(sessionID: string, directory: string, messageID: string): Promise<void> {
-    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/revert`, z.unknown(), { query: { directory }, body: { messageID } });
+  async revert(sessionID: string, _directory: string, messageID: string): Promise<void> {
+    await this.v2.revertStage({ sessionID, messageID, files: true });
   }
 
   /** Rétablit tous les messages annulés. */
-  async unrevert(sessionID: string, directory: string): Promise<void> {
-    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/unrevert`, z.unknown(), { query: { directory } });
+  async unrevert(sessionID: string, _directory: string): Promise<void> {
+    await this.v2.revertClear(sessionID);
   }
 
-  /** Partage la session ; retourne le lien public. */
-  async share(sessionID: string, directory: string): Promise<string | null> {
-    const s = await this.request('POST', `/session/${encodeURIComponent(sessionID)}/share`, SharedSession, { query: { directory } });
-    return s.share?.url ?? null;
+  /** Partage : retiré d'OpenCode 2. */
+  share(_sessionID: string, _directory: string): Promise<string | null> {
+    return Promise.reject(new Error('le partage de session n’existe plus dans OpenCode 2'));
   }
 
-  async unshare(sessionID: string, directory: string): Promise<void> {
-    await this.request('DELETE', `/session/${encodeURIComponent(sessionID)}/share`, z.unknown(), { query: { directory } });
+  unshare(_sessionID: string, _directory: string): Promise<void> {
+    return Promise.reject(new Error('le partage de session n’existe plus dans OpenCode 2'));
   }
 
   /** Recherche floue de fichiers (ou dossiers) du répertoire, triée par pertinence, `.gitignore` respecté. */
-  findFiles(directory: string, query: string, opts: { type?: 'file' | 'directory'; limit?: number; cancellable?: Gio.Cancellable } = {}): Promise<string[]> {
+  async findFiles(directory: string, query: string, opts: { type?: 'file' | 'directory'; limit?: number; cancellable?: Gio.Cancellable } = {}): Promise<string[]> {
     const { cancellable, ...rest } = opts;
-    return this.request('GET', '/find/file', z.array(z.string()), { query: { directory, query, ...rest }, ...(cancellable === undefined ? {} : { cancellable }) });
+    const found = await this.v2.findFiles(directory, { query, ...rest }, cancellable);
+    // dossiers : chemin terminé par « / » (comme la v1) ; racine exclue
+    return found.filter((e) => e.path !== '/' && e.path !== '').map((e) => (e.type === 'directory' && !e.path.endsWith('/') ? `${e.path}/` : e.path));
   }
 
-  async abort(sessionID: string, directory: string): Promise<void> {
-    await this.request('POST', `/session/${encodeURIComponent(sessionID)}/abort`, z.unknown(), { query: { directory } });
+  async abort(sessionID: string, _directory: string): Promise<void> {
+    await this.v2.interrupt({ sessionID });
   }
 
   permissions(directory: string): Promise<PermissionRequest[]> {
@@ -354,8 +354,13 @@ export class OpencodeClient {
     await this.request('POST', `/question/${encodeURIComponent(requestID)}/reject`, z.unknown(), { query: { directory } });
   }
 
-  agents(directory: string): Promise<Agent[]> {
-    return this.get('/agent', z.array(Agent), { directory });
+  async agents(directory: string): Promise<Agent[]> {
+    return (await this.v2.agents(directory)).map((a): Agent => {
+      const agent: Agent = { name: a.id, mode: a.mode, hidden: a.hidden };
+      if (a.description !== undefined) agent.description = a.description;
+      if (a.model?.variant !== undefined) agent.variant = a.model.variant;
+      return agent;
+    });
   }
 
   /** État des serveurs MCP du répertoire (projet ou global). */
@@ -422,17 +427,28 @@ export class OpencodeClient {
     return this.#cached('commands', directory, () => this.commands(directory));
   }
 
-  config(directory: string): Promise<OpencodeConfig> {
-    return this.get('/config', OpencodeConfig, { directory });
+  /** Modèle par défaut du dossier (`fournisseur/modèle`). */
+  async config(directory: string): Promise<OpencodeConfig> {
+    const d = await this.v2.defaultModel(directory);
+    return { model: d === null ? null : `${d.providerID}/${d.modelID}` };
   }
 
-  providers(directory: string): Promise<Providers> {
-    return this.get('/config/providers', Providers, { directory });
+  /** Modèles activés, regroupés par fournisseur ; défaut : celui du dossier. */
+  async providers(directory: string): Promise<Providers> {
+    const [models, def] = await Promise.all([this.v2.models(directory), this.v2.defaultModel(directory).catch(() => null)]);
+    const byProvider = new Map<string, Providers['providers'][number]>();
+    for (const m of models) {
+      if (!m.enabled) continue;
+      const p = byProvider.get(m.providerID) ?? { id: m.providerID, name: m.providerID, models: {} };
+      p.models[m.modelID] = { id: m.modelID, name: m.name, limit: { context: m.limit.context }, variants: Object.fromEntries(m.variants.map((v) => [v.id, {}])) };
+      byProvider.set(m.providerID, p);
+    }
+    return { providers: [...byProvider.values()], default: def === null ? {} : { [def.providerID]: def.modelID } };
   }
 
   /** Fichiers modifiés de l'arbre de travail git du répertoire (indexés ou non, nouveaux fichiers compris). */
-  gitDiff(directory: string): Promise<FileDiff[]> {
-    return this.get('/vcs/diff', z.array(FileDiff), { directory, mode: 'git' });
+  async gitDiff(directory: string): Promise<FileDiff[]> {
+    return (await this.v2.vcsDiff(directory, 'working')).map((d) => ({ file: d.file, status: d.status, additions: d.additions, deletions: d.deletions, patch: d.patch }));
   }
 
   vcs(directory: string): Promise<VcsInfo> {

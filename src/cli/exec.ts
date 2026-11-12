@@ -4,7 +4,10 @@ import GLib from 'gi://GLib';
 import { OpencodeClient } from '../shared/client.ts';
 import { serverUrl } from '../shared/config.ts';
 import { errorMessage, HttpError } from '../shared/errors.ts';
-import type { MessageInfo } from '../shared/schemas.ts';
+import { listenV2 } from '../shared/v2/client.ts';
+import * as E from '../shared/v2/events.ts';
+import { AssistantMessage, HistoryEntry } from '../shared/v2/messages.ts';
+import * as z from 'zod/mini';
 import { loadRuns, newRunId, patchTask, recordRun, type RunRecord, type RunStatus, type ScheduledTask } from '../shared/tasks.ts';
 import { notify } from './notify.ts';
 
@@ -40,6 +43,9 @@ function waitFor(signal: { wake: () => void }, ms: number): Promise<void> {
     };
   });
 }
+
+/** Session créée (sous-agent : parent). */
+const Created = z.object({ sessionID: z.string(), parentID: z.optional(z.string()) });
 
 const stamp = (ms: number): string => GLib.DateTime.new_from_unix_local(Math.floor(ms / 1000)).format('%d/%m %H:%M') ?? '';
 
@@ -138,9 +144,12 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
   /** sessions du run : la session et ses sous-agents */
   const tree = new Set([sessionID]);
   let userMessage: string | undefined;
-  const assistants = new Map<string, MessageInfo>();
+  /** étapes de l'agent vues pendant le run */
+  const steps = new Set<string>();
   let sawBusy = false;
   let ended = false;
+  /** fin d'exécution signalée par le flux : échec (message) ou interruption */
+  let outcome: { failed?: string; interrupted?: boolean } = {};
   /** réveil de la boucle d'attente, erreur d'envoi du prompt */
   const signal: { wake: () => void; sendError: string | null } = { wake: noop, sendError: null };
 
@@ -166,33 +175,33 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
     });
   };
 
-  const stop = client.listen(
-    ({ event }) => {
-      if (event.type === 'session.created' || event.type === 'session.updated') {
-        const { id, parentID } = event.properties.info;
-        if (parentID !== undefined && tree.has(parentID)) tree.add(id);
-      } else if (event.type === 'session.status') {
-        if (event.properties.sessionID !== sessionID) return;
-        if (event.properties.status.type === 'busy') sawBusy = true;
-        else if (event.properties.status.type === 'idle' && sawBusy) {
-          ended = true;
-          signal.wake();
-        }
-      } else if (event.type === 'session.idle') {
-        if (event.properties.sessionID === sessionID && sawBusy) {
-          ended = true;
-          signal.wake();
-        }
-      } else if (event.type === 'message.updated') {
-        const info = event.properties.info;
-        if (info.sessionID !== sessionID || info.time.created < base.start - 1000) return;
-        if (info.role === 'user') userMessage ??= info.id;
-        else assistants.set(info.id, info);
-      } else if ((event.type === 'permission.asked' || event.type === 'permission.v2.asked') && task.permissions === 'all') {
-        // toutes les permissions accordées : y compris aux sous-agents et à une session réutilisée
-        const { id, sessionID: sid } = event.properties;
-        void inTree(sid).then((mine) => (mine ? client.replyPermission(id, dir, 'once') : null)).catch(() => null);
-      }
+  const stop = listenV2(
+    client,
+    (json) => {
+      const env = E.Envelope.safeParse(json);
+      if (!env.success) return;
+      const { type, data } = env.data;
+      const sid = E.Sid.safeParse(data);
+      const id = sid.success ? sid.data.sessionID : null;
+      if (type === 'session.created') {
+        const c = Created.safeParse(data);
+        if (c.success && c.data.parentID !== undefined && tree.has(c.data.parentID)) tree.add(c.data.sessionID);
+      } else if (id !== sessionID) {
+        if (type === 'permission.asked' && task.permissions === 'all') autoAllow(data);
+      } else if (type === 'session.execution.started') sawBusy = true;
+      else if (type === 'session.execution.succeeded' || type === 'session.execution.failed' || type === 'session.execution.interrupted') {
+        if (!sawBusy) return;
+        const failed = E.ExecutionFailed.safeParse(data);
+        outcome = type === 'session.execution.failed' ? { failed: failed.success ? failed.data.error.message : 'échec' } : type === 'session.execution.interrupted' ? { interrupted: true } : {};
+        ended = true;
+        signal.wake();
+      } else if (type === 'session.inbox.delivered') {
+        const d = E.InboxDelivered.safeParse(data);
+        if (d.success) userMessage ??= d.data.inboxID;
+      } else if (type === 'session.step.started') {
+        const d = E.StepStarted.safeParse(data);
+        if (d.success) steps.add(d.data.assistantMessageID);
+      } else if (type === 'permission.asked' && task.permissions === 'all') autoAllow(data);
     },
     (connected) => {
       // prompt envoyé une fois le flux ouvert : aucun événement du run n'est manqué
@@ -202,6 +211,13 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
       });
     },
   );
+  /** toutes les permissions accordées : y compris aux sous-agents et à une session réutilisée */
+  function autoAllow(data: unknown): void {
+    const p = E.PermissionAsked.safeParse(data);
+    if (!p.success) return;
+    const { id, sessionID: sid } = p.data;
+    void inTree(sid).then((mine) => (mine ? client.replyPermission(id, dir, 'once') : null)).catch(() => null);
+  }
 
   // ------------------------------------------------ attente
   const deadline = base.start + task.timeout * 60_000;
@@ -228,25 +244,35 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
     if (sent && Date.now() - base.start > POLL_MS) {
       // oxlint-disable-next-line no-await-in-loop
       const statuses = await client.statuses().catch(() => null);
-      if (statuses !== null && statuses[sessionID] === undefined && (sawBusy || assistants.size > 0)) break;
+      if (statuses !== null && statuses[sessionID] === undefined && (sawBusy || steps.size > 0)) break;
     }
   }
   stop();
 
   // ------------------------------------------------ résultat
-  const messages = await client.messages(sessionID, 50).catch(() => []);
-  const mine = messages.filter((m) => m.info.time.created >= base.start - 1000);
-  userMessage ??= mine.find((m) => m.info.role === 'user')?.info.id;
-  const replies = mine.filter((m) => m.info.role === 'assistant');
-  const failed = replies.map((m) => m.info.error).find((e) => e !== undefined);
-  if (status === 'success' && failed !== undefined) {
-    status = failed.name === 'MessageAbortedError' ? 'cancelled' : 'error';
-    error = `${failed.name ?? 'Erreur'} : ${failed.data?.message ?? ''}`.trim();
+  const page = await client.v2.messages({ sessionID, limit: 50 }).catch(() => ({ items: [] }));
+  const mine = page.items
+    .flatMap((raw) => {
+      const e = HistoryEntry.safeParse(raw);
+      return e.success && e.data.time.created >= base.start - 1000 ? [e.data] : [];
+    })
+    .toReversed();
+  userMessage ??= mine.find((m) => m.type === 'user')?.id;
+  const replies = mine.flatMap((m) => {
+    const a = AssistantMessage.safeParse(m);
+    return a.success ? [a.data] : [];
+  });
+  const failed = replies.map((m) => m.error).find((e) => e !== undefined)?.message ?? outcome.failed;
+  if (status === 'success' && outcome.interrupted === true) {
+    status = 'cancelled';
+    error = 'run interrompu';
+  } else if (status === 'success' && failed !== undefined) {
+    status = 'error';
+    error = failed;
   }
   const lastText = replies
-    .flatMap((m) => m.parts)
-    .filter((p) => p.type === 'text' && p.synthetic !== true)
-    .map((p) => p.text ?? '')
+    .flatMap((m) => m.content)
+    .flatMap((c) => (c.type === 'text' ? [c.text] : []))
     .findLast((t) => t.trim() !== '');
   finish(task, {
     ...r,

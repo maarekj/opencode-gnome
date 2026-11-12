@@ -7,7 +7,9 @@ import { SearchIndex, snippetOf, terms } from '../src/shared/search.ts';
 
 const now = Date.now();
 const session = (id: string, title: string, projectID: string, updated: number): object => ({ id, title, projectID, directory: `/tmp/${projectID}`, time: { created: 1, updated } });
-const msg = (id: string, role: string, created: number, text: string): object => ({ info: { id, role, time: { created } }, parts: [{ id: `p${id}`, type: 'text', text }, { id: `t${id}`, type: 'tool', text: 'ignoré' }] });
+// entrées v2 : utilisateur (texte), assistant (blocs, dont un outil ignoré)
+const msg = (id: string, role: string, created: number, text: string): object =>
+  role === 'user' ? { id, type: 'user', time: { created }, text } : { id, type: 'assistant', time: { created }, content: [{ type: 'text', text }, { type: 'tool', id: `t${id}`, name: 'read', text: 'ignoré' }] };
 const long = `${'x '.repeat(2000)}Le réétalonnage est fait.`;
 const data: Record<string, object[]> = {
   ses_a: [msg('m1', 'user', now - 40 * 86_400_000, 'Le Chien de garde du flux SSE'), msg('m2', 'assistant', now - 1000, 'Corrigé : réarmement du chien de garde.')],
