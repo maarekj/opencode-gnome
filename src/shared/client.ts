@@ -5,9 +5,9 @@ import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
 import { serverPassword } from './server.ts';
-import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, type OpencodeConfig, PermissionRequest, type Providers, QuestionRequest, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, McpSection, McpStatus, PluginSection, MessageWithParts, Skill, type OpencodeConfig, type Providers, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
 import { OpencodeV2 } from './v2/client.ts';
-import { appProject, appSession } from './v2/schemas.ts';
+import { appProject, appSession, type FormAnswer, type FormV2, type PermissionV2 } from './v2/schemas.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
 Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
@@ -333,25 +333,26 @@ export class OpencodeClient {
     await this.v2.interrupt({ sessionID });
   }
 
-  permissions(directory: string): Promise<PermissionRequest[]> {
-    return this.get('/permission', z.array(PermissionRequest), { directory });
+  /** Permissions en attente dans un dossier. */
+  permissions(directory: string): Promise<PermissionV2[]> {
+    return this.v2.permissions(directory);
   }
 
-  async replyPermission(requestID: string, directory: string, reply: 'once' | 'always' | 'reject'): Promise<void> {
-    await this.request('POST', `/permission/${encodeURIComponent(requestID)}/reply`, z.unknown(), { query: { directory }, body: { reply } });
+  async replyPermission(sessionID: string, requestID: string, reply: 'once' | 'always' | 'reject'): Promise<void> {
+    await this.v2.replyPermission({ sessionID, requestID, decision: reply });
   }
 
-  questions(directory: string): Promise<QuestionRequest[]> {
-    return this.get('/question', z.array(QuestionRequest), { directory });
+  /** Formulaires (questions de l'agent) en attente dans un dossier. */
+  questions(directory: string): Promise<FormV2[]> {
+    return this.v2.forms(directory);
   }
 
-  /** Une réponse par question : la liste des libellés choisis (ou saisis). */
-  async replyQuestion(requestID: string, directory: string, answers: string[][]): Promise<void> {
-    await this.request('POST', `/question/${encodeURIComponent(requestID)}/reply`, z.unknown(), { query: { directory }, body: { answers } });
+  async replyQuestion(sessionID: string, formID: string, answer: FormAnswer): Promise<void> {
+    await this.v2.replyForm({ sessionID, formID, answer });
   }
 
-  async rejectQuestion(requestID: string, directory: string): Promise<void> {
-    await this.request('POST', `/question/${encodeURIComponent(requestID)}/reject`, z.unknown(), { query: { directory } });
+  async rejectQuestion(sessionID: string, formID: string): Promise<void> {
+    await this.v2.cancelForm({ sessionID, formID });
   }
 
   async agents(directory: string): Promise<Agent[]> {

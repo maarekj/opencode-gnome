@@ -130,9 +130,9 @@ function buildAside(o: AsideOptions, shown: Accessor<boolean>, setShown: (v: boo
       }
     };
     const actions: RequestActions = {
-      replyPermission: (rid, reply) => answer(() => client.replyPermission(rid, o.dir(), reply)),
-      replyQuestion: (rid, answers) => answer(() => client.replyQuestion(rid, o.dir(), answers)),
-      rejectQuestion: (rid) => answer(() => client.rejectQuestion(rid, o.dir())),
+      replyPermission: (rid, reply) => answer(() => client.replyPermission(c.sessionID, rid, reply)),
+      replyQuestion: (rid, value) => answer(() => client.replyQuestion(c.sessionID, rid, value)),
+      rejectQuestion: (rid) => answer(() => client.rejectQuestion(c.sessionID, rid)),
     };
     createRoot((dispose) => {
       disposeView = dispose;

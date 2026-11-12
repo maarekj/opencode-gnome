@@ -19,6 +19,9 @@ import type {
   VcsDiffInput,
   VcsDiffOutput,
   FormListOutput,
+  PermissionReplyInput,
+  SessionFormCancelInput,
+  SessionFormReplyInput,
   MessageListInput,
   PermissionRequestListOutput,
   MessageListOutput,
@@ -208,6 +211,23 @@ export class OpencodeV2 {
 
   async vcsDiff(directory: string, mode: VcsDiffInput['mode']): Promise<z.output<typeof VcsDiff>['data']> {
     return (await this.#http.get('/api/vcs/diff', VcsDiff, { 'location[directory]': directory, mode })).data;
+  }
+
+  // ---------------------------------------------------------------- demandes (#173)
+
+  async replyPermission(input: PermissionReplyInput): Promise<void> {
+    const { sessionID, requestID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/permission/${seg(requestID)}/reply`, z.unknown(), { body });
+  }
+
+  async replyForm(input: SessionFormReplyInput): Promise<void> {
+    const { sessionID, formID, ...body } = input;
+    await this.#http.request('POST', `/api/session/${seg(sessionID)}/form/${seg(formID)}/reply`, z.unknown(), { body });
+  }
+
+  async cancelForm(input: SessionFormCancelInput): Promise<void> {
+    const { sessionID, formID, ...body } = input;
+    await this.#http.request('DELETE', `/api/session/${seg(sessionID)}/form/${seg(formID)}`, z.unknown(), { body });
   }
 
   /** Messages, plus récents d'abord par défaut ; `cursor` : page plus ancienne. */

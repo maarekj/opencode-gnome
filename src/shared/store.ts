@@ -343,10 +343,10 @@ export class Store {
 
   /** Session connue (racine), si présente. */
   /** Première demande de permission en attente d'une session (pour y répondre depuis une notification). */
-  pendingPermission(sessionID: string): string | undefined {
+  pendingPermission(sessionID: string): { sessionID: string; id: string } | undefined {
     for (const id of [sessionID, ...this.#descendants(sessionID)]) {
       const first = [...(this.#permissions.get(id) ?? [])][0];
-      if (first !== undefined) return first;
+      if (first !== undefined) return { sessionID: id, id: first };
     }
     return undefined;
   }

@@ -29,3 +29,10 @@ export function openFolder(from: Gtk.Widget, directory: string, toast: (m: strin
   });
 }
 
+
+/** Ouvre un lien dans le navigateur par défaut (bac à sable : journalisé). */
+export function openUri(from: Gtk.Widget, uri: string): void {
+  if (intercepted('LIEN', uri)) return;
+  const root = from.get_root();
+  new Gtk.UriLauncher({ uri }).launch(root instanceof Gtk.Window ? root : null, null, null);
+}

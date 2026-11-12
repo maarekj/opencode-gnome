@@ -251,9 +251,9 @@ export function createConversationPage(opts: {
       return ok;
     };
     const requestActions: RequestActions = {
-      replyPermission: (id, reply) => answer(() => client.replyPermission(id, dir(), reply)),
-      replyQuestion: (id, answers) => answer(() => client.replyQuestion(id, dir(), answers)),
-      rejectQuestion: (id) => answer(() => client.rejectQuestion(id, dir())),
+      replyPermission: (id, reply) => answer(() => client.replyPermission(conversation.sessionID, id, reply)),
+      replyQuestion: (id, value) => answer(() => client.replyQuestion(conversation.sessionID, id, value)),
+      rejectQuestion: (id) => answer(() => client.rejectQuestion(conversation.sessionID, id)),
     };
 
     const showTools = settings.data((d) => d.showTools);

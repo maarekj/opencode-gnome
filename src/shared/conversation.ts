@@ -8,7 +8,8 @@ import GLib from 'gi://GLib';
 import { createState, type Accessor, type Setter } from 'gnim';
 import * as z from 'zod/mini';
 import { errorMessage } from './errors.ts';
-import type { PermissionRequest, QuestionRequest, Todo } from './schemas.ts';
+import type { Todo } from './schemas.ts';
+import type { FormV2, PermissionV2 } from './v2/schemas.ts';
 import type { SessionEventV2, Store } from './store.ts';
 import * as E from './v2/events.ts';
 import { HistoryEntry, type AssistantMessage, type ToolContentBlock } from './v2/messages.ts';
@@ -121,6 +122,14 @@ const PAGE = 100;
 const RELOAD_PAGE = 200;
 const TIMING = GLib.getenv('OPENCODE_GNOME_TIMING') !== null;
 
+/** Appel d'outil à l'origine d'une demande (permission, question de l'agent), si connu. */
+export function requestCall(r: PermissionV2 | FormV2): string | undefined {
+  if ('action' in r) return r.source?.id;
+  const tool: unknown = r.metadata?.['tool'];
+  const id: unknown = typeof tool === 'object' && tool !== null ? Reflect.get(tool, 'id') : undefined;
+  return typeof id === 'string' ? id : undefined;
+}
+
 /** Retire les repères « [Image N] » insérés par le TUI à la place des images collées. */
 export const stripImageMarkers = (text: string): string => text.replaceAll(/\[Image \d+\] ?/gu, '');
 
@@ -161,8 +170,8 @@ export class Conversation {
   readonly loading: Accessor<boolean>;
   readonly error: Accessor<string | null>;
   /** Demandes en attente d'une réponse de l'utilisateur pour cette session. */
-  readonly permissions: Accessor<readonly PermissionRequest[]>;
-  readonly questions: Accessor<readonly QuestionRequest[]>;
+  readonly permissions: Accessor<readonly PermissionV2[]>;
+  readonly questions: Accessor<readonly FormV2[]>;
   /** Contexte utilisé par la session (dernière réponse de l'agent ayant des tokens). */
   readonly context: Accessor<ContextUsage | null>;
   /** Incrémenté quand la session modifie des fichiers (outils d'édition, shell terminés). */
@@ -177,8 +186,8 @@ export class Conversation {
   readonly #setBlocks: Setter<readonly Block[]>;
   readonly #setLoading: Setter<boolean>;
   readonly #setError: Setter<string | null>;
-  readonly #setPermissions: Setter<readonly PermissionRequest[]>;
-  readonly #setQuestions: Setter<readonly QuestionRequest[]>;
+  readonly #setPermissions: Setter<readonly PermissionV2[]>;
+  readonly #setQuestions: Setter<readonly FormV2[]>;
   readonly #setDiffVersion: Setter<number>;
   readonly #setContext: Setter<ContextUsage | null>;
   readonly #setHasOlder: Setter<boolean>;
@@ -212,8 +221,8 @@ export class Conversation {
     [this.blocks, this.#setBlocks] = createState<readonly Block[]>([]);
     [this.loading, this.#setLoading] = createState(true);
     [this.error, this.#setError] = createState<string | null>(null);
-    [this.permissions, this.#setPermissions] = createState<readonly PermissionRequest[]>([]);
-    [this.questions, this.#setQuestions] = createState<readonly QuestionRequest[]>([]);
+    [this.permissions, this.#setPermissions] = createState<readonly PermissionV2[]>([]);
+    [this.questions, this.#setQuestions] = createState<readonly FormV2[]>([]);
     [this.diffVersion, this.#setDiffVersion] = createState(0);
     [this.hasOlder, this.#setHasOlder] = createState(false);
     [this.loadingOlder, this.#setLoadingOlder] = createState(false);

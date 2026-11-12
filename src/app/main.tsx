@@ -107,15 +107,15 @@ openSession.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | nul
 });
 app.add_action(openSession);
 
-/** app.reply-permission((session, répertoire, demande, réponse)) : boutons des notifications */
+/** app.reply-permission((session affichée, session de la demande, demande, réponse)) : boutons des notifications */
 const replyPermission = new Gio.SimpleAction({ name: 'reply-permission', parameterType: new GLib.VariantType('(ssss)') });
 replyPermission.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
   if (param === null) return;
-  const [sessionID, directory, requestID, reply] = param.deepUnpack<[string, string, string, string]>();
+  const [sessionID, requestSession, requestID, reply] = param.deepUnpack<[string, string, string, string]>();
   if (reply !== 'once' && reply !== 'reject') return;
   notifier?.withdraw(sessionID);
   // échec : signalé par une notification (la précédente est déjà retirée), pas seulement en console (#93)
-  store.client.replyPermission(requestID, directory, reply).catch((e: unknown) => {
+  store.client.replyPermission(requestSession, requestID, reply).catch((e: unknown) => {
     console.error(e);
     const n = new Gio.Notification();
     n.set_title('Réponse à la permission impossible');

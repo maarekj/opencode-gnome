@@ -84,9 +84,40 @@ export const PermissionV2 = z.object({
 export type PermissionV2 = z.infer<typeof PermissionV2>;
 export const PermissionList = z.object({ data: z.array(PermissionV2) });
 
-/** Formulaire en attente (questions de l'agent, `GET /api/form`). Champs : #173. */
-export const FormV2 = z.looseObject({ id: z.string(), sessionID: z.string(), title: z.string() });
+/** Choix proposé par un champ de formulaire. */
+const FormOption = z.object({ value: z.string(), label: z.string(), description: z.optional(z.string()) });
+/** Condition d'affichage d'un champ (valeur d'un autre champ). */
+const FormWhen = z.object({ key: z.string(), op: z.enum(['eq', 'neq']), value: z.union([z.string(), z.number(), z.boolean()]) });
+const fieldBase = {
+  key: z.string(),
+  title: z.optional(z.string()),
+  description: z.optional(z.string()),
+  required: z.optional(z.boolean()),
+  hidden: z.optional(z.boolean()),
+  when: z.optional(z.array(FormWhen)),
+};
+const Num = z.union([z.number(), z.string()]);
+/** Champ d'un formulaire (questions de l'agent, demandes de plugins). */
+export const FormField = z.union([
+  z.object({ ...fieldBase, type: z.literal('string'), placeholder: z.optional(z.string()), default: z.optional(z.string()), options: z.optional(z.array(FormOption)), custom: z.optional(z.boolean()) }),
+  z.object({ ...fieldBase, type: z.literal('multiselect'), options: z.array(FormOption), custom: z.optional(z.boolean()), default: z.optional(z.array(z.string())), minItems: z.optional(z.number()), maxItems: z.optional(z.number()) }),
+  z.object({ ...fieldBase, type: z.literal('boolean'), default: z.optional(z.boolean()) }),
+  z.object({ ...fieldBase, type: z.enum(['number', 'integer']), minimum: z.optional(Num), maximum: z.optional(Num), default: z.optional(Num) }),
+  z.object({ key: z.string(), type: z.literal('external'), url: z.string(), title: z.optional(z.string()), description: z.optional(z.string()) }),
+]);
+export type FormField = z.infer<typeof FormField>;
+
+/** Formulaire en attente (`GET /api/form`) ; question de l'agent : appel d'outil dans `metadata.tool`. */
+export const FormV2 = z.object({
+  id: z.string(),
+  sessionID: z.string(),
+  title: z.string(),
+  metadata: z.optional(z.record(z.string(), z.unknown())),
+  fields: z.array(FormField),
+});
 export type FormV2 = z.infer<typeof FormV2>;
+/** Réponse : valeur de chaque champ, par clé. */
+export type FormAnswer = Record<string, string | number | boolean | string[]>;
 export const FormList = z.object({ data: z.array(FormV2) });
 
 // ------------------------------------------------------------- modèle de l'application

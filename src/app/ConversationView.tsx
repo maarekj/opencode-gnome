@@ -5,11 +5,11 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, createRoot, createMemo, createState, onCleanup, With, type Accessor } from 'gnim';
-import { stripImageMarkers, type Block, type Conversation, type Item, type ToolCall, type TurnInfo } from '../shared/conversation.ts';
+import { requestCall, stripImageMarkers, type Block, type Conversation, type Item, type ToolCall, type TurnInfo } from '../shared/conversation.ts';
 import type { Activity } from '../shared/store.ts';
 import { AttachmentView } from './Attachments.tsx';
 import { esc, fmtDuration, fmtFullDate, fmtStamp } from '../shared/format.ts';
-import type { PermissionRequest, QuestionRequest } from '../shared/schemas.ts';
+import type { FormV2, PermissionV2 } from '../shared/v2/schemas.ts';
 import { readInfo, type ReadInfo } from '../shared/toolread.ts';
 import { createDiffView } from './DiffView.ts';
 import { keyedBox } from './KeyedBox.ts';
@@ -22,7 +22,7 @@ import { AnsweredQuestions, PermissionCard, QuestionCard, type RequestActions } 
 import { todosOfCall, TodoRows, todoSummary } from './TodoPanel.tsx';
 
 /** Demande en attente d'une réponse de l'utilisateur. */
-type Pending = { readonly kind: 'permission'; readonly request: PermissionRequest } | { readonly kind: 'question'; readonly request: QuestionRequest };
+type Pending = { readonly kind: 'permission'; readonly request: PermissionV2 } | { readonly kind: 'question'; readonly request: FormV2 };
 
 /** Cartes de demandes actuellement construites (id de la demande -> widget), pour la pastille. */
 class CardRegistry {
@@ -107,7 +107,7 @@ function toolCommand(conversation: Conversation, callID: string | undefined): st
 function RequestCard({ pending, ctx }: { pending: Pending; ctx: FlowContext }): Gtk.Widget {
   const widget =
     pending.kind === 'permission' ? (
-      <PermissionCard request={pending.request} actions={ctx.actions} command={toolCommand(ctx.conversation, pending.request.tool?.callID)} />
+      <PermissionCard request={pending.request} actions={ctx.actions} command={toolCommand(ctx.conversation, requestCall(pending.request))} />
     ) : (
       <QuestionCard request={pending.request} actions={ctx.actions} />
     );
@@ -508,7 +508,7 @@ function ToolBlock({ tool, ctx }: { tool: Accessor<ToolCall>; ctx: FlowContext }
   const pending = createMemo(
     (): Pending | null => {
       const callID = tool().callID;
-      return pendingList(ctx.conversation).find((p) => p.request.tool?.callID === callID) ?? null;
+      return pendingList(ctx.conversation).find((p) => requestCall(p.request) === callID) ?? null;
     },
     // la carte n'est reconstruite que si la demande change (conserve les choix en cours)
     { equals: (a, b) => a?.request.id === b?.request.id },
@@ -995,7 +995,10 @@ export function ConversationView({
         return i.kind === 'tool' ? [i.tool.callID] : [];
       }),
     );
-    return pendingList(conversation).filter((p) => p.request.tool === undefined || !callIDs.has(p.request.tool.callID));
+    return pendingList(conversation).filter((p) => {
+      const call = requestCall(p.request);
+      return call === undefined || !callIDs.has(call);
+    });
   });
 
   /** Construit le contenu d'une boîte une fois la page affichée (pas pendant l'animation). */

@@ -216,7 +216,7 @@ export async function execTask(task: ScheduledTask, trigger: RunRecord['trigger'
     const p = E.PermissionAsked.safeParse(data);
     if (!p.success) return;
     const { id, sessionID: sid } = p.data;
-    void inTree(sid).then((mine) => (mine ? client.replyPermission(id, dir, 'once') : null)).catch(() => null);
+    void inTree(sid).then((mine) => (mine ? client.replyPermission(sid, id, 'once') : null)).catch(() => null);
   }
 
   // ------------------------------------------------ attente

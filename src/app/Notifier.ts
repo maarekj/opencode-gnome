@@ -111,11 +111,12 @@ export class Notifier {
     if (permission === undefined) {
       n.add_button_with_target('Ouvrir', 'app.open-session', new GLib.Variant('s', sessionID));
     } else {
-      const target = (reply: string): GLib.Variant => new GLib.Variant('(ssss)', [sessionID, session.directory, permission, reply]);
+      // session de la demande (peut-être un sous-agent) : la v2 répond par session
+      const target = (reply: string): GLib.Variant => new GLib.Variant('(ssss)', [sessionID, permission.sessionID, permission.id, reply]);
       n.add_button_with_target('Refuser', 'app.reply-permission', target('reject'));
       n.add_button_with_target('Autoriser', 'app.reply-permission', target('once'));
     }
-    if (TEST) console.log(`NOTIF ${notificationId(sessionID)} | ${title} | ${project} — ${body}${permission === undefined ? '' : ` | permission ${permission}`}`);
+    if (TEST) console.log(`NOTIF ${notificationId(sessionID)} | ${title} | ${project} — ${body}${permission === undefined ? '' : ` | permission ${permission.id}`}`);
     app.send_notification(notificationId(sessionID), n);
   }
 }
