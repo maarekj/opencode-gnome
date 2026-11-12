@@ -22,7 +22,6 @@ import { openGitWindow } from './GitWindow.tsx';
 import type { RequestActions } from './Requests.tsx';
 import { type TerminalContext } from './TerminalBar.tsx';
 import { integratedAvailable } from './TerminalPanel.tsx';
-import { TodoPanel } from './TodoPanel.tsx';
 
 const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
   idle: '',
@@ -399,7 +398,6 @@ export function createConversationPage(opts: {
             }}
           />
           <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
-            <TodoPanel todos={conversation.todos} />
             {composer}
           </Gtk.Box>
           </Gtk.Box>

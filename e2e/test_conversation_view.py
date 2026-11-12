@@ -1,4 +1,4 @@
-"""Conversation : contenu, outils, cartes de demande, sous-agent, liste de tâches, erreurs."""
+"""Conversation : contenu, outils, cartes de demande, sous-agent, erreurs."""
 
 import pytest
 
@@ -124,16 +124,6 @@ def test_permission_toujours(run_app):
 def test_sous_titre_signale_la_demande(run_app):
     _, app = run_app(conv(), '--session', 'ses_p')
     app.find('label', 'Permission demandée')
-
-
-@pytest.mark.skip(reason='listes de tâches désactivées par défaut en OpenCode 2 (experimental.todo) : à décider à la bascule (#176)')
-def test_liste_de_taches(run_app):
-    _, app = run_app(conv(), '--session', 'ses_c')
-    app.find('label', 'Tâches')
-    app.click('button', contains='Tâches 1/3 · En cours : Lancer la revue')
-    app.find('label', 'Lancer la revue')
-    app.emit('todo.updated', {'sessionID': 'ses_c', 'todos': [{'content': 'Écrire la note de version', 'status': 'pending'}]})
-    app.find('label', 'Écrire la note de version')
 
 
 def test_pastille_des_demandes_hors_ecran(run_app):

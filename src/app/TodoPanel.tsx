@@ -1,9 +1,8 @@
-// Bandeau « Tâches » au-dessus du compositeur : liste de tâches de la session (outil `todowrite`).
-// Replié : progression et tâche en cours ; déplié : liste complète. Masqué sans tâches.
+// Listes de tâches des appels `todowrite` / `todoread` (sessions de la v1) : résumé et lignes.
+// Le bandeau « Tâches » a été retiré avec OpenCode 2 (outil désactivé par défaut, #176).
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
-import { createState, With, type Accessor } from 'gnim';
 import { esc } from '../shared/format.ts';
 import * as z from 'zod/mini';
 import { Todo } from '../shared/schemas.ts';
@@ -71,40 +70,6 @@ function TodoRow({ todo }: { todo: Todo }): JSX.Element {
         cssClasses={cancelled || done(todo) ? ['dim-label'] : todo.status === 'in_progress' ? ['heading'] : []}
       />
       {todo.priority === 'high' ? <Gtk.Image iconName="emblem-important-symbolic" cssClasses={['dim-label']} pixelSize={12} tooltipText="Priorité haute" /> : null}
-    </Gtk.Box>
-  );
-}
-
-export function TodoPanel({ todos }: { todos: Accessor<readonly Todo[]> }): JSX.Element {
-  const [expanded, setExpanded] = createState(false);
-  return (
-    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['card', 'todo-panel']} marginStart={18} marginEnd={18} marginBottom={6} visible={todos((t) => t.length > 0)}>
-      <Gtk.Button
-        cssClasses={['flat', 'todo-header']}
-        tooltipText={expanded((e) => (e ? 'Replier la liste de tâches' : 'Afficher la liste de tâches'))}
-        onClicked={() => setExpanded(!expanded.peek())}
-      >
-        <Gtk.Box spacing={8}>
-          <Gtk.Image iconName="view-list-bullet-symbolic" />
-          <Gtk.Label label="Tâches" cssClasses={['heading']} />
-          <Gtk.Label label={todos(todoSummary)} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} cssClasses={['dim-label']} />
-          <Gtk.Image iconName={expanded((e) => (e ? 'pan-down-symbolic' : 'pan-up-symbolic'))} />
-        </Gtk.Box>
-      </Gtk.Button>
-      <Gtk.Revealer revealChild={expanded} transitionType={Gtk.RevealerTransitionType.SLIDE_UP}>
-        <Gtk.ScrolledWindow hscrollbarPolicy={Gtk.PolicyType.NEVER} propagateNaturalHeight maxContentHeight={260}>
-          {/* Box intermédiaire : la liste est reconstruite en entier à chaque mise à jour (quelques lignes) */}
-          <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
-            <With value={todos}>
-              {(list: readonly Todo[]) => (
-                <Gtk.Box marginStart={14} marginEnd={14} marginBottom={10} marginTop={2}>
-                  <TodoRows todos={list} />
-                </Gtk.Box>
-              )}
-            </With>
-          </Gtk.Box>
-        </Gtk.ScrolledWindow>
-      </Gtk.Revealer>
     </Gtk.Box>
   );
 }

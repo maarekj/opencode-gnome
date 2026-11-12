@@ -8,7 +8,6 @@ import GLib from 'gi://GLib';
 import { createState, type Accessor, type Setter } from 'gnim';
 import * as z from 'zod/mini';
 import { errorMessage } from './errors.ts';
-import type { Todo } from './schemas.ts';
 import type { FormV2, PermissionV2 } from './v2/schemas.ts';
 import type { SessionEventV2, Store } from './store.ts';
 import * as E from './v2/events.ts';
@@ -178,8 +177,6 @@ export class Conversation {
   readonly context: Accessor<ContextUsage | null>;
   /** Incrémenté quand la session modifie des fichiers (outils d'édition, shell terminés). */
   readonly diffVersion: Accessor<number>;
-  /** Liste de tâches de la session (désactivée par défaut en v2 : vide). */
-  readonly todos: Accessor<readonly Todo[]>;
   /** des messages plus anciens restent à charger (`loadOlder`) */
   readonly hasOlder: Accessor<boolean>;
   readonly loadingOlder: Accessor<boolean>;
@@ -228,7 +225,6 @@ export class Conversation {
     [this.diffVersion, this.#setDiffVersion] = createState(0);
     [this.hasOlder, this.#setHasOlder] = createState(false);
     [this.loadingOlder, this.#setLoadingOlder] = createState(false);
-    [this.todos] = createState<readonly Todo[]>([]);
     [this.context, this.#setContext] = createState<ContextUsage | null>(null, {
       equals: (a, b) => a?.tokens === b?.tokens && a?.modelID === b?.modelID && a?.variant === b?.variant && a?.cost === b?.cost && a?.cacheRead === b?.cacheRead,
     });
@@ -271,11 +267,6 @@ export class Conversation {
       }
     }
     await Promise.all([this.reload(), this.reloadRequests()]);
-  }
-
-  /** Liste de tâches : pas d'équivalent en v2 (outil expérimental désactivé). */
-  async reloadTodos(): Promise<void> {
-    // rien à recharger
   }
 
   async reload(): Promise<void> {

@@ -5,7 +5,7 @@ import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
 import { serverPassword } from './server.ts';
-import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, type McpStatus, MessageWithParts, type Skill, type OpencodeConfig, type Providers, VcsInfo, type Project, type Session, type SessionStatus, Todo, type AppEventEnvelope } from './schemas.ts';
+import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, type McpStatus, MessageWithParts, type Skill, type OpencodeConfig, type Providers, VcsInfo, type Project, type Session, type SessionStatus, type AppEventEnvelope } from './schemas.ts';
 import { OpencodeV2 } from './v2/client.ts';
 import { declaredMcp } from './v2/config.ts';
 import { appProject, appSession, type FormAnswer, type FormV2, type PermissionV2 } from './v2/schemas.ts';
@@ -217,11 +217,6 @@ export class OpencodeClient {
   async messagePageRaw(sessionID: string, limit: number, before?: string): Promise<{ messages: unknown[]; older: string | null }> {
     const r = await this.request('GET', `/api/session/${encodeURIComponent(sessionID)}/message`, RawPage, { query: before === undefined ? { limit, order: 'desc' } : { limit, cursor: before } });
     return { messages: r.data.toReversed(), older: r.data.length === 0 ? null : (r.cursor.next ?? null) };
-  }
-
-  /** Liste de tâches de la session (outil `todowrite`). */
-  todos(sessionID: string, directory: string): Promise<Todo[]> {
-    return this.get(`/session/${encodeURIComponent(sessionID)}/todo`, z.array(Todo), { directory });
   }
 
   async session(sessionID: string): Promise<Session> {
