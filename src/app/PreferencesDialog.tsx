@@ -38,7 +38,7 @@ function setItems(row: Adw.ComboRow, labels: readonly string[], index: number): 
 function terminalGroup(settings: Settings): Adw.PreferencesGroup {
   const group = new Adw.PreferencesGroup({
     title: 'Terminal',
-    description: 'Terminaux des sessions (opencode attach), du projet et terminaux persistants.',
+    description: 'Terminaux des sessions opencode, du projet et terminaux persistants.',
   });
   const integrated = new Adw.SwitchRow({
     title: 'Terminal intégré',

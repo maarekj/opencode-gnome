@@ -107,14 +107,14 @@ def test_panneau_de_terminaux_integres(run_app):
 
 def test_session_attachee_dans_un_onglet(run_app):
     _, app = run_app(scenario('composer'), '--session', 'ses_a')
-    app.click('button', 'Ouvrir la session dans un terminal (opencode attach)')
+    app.click('button', 'Ouvrir la session dans un terminal (opencode --server)')
     app.find('page tab', contains='Corriger le bug de connexion')
 
 
 def test_terminal_externe_si_le_terminal_integre_est_desactive(run_app):
     _, app = run_app(scenario('composer'), '--session', 'ses_a', settings={'terminalIntegrated': False})
     app.click('button', contains='Ouvrir la session dans le terminal externe')
-    assert app.logged('TERMINAL', 'opencode attach')
+    assert app.logged('TERMINAL', '--server http')
 
 
 # ---------------------------------------------------------------- liens

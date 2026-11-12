@@ -1,6 +1,6 @@
 # Guide d'utilisation
 
-opencode-gnome affiche et pilote, en direct, les mêmes projets et sessions qu'opencode en console. L'application et la console parlent au même **serveur partagé** (service `opencode-gnome-server`, port 4096) : une session lancée d'un côté se suit et se poursuit de l'autre.
+opencode-gnome affiche et pilote, en direct, les mêmes projets et sessions qu'opencode (OpenCode 2) en console. L'application et la console parlent au même **serveur partagé** (service `opencode-gnome-server`, port 4096, protégé par un mot de passe) : une session lancée d'un côté se suit et se poursuit de l'autre.
 
 ## Démarrer
 
@@ -20,7 +20,7 @@ opencode-gnome affiche et pilote, en direct, les mêmes projets et sessions qu'o
 - L'état de chaque session est indiqué : en cours, question en attente, permission demandée,
   réponse non lue (point et texte en gras jusqu'à l'ouverture).
 - Clic droit sur une session : renommer, forker, supprimer, ouvrir dans le terminal
-  (`opencode attach`), ouvrir le dossier.
+  (`opencode --server`), ouvrir le dossier.
 - **Ctrl+W** ferme la session affichée (elle reste disponible dans le projet).
 
 ## Conversation
@@ -68,7 +68,7 @@ Le bouton git de l'en-tête ouvre une fenêtre séparée : fichiers modifiés (d
   l'y range ; clic droit → « Déplacer dans… » / « Sortir du dossier » ; clic droit sur un dossier :
   renommer, supprimer (son contenu reste dans la barre).
 - **Terminal intégré** : **Ctrl+Maj+J** ouvre ou ferme le panneau à onglets du projet (shell,
-  terminaux persistants, `opencode attach`). Copier / coller : **Ctrl+Maj+C** / **Ctrl+Maj+V** ;
+  terminaux persistants, sessions opencode). Copier / coller : **Ctrl+Maj+C** / **Ctrl+Maj+V** ;
   zoom : **Ctrl+plus**, **Ctrl+moins**, **Ctrl+0**.
 - **Liens épinglés** par projet : adresses web, avec les variables `$VAR` du direnv du projet ;
   le navigateur du projet se choisit à droite de la barre.
@@ -106,5 +106,9 @@ Une notification de bureau, avec son, signale une session terminée, une questio
 
 - Les commandes de l'agent s'exécutent dans l'environnement du service systemd ; les variables
   direnv du projet sont toutefois chargées par le plugin opencode installé.
+- OpenCode 2 n'a plus de partage de session (`/share`) ni de liste de tâches des agents par défaut.
+- Compte Claude (forfait) : intégration « Claude Agent » d'OpenCode 2
+  (`opencode auth login claude-agent --method claude-login`), qui s'appuie sur la connexion de
+  Claude Code.
 - GNOME interdit à une application de ramener au premier plan la fenêtre d'une autre : un
   terminal déjà ouvert n'est pas refocalisé.

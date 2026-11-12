@@ -12,11 +12,11 @@ mêmes sessions, permet d'y répondre, et rouvre n'importe quelle session dans u
   favoris, recherche (`Ctrl+K`), état de chaque session (en cours, question, permission).
 - **Conversation en direct** : réponses en streaming, markdown (tableaux, code, liens), réflexion
   et appels d'outils repliables (masquables d'un coup, `Ctrl+Maj+O`), images et fichiers joints,
-  heure des messages et durée des réponses, liste de tâches de la session.
+  heure des messages et durée des réponses, commandes shell, compactions, changements d'agent / modèle.
 - **Interaction** : prompt avec choix de l'agent, du modèle et du niveau de raisonnement (`Ctrl+T`),
   commandes `/` et mentions `@` avec complétion, historique des prompts, pièces jointes
-  (bouton, collage, glisser-déposer), questions et permissions directement dans la conversation.
-- **Sessions** : renommer, forker, supprimer, ouvrir dans le terminal (`opencode attach`),
+  (bouton, collage, glisser-déposer), questions (formulaires) et permissions directement dans la conversation.
+- **Sessions** : renommer, forker, supprimer, ouvrir dans le terminal (`opencode --server`),
   fichiers modifiés (diff git) dans une fenêtre séparée, ouverture du dossier.
 - **Terminaux persistants par projet** (zellij) : `devenv up`, `pnpm dev`… lancés en arrière-plan,
   rouverts à volonté, redémarrés ou arrêtés depuis leur pastille.
@@ -44,7 +44,7 @@ node scripts/install.ts
 
 | Élément | Emplacement | Rôle |
 |---|---|---|
-| Service `opencode-gnome-server` | `~/.config/systemd/user/` | serveur opencode partagé, port 4096 |
+| Service `opencode-gnome-server` | `~/.config/systemd/user/` | serveur OpenCode 2 partagé, port 4096 (mot de passe dans `~/.config/opencode-gnome/server.env`) |
 | `oc` | `~/.local/bin/` | opencode en console, attaché au serveur partagé, dans le dossier courant |
 | `opencode-gnome` | `~/.local/bin/` + `.desktop` + icône + service D-Bus | l'application (« opencode » dans GNOME) |
 
@@ -57,10 +57,10 @@ Nix, relancer `node scripts/install.ts`.
 ## Architecture
 
 ```
-          systemd --user : opencode serve --port 4096  (serveur partagé)
+          systemd --user : opencode serve --port 4096  (OpenCode 2, serveur partagé)
              ▲                    ▲                          ▲
-     oc (opencode attach)   opencode-gnome (GTK)     terminaux « Ouvrir dans le terminal »
-       dans le terminal     HTTP + flux SSE global
+     oc (opencode --server)   opencode-gnome (GTK)     terminaux « Ouvrir dans le terminal »
+       dans le terminal       API /api/… + flux /api/event
 ```
 
 ### Pourquoi un serveur partagé
@@ -70,8 +70,10 @@ stockées sur disque, mais le **temps réel** (streaming, permissions, questions
 le serveur qui exécute la session. Un seul `opencode serve` permanent, utilisé par la console
 (`oc`) et par l'application, permet de voir et piloter les mêmes sessions des deux côtés.
 
-Un serveur gère tous les projets : chaque requête porte `?directory=…`, et le flux
-`GET /global/event` émet les événements de tous les répertoires.
+Un serveur gère tous les projets : les requêtes qui en dépendent portent `location[directory]=…`,
+et le flux `GET /api/event` émet les événements de toutes les sessions. Le client
+(`src/shared/client.ts`, `src/shared/v2/`) est écrit sur libsoup ; ses appels et ses schémas zod
+sont vérifiés à la compilation contre les types de `@opencode/client`.
 
 ### Code
 

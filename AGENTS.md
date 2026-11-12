@@ -1,10 +1,12 @@
 # opencode-gnome
 
 Client GNOME pour opencode : une application GTK 4 / libadwaita et (à venir) une extension
-GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console (`oc`).
+GNOME Shell, connectées à un serveur OpenCode 2 (`opencode serve`) partagé avec la console (`oc`).
 
 ## Architecture
-- `src/shared/` : code GJS commun (app + extension). Client HTTP/SSE libsoup 3 (`client.ts`),
+- `src/shared/` : code GJS commun (app + extension). Client HTTP/SSE libsoup 3 (`client.ts`, API
+  OpenCode 2 dans `v2/` : `client.ts`, schémas zod vérifiés par `conforms` contre les types de
+  `@opencode/client`, devDependency utilisée en `import type` seulement),
   schémas zod/mini (`schemas.ts`), état réactif des projets/sessions (`store.ts`),
   conversation en direct (`conversation.ts`), ouverture de terminal (`terminal.ts`).
 - `src/app/` : application `Adw.Application` en TSX avec gnim (`gnim/gtk4`).
@@ -38,8 +40,9 @@ GNOME Shell, connectées à un serveur `opencode serve` partagé avec la console
   (`sh: commande` pour une commande shell, ex. `xclip` pour remplir le presse-papier).
   `OPENCODE_GNOME_TEST_SCROLL=top` : la conversation reste en haut (test de la pastille).
   Pour des clics dans la barre latérale, pointer l'app sur un serveur de test
-  (`opencode serve --port 4799` + `OPENCODE_GNOME_URL=http://127.0.0.1:4799`) : sur le serveur
-  partagé, la session de l'agent en cours fait bouger l'ordre des projets pendant le test.
+  (`OPENCODE_PASSWORD=test opencode serve --port 4799` + `OPENCODE_GNOME_URL=http://127.0.0.1:4799`,
+  mot de passe dans `$XDG_CONFIG_HOME/opencode-gnome/server.env` : `OPENCODE_SERVER_PASSWORD="test"`) :
+  sur le serveur partagé, la session de l'agent en cours fait bouger l'ordre des projets pendant le test.
   Sans vrai serveur ni modèle : `pnpm fake-opencode --port 4790 --scenario e2e/scenarios/demo.json`
   (faux OpenCode 2 : projets, sessions, entrées d'historique, permissions et formulaires du scénario, format v2 ; un prompt reçoit « Réponse simulée : … » ;
   `GET /__test/requests` liste les requêtes reçues, `POST /__test/emit` émet un événement v2 `{ type, data }`).

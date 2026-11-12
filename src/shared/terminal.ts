@@ -1,6 +1,7 @@
-// Ouverture d'un terminal sur une session opencode (`opencode attach`).
+// Ouverture d'un terminal sur une session opencode (`opencode --server`, OpenCode 2).
 import GLib from 'gi://GLib';
 import { intercepted } from './sandbox.ts';
+import { serverEnvPath } from './server.ts';
 
 /** terminal -> préfixe argv qui exécute le programme + arguments suivants */
 const TERMINALS: Readonly<Record<string, readonly string[]>> = {
@@ -25,9 +26,18 @@ export const installedTerminals = (): string[] => [...(installed ??= KNOWN_TERMI
 /** Échappe une chaîne pour le shell. */
 export const shq = (s: string): string => (/^[\w@%+=:,./-]+$/u.test(s) ? s : `'${s.replaceAll("'", String.raw`'\''`)}'`);
 
-/** Commande console qui reprend une session sur le serveur partagé. */
-export const attachCommand = (url: string, directory: string, sessionID?: string): string =>
-  ['opencode', 'attach', url, '--dir', directory, ...(sessionID === undefined ? [] : ['--session', sessionID])].map((a) => shq(a)).join(' ');
+/**
+ * Console OpenCode 2 attachée au serveur partagé, dans `directory` (reprend `sessionID`). Le mot
+ * de passe du serveur est lu dans server.env au lancement (`OPENCODE_PASSWORD`), pas passé en
+ * argument (visible dans la liste des processus).
+ */
+export function attachArgv(url: string, directory: string, sessionID?: string): string[] {
+  const script = `pw=$(sed -n 's/^OPENCODE_SERVER_PASSWORD="\\(.*\\)"$/\\1/p' "$1" 2>/dev/null); export OPENCODE_PASSWORD="\${OPENCODE_SERVER_PASSWORD:-$pw}"; shift; exec opencode "$@"`;
+  return ['sh', '-c', script, 'oc', serverEnvPath(), '--server', url, ...(sessionID === undefined ? [] : ['--session', sessionID]), directory];
+}
+
+/** Même commande, en une ligne de shell (terminal externe). */
+export const attachCommand = (url: string, directory: string, sessionID?: string): string => attachArgv(url, directory, sessionID).map((a) => shq(a)).join(' ');
 
 /** Choix du terminal (préférences). */
 export interface TerminalChoice {

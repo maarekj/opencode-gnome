@@ -328,7 +328,7 @@ export function createConversationPage(opts: {
             <Gtk.Button
               $type="end"
               iconName="utilities-terminal-symbolic"
-              tooltipText={settings.data((d) => (integratedAvailable() && d.terminalIntegrated ? 'Ouvrir la session dans un terminal (opencode attach)' : 'Ouvrir la session dans le terminal externe (opencode attach)'))}
+              tooltipText={settings.data((d) => (integratedAvailable() && d.terminalIntegrated ? 'Ouvrir la session dans un terminal (opencode --server)' : 'Ouvrir la session dans le terminal externe (opencode --server)'))}
               onClicked={() => {
                 const v = view.peek();
                 if (v !== null) attach(v.session.directory, sessionID);

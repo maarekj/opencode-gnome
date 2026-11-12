@@ -7,7 +7,7 @@ import { errorMessage, HttpError } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
 import { prettyPath, type ProjectView, type Store } from '../shared/store.ts';
-import { attachCommand, openTerminal, openTerminalArgv } from '../shared/terminal.ts';
+import { attachArgv, attachCommand, openTerminal, openTerminalArgv } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag, subagentTag, type ConversationPageHandle } from './ConversationPage.tsx';
 import type { Settings } from '../shared/settings.ts';
 import { openExtensions } from './ExtensionsDialog.ts';
@@ -423,9 +423,9 @@ export function MainWindow({
       dock.open(project, {
         key: sessionID === undefined ? `opencode:${GLib.get_monotonic_time()}` : `attach:${sessionID}`,
         title: title === '' ? 'opencode' : title,
-        tooltip: `opencode attach${sessionID === undefined ? '' : ` --session ${sessionID}`}\n${prettyPath(directory)}`,
+        tooltip: `opencode --server${sessionID === undefined ? '' : ` --session ${sessionID}`}\n${prettyPath(directory)}`,
         icon: 'utilities-terminal-symbolic',
-        argv: ['opencode', 'attach', store.client.url, '--dir', directory, ...(sessionID === undefined ? [] : ['--session', sessionID])],
+        argv: attachArgv(store.client.url, directory, sessionID),
         cwd: directory,
         external: () => externalAttach(directory, sessionID),
       });

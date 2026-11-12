@@ -5,7 +5,7 @@ import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
 import { errorMessage, HttpError } from './errors.ts';
 import { serverPassword } from './server.ts';
-import { type McpConfig, type Agent, AppEvent, type Attachment, type Command, type FileDiff, type Mention, GlobalEnvelope, type McpStatus, MessageWithParts, type Skill, type OpencodeConfig, type Providers, VcsInfo, type Project, type Session, type SessionStatus, type AppEventEnvelope } from './schemas.ts';
+import type { McpConfig, Agent, Attachment, Command, FileDiff, Mention, McpStatus, Skill, OpencodeConfig, Providers, Project, Session, SessionStatus } from './schemas.ts';
 import { OpencodeV2 } from './v2/client.ts';
 import { declaredMcp } from './v2/config.ts';
 import { appProject, appSession, type FormAnswer, type FormV2, type PermissionV2 } from './v2/schemas.ts';
@@ -187,26 +187,6 @@ export class OpencodeClient {
   async statuses(): Promise<Record<string, SessionStatus>> {
     const active = await this.v2.active();
     return Object.fromEntries(Object.keys(active).map((id) => [id, { type: 'busy' }]));
-  }
-
-  /** Derniers messages d'une session (ordre chronologique). */
-  messages(sessionID: string, limit = 200): Promise<MessageWithParts[]> {
-    return this.get(`/session/${encodeURIComponent(sessionID)}/message`, z.array(MessageWithParts), { limit });
-  }
-
-  /**
-   * Page de messages, la plus récente d'abord en partant de `before` (curseur de la page
-   * précédente). `older` : curseur de la page suivante (plus ancienne), null au début de la session.
-   */
-  async messagePage(sessionID: string, limit: number, before?: string): Promise<{ messages: MessageWithParts[]; older: string | null }> {
-    let older: string | null = null;
-    const messages = await this.request('GET', `/session/${encodeURIComponent(sessionID)}/message`, z.array(MessageWithParts), {
-      query: { limit, before },
-      headers: (h) => {
-        older = h.get_one('X-Next-Cursor');
-      },
-    });
-    return { messages, older };
   }
 
   /**
@@ -452,24 +432,7 @@ export class OpencodeClient {
     return (await this.v2.vcsDiff(directory, 'working')).map((d) => ({ file: d.file, status: d.status, additions: d.additions, deletions: d.deletions, patch: d.patch }));
   }
 
-  vcs(directory: string): Promise<VcsInfo> {
-    return this.get('/vcs', VcsInfo, { directory });
-  }
-
   // ------------------------------------------------------------------ SSE
-
-  /**
-   * Écoute `GET /global/event` (tous les projets) et reconnecte automatiquement.
-   * `onState(true)` à chaque connexion : l'appelant doit alors recharger l'état complet.
-   * Retourne une fonction d'arrêt.
-   */
-  /**
-   * `skip` : événement de streaming à ignorer sans l'analyser (JSON + zod), par exemple les
-   * messages d'une session qu'aucune conversation ouverte ne suit (#160).
-   */
-  listen(onEvent: (e: AppEventEnvelope) => void, onState: (connected: boolean, error?: string) => void, skip: ((type: string, sessionID: string) => boolean) | null = null): () => void {
-    return this.listenRaw('/global/event', (raw) => dispatch(raw, onEvent, skip), onState);
-  }
 
   /**
    * Flux SSE brut (`path`, ex. `/api/event` d'OpenCode 2) : chaque `data:` complet est passé tel
@@ -557,29 +520,6 @@ export class OpencodeClient {
       lines.close(null);
     }
   }
-}
-
-/** Type des événements à haute fréquence (streaming), filtrables avant analyse. */
-// en tête de la charge utile seulement (`{"payload":{"id"?,"type":…,"properties":{"sessionID":…`) : un
-// objet imbriqué du même nom ne peut pas faire ignorer un autre événement
-const STREAM_TYPE = /"payload":\{(?:"id":"[^"]*",)?"type":"(message\.[a-z.]+|session\.diff|todo\.updated)","properties":\{"sessionID":"([^"]+)"/u;
-
-function dispatch(raw: string, onEvent: (e: AppEventEnvelope) => void, skip: ((type: string, sessionID: string) => boolean) | null): void {
-  if (skip !== null) {
-    const m = STREAM_TYPE.exec(raw);
-    if (m?.[1] !== undefined && m[2] !== undefined && skip(m[1], m[2])) return;
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    return;
-  }
-  const env = GlobalEnvelope.safeParse(json);
-  if (!env.success) return;
-  const ev = AppEvent.safeParse(env.data.payload);
-  if (!ev.success) return; // événement non utilisé par l'app
-  onEvent({ directory: env.data.directory ?? null, event: ev.data });
 }
 
 function sleep(ms: number, cancellable: Gio.Cancellable): Promise<void> {

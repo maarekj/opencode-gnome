@@ -3,7 +3,7 @@ import GLib from 'gi://GLib';
 import { createState, type Accessor } from 'gnim';
 import type { OpencodeClient } from './client.ts';
 import { errorMessage } from './errors.ts';
-import type { Project, Session, SessionEvent } from './schemas.ts';
+import type { Project, Session } from './schemas.ts';
 import { listenV2 } from './v2/client.ts';
 import * as E from './v2/events.ts';
 import { appProject, Project as ProjectV2 } from './v2/schemas.ts';
@@ -121,8 +121,6 @@ export class Store {
   readonly #permissions = new Map<string, Set<string>>();
   /** sessionID -> questions en attente */
   readonly #questions = new Map<string, Set<string>>();
-  /** sessionID -> abonnés aux événements de messages (conversations ouvertes) */
-  readonly #messageListeners = new Map<string, Set<(e: SessionEvent) => void>>();
   readonly #errorListeners = new Set<(sessionID: string, message: string) => void>();
   /** conversations ouvertes : rechargées à chaque reconnexion (événements manqués) */
   readonly #reconnectListeners = new Set<() => void>();
@@ -299,16 +297,6 @@ export class Store {
     this.#reconnectListeners.add(fn);
     return () => {
       this.#reconnectListeners.delete(fn);
-    };
-  }
-
-  onSessionEvents(sessionID: string, fn: (e: SessionEvent) => void): () => void {
-    const set = this.#messageListeners.get(sessionID) ?? new Set();
-    set.add(fn);
-    this.#messageListeners.set(sessionID, set);
-    return () => {
-      set.delete(fn);
-      if (set.size === 0) this.#messageListeners.delete(sessionID);
     };
   }
 

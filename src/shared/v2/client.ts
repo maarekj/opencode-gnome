@@ -43,7 +43,6 @@ import type {
 } from '@opencode/client';
 import type Gio from 'gi://Gio';
 import type { OpencodeClient } from '../client.ts';
-import { HttpError } from '../errors.ts';
 import { conforms } from './conforms.ts';
 import { McpList, PluginList, SkillList, AgentList, CommandList, FileFind, ModelDefault, ModelList, VcsDiff, FormList, Info, Messages, PermissionList, Project, Session, SessionPage, Status, type FormV2, type MessageV2, type PermissionV2, type ProjectV2, type SessionV2 } from './schemas.ts';
 import * as z from 'zod/mini';
@@ -286,17 +285,4 @@ export function listenV2(http: OpencodeClient, onEvent: (json: unknown) => void,
     },
     onState,
   );
-}
-
-/** Version majeure de l'API du serveur : 2 si `/api/info` répond, sinon 1. */
-export async function serverMajor(http: OpencodeClient): Promise<1 | 2> {
-  try {
-    const info = await new OpencodeV2(http).info();
-    return Number(info.version.split('.')[0]) >= 2 ? 2 : 1;
-  } catch (e) {
-    // v1 : route inconnue (404) ou page HTML de l'interface web (réponse non JSON)
-    if (e instanceof HttpError && e.status !== 404) throw e;
-    if (e instanceof HttpError || e instanceof SyntaxError || e instanceof z.core.$ZodError) return 1;
-    throw e;
-  }
 }

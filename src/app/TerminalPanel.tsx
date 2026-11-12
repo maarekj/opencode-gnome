@@ -1,6 +1,6 @@
 // Terminal intégré (VTE) : panneau à onglets sous la zone principale, un par projet.
 // Onglets : shell du projet, terminal persistant (zellij attach : fermer l'onglet détache),
-// session opencode (opencode attach). Chaque onglet peut être rouvert dans le terminal externe.
+// session opencode (opencode --server). Chaque onglet peut être rouvert dans le terminal externe.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
