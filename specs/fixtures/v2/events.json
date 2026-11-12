@@ -1,0 +1,915 @@
+[
+  {
+    "id": "evt_1cf7db0f7001zhsD1u7Et7UEok",
+    "type": "server.connected",
+    "data": {}
+  },
+  {
+    "id": "evt_1cf7db4e6001FXdQ1mq3E6r645",
+    "created": 1794482484454,
+    "type": "session.inbox.enqueued",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "inboxID": "msg_1cf7db4e50012UkLZnIQqt6kXd",
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "item": {
+        "type": "user",
+        "payload": {
+          "text": "Lis a.txt avec l outil read, puis écris une phrase de 20 mots sur son contenu."
+        },
+        "delivery": "steer"
+      }
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 33,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7db4e9001fjH6Y70kvwHKyc",
+    "created": 1794482484457,
+    "type": "project.updated",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "id": "global",
+      "canonical": "/tmp/opencode/v2/proj",
+      "vcs": "git",
+      "time": {
+        "created": 1794481769393,
+        "updated": 1794481769393,
+        "active": 1794482484456
+      },
+      "sandboxes": []
+    }
+  },
+  {
+    "id": "evt_1cf7db4e9002cjfEbuk7ZjEOpe",
+    "created": 1794482484457,
+    "type": "session.execution.started",
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 34,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7db4ef001D9mUcYo9pCHWrx",
+    "created": 1794482484463,
+    "type": "session.inbox.delivered",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "inboxID": "msg_1cf7db4e50012UkLZnIQqt6kXd"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 35,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc0180015U3CS45vZBvFSh",
+    "created": 1794482487320,
+    "type": "session.step.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "agent": "build",
+      "model": {
+        "id": "iceman-free",
+        "providerID": "opencode"
+      },
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "snapshot": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+      "started": 1794482484474
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 36,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc01a001hocoJLvQt52h7B",
+    "created": 1794482487322,
+    "type": "session.reasoning.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "native": {
+        "reasoningField": "reasoning_content"
+      }
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 37,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc080001bSKajFn47gIwVC",
+    "created": 1794482487424,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": "**Counting words carefully**\n\nOkay, the user wants a 20-word sentence about the content of a.txt. I’ve got the sentence"
+    }
+  },
+  {
+    "id": "evt_1cf7dc0e9001DeSAYZyGXtQaZ9",
+    "created": 1794482487529,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": ": \"The file a"
+    }
+  },
+  {
+    "id": "evt_1cf7dc1650015i46gA3BKqNsQb",
+    "created": 1794482487653,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": ".txt contains the simple greeting hello, which warmly welcomes readers and starts a friendly conversation today.\" Let me count the words: 1. The,"
+    }
+  },
+  {
+    "id": "evt_1cf7dc1cb001RQzW1ufyCmlSoU",
+    "created": 1794482487755,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": " 2. file, 3. a.txt, 4. contains, 5. the, 6. simple, 7. greeting"
+    }
+  },
+  {
+    "id": "evt_1cf7dc235001hESSVBYEGFkDmD",
+    "created": 1794482487861,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": ", 8. hello, 9. which, 10. warmly, 11. welcomes, 12. readers, 13. and, 14. starts,"
+    }
+  },
+  {
+    "id": "evt_1cf7dc29d0018qwT3aHYEwEi7l",
+    "created": 1794482487965,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": " 15. a... Wait, I’m missing a few words to hit 20. Let me adjust."
+    }
+  },
+  {
+    "id": "evt_1cf7dc784001ywAtr6kuoWFAP2",
+    "created": 1794482489220,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": "\n\n**Finalizing the sentence**\n\nOkay, I’ve got the sentence now: \"The file a.txt contains the simple greeting hello, which warmly welcomes readers and kindly"
+    }
+  },
+  {
+    "id": "evt_1cf7dc850001iB4xDy6fG4Lqao",
+    "created": 1794482489424,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": " starts a very friendly conversation today.\" Let me count the words: 1. The, 2. file, 3. a.txt, 4. contains, 5. the, 6. simple, 7. greeting, 8. hello, 9. which, 10."
+    }
+  },
+  {
+    "id": "evt_1cf7dc8fc0018OnQ02orshb9JK",
+    "created": 1794482489596,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": " warmly, 11. welcomes, 12. readers, 13. and, 14. kindly, 15. starts, 16. a, 17"
+    }
+  },
+  {
+    "id": "evt_1cf7dc942001ExCZTzxcUodL4s",
+    "created": 1794482489666,
+    "type": "session.reasoning.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "delta": ". very, 18. friendly, 19. conversation, 20. today. Perfect, that’s 20 words! Now, I’ll proceed with reading as requested."
+    }
+  },
+  {
+    "id": "evt_1cf7dc942002q0Z08mbUlBxkNi",
+    "created": 1794482489666,
+    "type": "session.tool.input.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "dcda5ef3-e6f3-4ff4-a653-72cfc4b3a4b9",
+      "name": "read"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 38,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc946001IjrgR3k8NJ7Vve",
+    "created": 1794482489670,
+    "type": "session.tool.input.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "4e53a1f9-9565-4171-ada7-bb2c8ba6e0be",
+      "name": "read"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 39,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc948001jLGfhiKPJ1HOPJ",
+    "created": 1794482489672,
+    "type": "session.tool.input.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "aa0afa54-c729-4400-9e9e-9b0adf9279ac",
+      "name": "read"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 40,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc94a0019ZlrP1mgtRpe30",
+    "created": 1794482489674,
+    "type": "session.tool.input.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "fe3ba7ca-73c1-40a3-a234-bb8a84391ecd",
+      "name": "read"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 41,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc96d0011AEbIdvS549oNW",
+    "created": 1794482489709,
+    "type": "session.reasoning.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "ordinal": 0,
+      "text": "**Counting words carefully**\n\nOkay, the user wants a 20-word sentence about the content of a.txt. I’ve got the sentence: \"The file a.txt contains the simple greeting hello, which warmly welcomes readers and starts a friendly conversation today.\" Let me count the words: 1. The, 2. file, 3. a.txt, 4. contains, 5. the, 6. simple, 7. greeting, 8. hello, 9. which, 10. warmly, 11. welcomes, 12. readers, 13. and, 14. starts, 15. a... Wait, I’m missing a few words to hit 20. Let me adjust.\n\n**Finalizing the sentence**\n\nOkay, I’ve got the sentence now: \"The file a.txt contains the simple greeting hello, which warmly welcomes readers and kindly starts a very friendly conversation today.\" Let me count the words: 1. The, 2. file, 3. a.txt, 4. contains, 5. the, 6. simple, 7. greeting, 8. hello, 9. which, 10. warmly, 11. welcomes, 12. readers, 13. and, 14. kindly, 15. starts, 16. a, 17. very, 18. friendly, 19. conversation, 20. today. Perfect, that’s 20 words! Now, I’ll proceed with reading as requested.",
+      "native": {
+        "reasoningField": "reasoning_content",
+        "reasoningDetails": []
+      }
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 42,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc970001Vcm9muiYvA9nR6",
+    "created": 1794482489712,
+    "type": "session.tool.input.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "dcda5ef3-e6f3-4ff4-a653-72cfc4b3a4b9",
+      "text": "{\"path\": \"a.txt\"}"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 43,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc9720019unGPVhyCkBzm4",
+    "created": 1794482489714,
+    "type": "session.tool.called",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "dcda5ef3-e6f3-4ff4-a653-72cfc4b3a4b9",
+      "input": {
+        "path": "a.txt"
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 44,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc974001xM0C7FPe8nSRhb",
+    "created": 1794482489716,
+    "type": "session.tool.input.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "4e53a1f9-9565-4171-ada7-bb2c8ba6e0be",
+      "text": "{\"path\": \"a.txt\"}"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 45,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc976001TcYSEeHm4Aj0L4",
+    "created": 1794482489718,
+    "type": "session.tool.called",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "4e53a1f9-9565-4171-ada7-bb2c8ba6e0be",
+      "input": {
+        "path": "a.txt"
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 46,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc978001Ka3nIgL3IW45ly",
+    "created": 1794482489720,
+    "type": "session.tool.input.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "aa0afa54-c729-4400-9e9e-9b0adf9279ac",
+      "text": "{\"path\": \"a.txt\"}"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 47,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc9800012228M4BPzDlT0Q",
+    "created": 1794482489729,
+    "type": "session.tool.called",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "aa0afa54-c729-4400-9e9e-9b0adf9279ac",
+      "input": {
+        "path": "a.txt"
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 48,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc984001B3qTDUeE5WOvk0",
+    "created": 1794482489732,
+    "type": "session.tool.input.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "fe3ba7ca-73c1-40a3-a234-bb8a84391ecd",
+      "text": "{\"path\": \"a.txt\"}"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 49,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc9860015sSWas2Q1clcGN",
+    "created": 1794482489734,
+    "type": "session.tool.called",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "fe3ba7ca-73c1-40a3-a234-bb8a84391ecd",
+      "input": {
+        "path": "a.txt"
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 50,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc988001QdxoxqF4i5Un2s",
+    "created": 1794482489736,
+    "type": "session.step.streamed",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 51,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc991001RpRWW34suoYEWs",
+    "created": 1794482489745,
+    "type": "session.tool.success",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "4e53a1f9-9565-4171-ada7-bb2c8ba6e0be",
+      "content": [
+        {
+          "type": "text",
+          "text": "Read file a.txt, lines 1-1\n1: hello"
+        }
+      ],
+      "metadata": {
+        "truncated": false
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 52,
+      "version": 2
+    }
+  },
+  {
+    "id": "evt_1cf7dc994001OCrLokEGnUJTUq",
+    "created": 1794482489748,
+    "type": "session.tool.success",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "dcda5ef3-e6f3-4ff4-a653-72cfc4b3a4b9",
+      "content": [
+        {
+          "type": "text",
+          "text": "Read file a.txt, lines 1-1\n1: hello"
+        }
+      ],
+      "metadata": {
+        "truncated": false
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 53,
+      "version": 2
+    }
+  },
+  {
+    "id": "evt_1cf7dc996001DZwCzL3T3R6GGR",
+    "created": 1794482489750,
+    "type": "session.tool.success",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "aa0afa54-c729-4400-9e9e-9b0adf9279ac",
+      "content": [
+        {
+          "type": "text",
+          "text": "Read file a.txt, lines 1-1\n1: hello"
+        }
+      ],
+      "metadata": {
+        "truncated": false
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 54,
+      "version": 2
+    }
+  },
+  {
+    "id": "evt_1cf7dc9990014IxWW4DtsnZzdd",
+    "created": 1794482489753,
+    "type": "session.tool.success",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "id": "fe3ba7ca-73c1-40a3-a234-bb8a84391ecd",
+      "content": [
+        {
+          "type": "text",
+          "text": "Read file a.txt, lines 1-1\n1: hello"
+        }
+      ],
+      "metadata": {
+        "truncated": false
+      },
+      "executed": false
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 55,
+      "version": 2
+    }
+  },
+  {
+    "id": "evt_1cf7dc9a400170LbTQuPJjmbCU",
+    "created": 1794482489764,
+    "type": "session.step.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7db4f5001fAJs07RyhlMonB",
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "tokens": {
+        "input": 352,
+        "output": 56,
+        "reasoning": 251,
+        "cache": {
+          "read": 4096,
+          "write": 0
+        }
+      },
+      "cost": 0,
+      "snapshot": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+      "files": []
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 56,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dc9a7001oQoNCiLK7lIhZK",
+    "created": 1794482489767,
+    "type": "session.usage.updated",
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "cost": 0,
+      "tokens": {
+        "input": 1054,
+        "output": 115,
+        "reasoning": 294,
+        "cache": {
+          "read": 16384,
+          "write": 0
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_1cf7dd0440011siHFv4kut5ft3",
+    "created": 1794482491460,
+    "type": "session.step.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "agent": "build",
+      "model": {
+        "id": "iceman-free",
+        "providerID": "opencode"
+      },
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "snapshot": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+      "started": 1794482489781
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 57,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dd046001GqfFRPmSDtvcQ9",
+    "created": 1794482491462,
+    "type": "session.text.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "ordinal": 0
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 58,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dd0ac001NcNEjbuG9aJUSi",
+    "created": 1794482491564,
+    "type": "session.text.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "ordinal": 0,
+      "delta": "Le contenu de `a.txt` est : `hello`.\n\nThe file a.txt contains the simple greeting hello, which warmly welcomes readers and kindly starts a very friendly"
+    }
+  },
+  {
+    "id": "evt_1cf7dd14f001iV1CyWbT9P8uBR",
+    "created": 1794482491727,
+    "type": "session.reasoning.started",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "ordinal": 0,
+      "native": {}
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 59,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dd151001mZfcL0JyJMJ8Sw",
+    "created": 1794482491729,
+    "type": "session.reasoning.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "ordinal": 0,
+      "text": "",
+      "native": {
+        "reasoningDetails": []
+      }
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 60,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dd153001WZEVemLew13Pko",
+    "created": 1794482491731,
+    "type": "session.text.delta",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "ordinal": 0,
+      "delta": " conversation today."
+    }
+  },
+  {
+    "id": "evt_1cf7dd1530026IG05p5VKQBzmF",
+    "created": 1794482491731,
+    "type": "session.text.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "ordinal": 0,
+      "text": "Le contenu de `a.txt` est : `hello`.\n\nThe file a.txt contains the simple greeting hello, which warmly welcomes readers and kindly starts a very friendly conversation today."
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 61,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dd154001hPc4jwIy7ZUMcF",
+    "created": 1794482491732,
+    "type": "session.step.streamed",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 62,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dd15c001aNEJUbJ5u20zBy",
+    "created": 1794482491740,
+    "type": "session.step.ended",
+    "location": {
+      "directory": "/tmp/opencode/v2/proj"
+    },
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "assistantMessageID": "msg_1cf7dc9af0011Cw4TkfBnPpXrU",
+      "finish": "stop",
+      "rawFinish": "stop",
+      "tokens": {
+        "input": 753,
+        "output": 46,
+        "reasoning": 13,
+        "cache": {
+          "read": 4096,
+          "write": 0
+        }
+      },
+      "cost": 0,
+      "snapshot": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+      "files": []
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 63,
+      "version": 1
+    }
+  },
+  {
+    "id": "evt_1cf7dd15e001Z8eOx4kl2HZBzr",
+    "created": 1794482491742,
+    "type": "session.usage.updated",
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x",
+      "cost": 0,
+      "tokens": {
+        "input": 1807,
+        "output": 161,
+        "reasoning": 307,
+        "cache": {
+          "read": 20480,
+          "write": 0
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_1cf7dd15f001pff8bnt9kpsBFx",
+    "created": 1794482491743,
+    "type": "session.execution.succeeded",
+    "data": {
+      "sessionID": "ses_e308d346affePqocFV8uajeZ4x"
+    },
+    "durable": {
+      "aggregateID": "ses_e308d346affePqocFV8uajeZ4x",
+      "seq": 64,
+      "version": 1
+    }
+  }
+]

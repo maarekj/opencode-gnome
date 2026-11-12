@@ -437,13 +437,21 @@ export class OpencodeClient {
    * messages d'une session qu'aucune conversation ouverte ne suit (#160).
    */
   listen(onEvent: (e: AppEventEnvelope) => void, onState: (connected: boolean, error?: string) => void, skip: ((type: string, sessionID: string) => boolean) | null = null): () => void {
+    return this.listenRaw('/global/event', (raw) => dispatch(raw, onEvent, skip), onState);
+  }
+
+  /**
+   * Flux SSE brut (`path`, ex. `/api/event` d'OpenCode 2) : chaque `data:` complet est passé tel
+   * quel à `onData`. Reconnexion et chien de garde comme `listen`.
+   */
+  listenRaw(path: string, onData: (raw: string) => void, onState: (connected: boolean, error?: string) => void): () => void {
     const cancellable = new Gio.Cancellable();
     let retry = 0;
 
     // une connexion, puis reconnexion après un délai croissant (1 à 5 s)
     const connect = async (): Promise<void> => {
       try {
-        await this.#readStream(cancellable, onEvent, skip, () => {
+        await this.#readStream(cancellable, path, onData, () => {
           retry = 0;
           onState(true);
         });
@@ -465,7 +473,7 @@ export class OpencodeClient {
    * 10 s ; sans aucune ligne pendant WATCHDOG_MS (connexion à moitié ouverte après une mise en
    * veille ou un changement de réseau), la lecture est annulée et le flux reconnecté (#61).
    */
-  async #readStream(outer: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, skip: ((type: string, sessionID: string) => boolean) | null, onOpen: () => void): Promise<void> {
+  async #readStream(outer: Gio.Cancellable, path: string, onData: (raw: string) => void, onOpen: () => void): Promise<void> {
     const cancellable = new Gio.Cancellable();
     const relay = outer.connect(() => cancellable.cancel());
     let watchdog = 0;
@@ -479,7 +487,7 @@ export class OpencodeClient {
     };
     try {
       arm();
-      await this.#readEvents(cancellable, onEvent, skip, onOpen, arm);
+      await this.#readEvents(cancellable, path, onData, onOpen, arm);
     } catch (e) {
       // délai du chien de garde dépassé (flux annulé, pas l'appelant) : simple fin de flux
       if (!cancellable.is_cancelled() || outer.is_cancelled()) throw e;
@@ -489,14 +497,14 @@ export class OpencodeClient {
     }
   }
 
-  async #readEvents(cancellable: Gio.Cancellable, onEvent: (e: AppEventEnvelope) => void, skip: ((type: string, sessionID: string) => boolean) | null, onOpen: () => void, alive: () => void): Promise<void> {
-    const msg = Soup.Message.new('GET', this.#uri('/global/event'));
+  async #readEvents(cancellable: Gio.Cancellable, path: string, onData: (raw: string) => void, onOpen: () => void, alive: () => void): Promise<void> {
+    const msg = Soup.Message.new('GET', this.#uri(path));
     if (msg === null) throw new Error(`URL invalide : ${this.url}`);
     msg.get_request_headers().append('Accept', 'text/event-stream');
     this.#authorize(msg);
     const input = await this.#events.send_async(msg, GLib.PRIORITY_DEFAULT, cancellable);
     const status: number = msg.get_status();
-    if (status !== 200) throw new HttpError(status, `/global/event : HTTP ${status}`);
+    if (status !== 200) throw new HttpError(status, `${path} : HTTP ${status}`);
     onOpen();
     const lines = new Gio.DataInputStream({ baseStream: input, closeBaseStream: true });
     let data: string[] = [];
@@ -508,7 +516,7 @@ export class OpencodeClient {
         alive();
         const line = decoder.decode(bytes).replace(/\r$/u, '');
         if (line === '') {
-          if (data.length > 0) dispatch(data.join('\n'), onEvent, skip);
+          if (data.length > 0) onData(data.join('\n'));
           data = [];
         } else if (line.startsWith('data:')) {
           data.push(line.slice(5).trimStart());

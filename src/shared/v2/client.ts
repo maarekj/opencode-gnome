@@ -88,6 +88,26 @@ export class OpencodeV2 {
   }
 }
 
+/**
+ * Événements en direct (`GET /api/event`) : chaque événement JSON brut est passé à `onEvent`
+ * (analysé par le store, #171). Retourne une fonction d'arrêt.
+ */
+export function listenV2(http: OpencodeClient, onEvent: (json: unknown) => void, onState: (connected: boolean, error?: string) => void): () => void {
+  return http.listenRaw(
+    '/api/event',
+    (raw) => {
+      let json: unknown;
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      onEvent(json);
+    },
+    onState,
+  );
+}
+
 /** Version majeure de l'API du serveur : 2 si `/api/info` répond, sinon 1. */
 export async function serverMajor(http: OpencodeClient): Promise<1 | 2> {
   try {
