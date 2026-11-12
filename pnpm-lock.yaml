@@ -224,6 +224,9 @@ importers:
       '@girs/vte-3.91':
         specifier: 5.5.0
         version: 5.5.0
+      '@opencode/client':
+        specifier: 2.2.7
+        version: 2.2.7(effect@4.1.0)
       '@types/jasmine':
         specifier: ~3.10.19
         version: 3.10.19
@@ -470,6 +473,23 @@ packages:
   '@girs/vte-3.91@5.5.0':
     resolution: {integrity: sha512-d9LmAC11Mhv7YixlvtqfkAezgWYnH77HFK5igIg7/vJrWbH4/L3Wca9Lp28MPsqEXDG20eVq8fs3cZnN5dPjjg==}
 
+  '@opencode/client@2.2.7':
+    resolution: {integrity: sha512-L1nqJqEBEHyg+OwJaMYA5jX8OA4nZ1Jxehp8xTw5u4kzKEgqLes2re7yWzXJSZmybZ5Kv4rX24gJjYHeegwf7g==}
+    peerDependencies:
+      effect: 4.1.0
+      solid-js: '>=1.9.0'
+    peerDependenciesMeta:
+      effect:
+        optional: true
+      solid-js:
+        optional: true
+
+  '@opencode/protocol@2.2.7':
+    resolution: {integrity: sha512-J86R/rNrFC0KRJd4G5i2yT5FG7FB4M9Yh418NS3PcTHoWP1jwWKLV85L5JvGYPwb7sKtahyxPeN88Q/Mw+pZvQ==}
+
+  '@opencode/schema@2.2.7':
+    resolution: {integrity: sha512-A+aUfvpcPm8mN0ptFl2GUHwDFjyrCuLdig3jjQCRoOghF+un1+vVKek1IwIph935vMNqAwRDnwtvZDtHFiGokA==}
+
   '@oxlint-tsgolint/darwin-arm64@7.0.2004':
     resolution: {integrity: sha512-uJk3ttju7Lz+Nv8WG4CsLyewoL1qf/Ny8S8OksJ7Bm/F14Tc9gMfW6arM1PCc57IzH/X/I79YsCWTgxX1FKibQ==}
     cpu: [arm64]
@@ -622,6 +642,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@standard-schema/spec@1.1.0':
+    resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
   '@types/jasmine@3.10.19':
     resolution: {integrity: sha512-Bz6P2XoeIN13AhvVe0nS7+m2RfxVllETDjFQ/s6lyEwEfIVpPCc1Q8vPdFopFAOU5mzrU1zypXJ1xGDl5EVU9Q==}
 
@@ -747,6 +770,9 @@ packages:
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
+
+  effect@4.1.0:
+    resolution: {integrity: sha512-lGx2MJJyrXA8RZb2UpQ/0Nkb5Utaimby7oD92+18noBxLPE85IFOvptdzau8dvcxAOwfwHo9iqapbKeFzqQM/Q==}
 
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
@@ -1090,6 +1116,23 @@ snapshots:
       '@girs/pango-1.0': 5.5.0
       '@girs/pangocairo-1.0': 5.5.0
 
+  '@opencode/client@2.2.7(effect@4.1.0)':
+    dependencies:
+      '@opencode/protocol': 2.2.7
+      '@opencode/schema': 2.2.7
+    optionalDependencies:
+      effect: 4.1.0
+
+  '@opencode/protocol@2.2.7':
+    dependencies:
+      '@opencode/schema': 2.2.7
+      effect: 4.1.0
+
+  '@opencode/schema@2.2.7':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      effect: 4.1.0
+
   '@oxlint-tsgolint/darwin-arm64@7.0.2004':
     optional: true
 
@@ -1165,6 +1208,8 @@ snapshots:
   '@oxlint/binding-win32-x64-msvc@1.89.0':
     optional: true
 
+  '@standard-schema/spec@1.1.0': {}
+
   '@types/jasmine@3.10.19': {}
 
   '@types/node@26.6.5':
@@ -1230,6 +1275,8 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  effect@4.1.0: {}
 
   esbuild@0.28.2:
     optionalDependencies:

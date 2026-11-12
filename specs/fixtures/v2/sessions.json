@@ -1,0 +1,33 @@
+{
+  "data": [
+    {
+      "id": "ses_e308d346affePqocFV8uajeZ4x",
+      "projectID": "global",
+      "cost": 0,
+      "tokens": {
+        "input": 702,
+        "output": 59,
+        "reasoning": 43,
+        "cache": {
+          "read": 12288,
+          "write": 0
+        }
+      },
+      "outcome": "succeeded",
+      "time": {
+        "created": 1794481769398,
+        "updated": 1794481790601,
+        "busy": 1794481786371,
+        "idle": 1794481790606
+      },
+      "title": "Essai v2",
+      "location": {
+        "directory": "/tmp/opencode/v2/proj"
+      }
+    }
+  ],
+  "cursor": {
+    "previous": "eyJhbmNob3IiOnsiaWQiOiJzZXNfZTMwOGQzNDZhZmZlUHFvY0ZWOHVhamVaNHgiLCJ0aW1lIjoxNzk0NDgxNzkwNjAxLCJkaXJlY3Rpb24iOiJwcmV2aW91cyJ9fQ",
+    "next": "eyJhbmNob3IiOnsiaWQiOiJzZXNfZTMwOGQzNDZhZmZlUHFvY0ZWOHVhamVaNHgiLCJ0aW1lIjoxNzk0NDgxNzkwNjAxLCJkaXJlY3Rpb24iOiJuZXh0In19"
+  }
+}

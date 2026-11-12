@@ -1,0 +1,206 @@
+{
+  "data": [
+    {
+      "id": "msg_1cf731e8e001f2EO7ea6tf361r",
+      "time": {
+        "created": 1794481790606
+      },
+      "type": "idle",
+      "outcome": "succeeded"
+    },
+    {
+      "id": "msg_1cf7317bc001qQOPl5putRX26z",
+      "time": {
+        "created": 1794481788866,
+        "streamed": 1794481790592,
+        "completed": 1794481790601
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "iceman-free",
+        "providerID": "opencode"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Le contenu de `a.txt` est :\n\nhello"
+        },
+        {
+          "type": "reasoning",
+          "text": "",
+          "native": {
+            "reasoningDetails": []
+          },
+          "time": {
+            "created": 1794481790586,
+            "completed": 1794481790588
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+        "end": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+        "files": []
+      },
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 293,
+        "output": 21,
+        "reasoning": 9,
+        "cache": {
+          "read": 4096,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1cf730e15001EfnhGbfWDuOXHW",
+      "time": {
+        "created": 1794481786395,
+        "streamed": 1794481788833,
+        "completed": 1794481788850
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "iceman-free",
+        "providerID": "opencode"
+      },
+      "content": [
+        {
+          "type": "tool",
+          "id": "76f9667d-5853-47db-a461-e04f6cc0097f",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "a.txt"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file a.txt, lines 1-1\n1: hello"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1794481788811,
+            "ran": 1794481788830,
+            "completed": 1794481788840
+          }
+        },
+        {
+          "type": "reasoning",
+          "text": "",
+          "native": {
+            "reasoningDetails": []
+          },
+          "time": {
+            "created": 1794481788822,
+            "completed": 1794481788826
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+        "end": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 235,
+        "output": 17,
+        "reasoning": 16,
+        "cache": {
+          "read": 4096,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1cf730dff001vuE1Z46SwcHtJs",
+      "time": {
+        "created": 1794481786382
+      },
+      "text": "Lis le fichier a.txt avec l outil read puis dis son contenu.",
+      "type": "user"
+    },
+    {
+      "id": "msg_1cf72f508001sSmM1rh7J9bIJ5",
+      "time": {
+        "created": 1794481779976
+      },
+      "type": "idle",
+      "outcome": "succeeded"
+    },
+    {
+      "id": "msg_1cf72e75b001iGh7144d6HaH2z",
+      "time": {
+        "created": 1794481776483,
+        "streamed": 1794481779961,
+        "completed": 1794481779971
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "iceman-free",
+        "providerID": "opencode"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Bonjour ! Comment puis-je vous aider aujourd’hui ?"
+        },
+        {
+          "type": "reasoning",
+          "text": "",
+          "native": {
+            "reasoningDetails": []
+          },
+          "time": {
+            "created": 1794481779953,
+            "completed": 1794481779956
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        "end": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        "files": []
+      },
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 174,
+        "output": 21,
+        "reasoning": 18,
+        "cache": {
+          "read": 4096,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1cf72e7360014BYML9eJnSgGpx",
+      "time": {
+        "created": 1794481776460
+      },
+      "text": "Bonjour",
+      "type": "user"
+    }
+  ],
+  "cursor": {
+    "previous": "eyJpZCI6Im1zZ18xY2Y3MzFlOGUwMDFmMkVPN2VhNnRmMzYxciIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+    "next": "eyJpZCI6Im1zZ18xY2Y3MmU3MzYwMDE0QllNTDllSm5TZ0dweCIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6Im5leHQifQ"
+  }
+}

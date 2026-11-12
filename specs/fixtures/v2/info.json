@@ -1,0 +1,14 @@
+{
+  "version": "2.2.7",
+  "pid": 1124958,
+  "hostname": "hote",
+  "urls": [
+    "http://127.0.0.1:4786"
+  ],
+  "paths": {
+    "tmp": "/tmp/opencode"
+  },
+  "capabilities": {
+    "persistentPty": true
+  }
+}

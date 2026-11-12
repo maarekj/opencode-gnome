@@ -1,0 +1,23 @@
+[
+  {
+    "id": "global",
+    "canonical": "/tmp/opencode/v2/proj",
+    "vcs": "git",
+    "time": {
+      "created": 1794481769393,
+      "updated": 1794481769393,
+      "active": 1794481769434
+    },
+    "sandboxes": []
+  },
+  {
+    "id": "1b2dc321be4ca0841d5ae3bff7d278c820f45597",
+    "canonical": "/tmp/opencode/v2",
+    "time": {
+      "created": 1794481082703,
+      "updated": 1794481082703,
+      "active": 1794481082705
+    },
+    "sandboxes": []
+  }
+]
