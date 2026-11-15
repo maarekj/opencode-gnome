@@ -433,6 +433,22 @@ row.unread .title {
 .session-tree-row .session-title {
   font-size: 0.93em;
 }
+/* mode États (#178) : titres de groupe, sessions sur deux lignes */
+.state-group-row {
+  min-height: 0;
+  padding-top: 10px;
+  padding-bottom: 2px;
+}
+.state-group-row:first-child {
+  padding-top: 2px;
+}
+.state-group-title {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+.state-session-row {
+  min-height: 40px;
+}
 
 .sidebar-handle {
   background: transparent;

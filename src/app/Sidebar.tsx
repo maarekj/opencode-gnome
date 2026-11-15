@@ -26,6 +26,7 @@ import { watchWhileMapped } from './DevenvItem.tsx';
 import { askDelete, askRename, type SessionActions } from './SessionMenu.ts';
 import { usageBar } from './UsageBar.ts';
 import { intercepted } from '../shared/sandbox.ts';
+import { StatesList } from './StatesList.tsx';
 
 export const SERVER_UNIT = 'opencode-gnome-server.service';
 
@@ -265,7 +266,7 @@ function runningBadge(box: Gtk.Box, terminalsCount: Accessor<number>, devenvDirs
 }
 
 /** Indicateur d'activité compact d'une session de l'arbre. */
-function treeActivity(view: SessionView): JSX.Element {
+export function treeActivity(view: SessionView): JSX.Element {
   switch (view.activity) {
     case 'busy':
       return <Adw.Spinner tooltipText="En cours" />;
@@ -471,6 +472,11 @@ export function Sidebar({
   });
   const emptyFavorites = createComputed(() => !searching() && mode() === 'favorites' && projects().length === 0);
   const noMatch = createComputed(() => matching()?.size === 0);
+  // en tête de l'arbre (#178) : sessions qui demandent une action, réponses à lire, en cours ;
+  // tous les projets (Favoris compris) : rien de ce qui attend ne passe inaperçu
+  const states = StatesList({ settings, projects: allProjects, query, actions });
+  // « Aucun projet » seulement si l'en-tête (filtré aussi sur le titre des sessions) est vide
+  const page = createComputed(() => (noMatch() && states.empty() ? 'nomatch' : emptyFavorites() ? 'empty' : 'list'));
   let searchBar: Gtk.SearchBar | null = null;
   return (
     <Adw.NavigationPage title="Projets" tag="projects">
@@ -583,106 +589,119 @@ export function Sidebar({
           buttonLabel="Démarrer"
           onButtonClicked={startServer}
         />
-        <Gtk.Stack visibleChildName={createComputed(() => (noMatch() ? 'nomatch' : emptyFavorites() ? 'empty' : 'list'))}>
+        <Gtk.Stack visibleChildName={page}>
           <Adw.StatusPage name="nomatch" $type="named" iconName="system-search-symbolic" title="Aucun projet" cssClasses={['compact']} />
           <Gtk.ScrolledWindow name="list" $type="named" vexpand hscrollbarPolicy={Gtk.PolicyType.NEVER}>
-            <Gtk.ListBox
-              cssClasses={['navigation-sidebar']}
-              onRowActivated={(_self: Gtk.ListBox, row: Gtk.ListBoxRow) => {
-                const name = row.name;
-                if (name.startsWith('s:')) actions.openSession(name.slice(2));
-                else if (name.startsWith('p:')) select(name.slice(2));
-              }}
-              $={(self: Gtk.ListBox) => {
-                // arbre aplati : chaque projet, puis s'il est déplié ses sessions ouvertes (ordre
-                // d'ouverture, puis celui choisi par glisser-déposer)
-                terminals.manager.watch();
-                const items = createComputed((): TreeItem[] => {
-                  const { openSessions, collapsed, terminals: configured, subprojects, devenvs } = settings.data();
-                  const running = terminals.manager.running();
-                  const favs = favorites();
-                  const out: TreeItem[] = [];
-                  const shownProjects = projects();
-                  const byPath = new Map(shownProjects.map((p) => [p.path, p]));
-                  // sous-projets sous leur ancêtre le plus proche (parmi les projets affichés)
-                  const tree = projectTree(
-                    shownProjects.map((p) => p.path),
-                    subprojects,
-                  );
-                  const subCount = new Map<string, number>();
-                  for (const n of tree) if (n.parent !== null) subCount.set(n.parent, (subCount.get(n.parent) ?? 0) + 1);
-                  /** projets repliés : leurs sous-projets ne sont pas affichés */
-                  const hidden = new Set<string>();
-                  for (const node of tree) {
-                    const p = byPath.get(node.path);
-                    if (p === undefined) continue;
-                    if (node.parent !== null && hidden.has(node.parent)) {
-                      hidden.add(p.path);
-                      continue;
-                    }
-                    const depth = node.depth;
-                    const byID = new Map(p.sessions.map((v) => [v.session.id, v]));
-                    const open = openSessions.flatMap((id) => {
-                      const v = byID.get(id);
-                      return v === undefined ? [] : [v];
-                    });
-                    const terms = (configured[p.path] ?? []).filter((t) => running.has(t.id)).length;
-                    const devenvDirs = [...new Set((devenvs[p.path] ?? []).map((d) => devenvDir(d, p.path)))];
-                    const children = open.length;
-                    const expanded = !collapsed.includes(p.key);
-                    if (!expanded) hidden.add(p.path);
-                    // non lues : celles qui n'apparaissent pas dessous (repliées ou non ouvertes)
-                    const shownBelow = new Set(expanded ? open.map((v) => v.session.id) : []);
-                    const unread = p.sessions.filter((v) => v.unread && !shownBelow.has(v.session.id)).length;
-                    // repli possible aussi pour un projet qui n'a que des sous-projets
-                    out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children + (subCount.get(p.path) ?? 0), sessions: open.length, expanded, unread, terminals: terms, devenvDirs, parent: node.parent, depth });
-                    if (!expanded) continue;
-                    // sessions ouvertes du projet (ses sous-projets suivent)
-                    for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1, depth });
-                  }
-                  return out;
-                });
+            <Gtk.Box
+              orientation={Gtk.Orientation.VERTICAL}
+              $={(self: Gtk.Box) => {
+                states.list.visible = !states.empty.peek();
                 onCleanup(
-                  keyedListBox(self, items, treeKey, (i, live) => {
-                    // clé stable : l'activité et les compteurs sont mis à jour sur place (#157)
-                    const row = asWidget(
-                      i.kind === 'project'
-                        ? ProjectRow({ item: i, live: live((x) => (x.kind === 'project' ? x : i)), actions })
-                        : SessionTreeRow({ item: i, live: live((x) => (x.kind === 'session' ? x : i)), actions }),
-                    );
-                    // sous-projet : la ligne et ses enfants sont indentés
-                    if (i.depth > 0) row.marginStart = i.depth * SUBPROJECT_INDENT;
-                    return row;
+                  states.empty.subscribe(() => {
+                    states.list.visible = !states.empty.peek();
                   }),
                 );
-                // filtrage de la recherche : projet affiché s'il correspond, sessions avec leur projet
-                self.set_filter_func((row) => {
-                  const set = matching.peek();
-                  if (set === null) return true;
-                  const proj = row.name.startsWith('p:') ? row : projectRowOf(self, row);
-                  return proj !== null && set.has(proj.name.slice(2));
-                });
-                onCleanup(matching.subscribe(() => self.invalidate_filter()));
-                enableReorder(self, settings, projects, () => {
-                  const parents = new Map<string, string | null>();
-                  for (const i of items.peek()) if (i.kind === 'project') parents.set(i.project.key, i.parent);
-                  return parents;
-                });
-                // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)
-                const highlight = (): void => {
-                  const name = shown.peek();
-                  let target: Gtk.ListBoxRow | null = null;
-                  for (let i = 0, row = self.get_row_at_index(0); row !== null; i += 1, row = self.get_row_at_index(i)) {
-                    if (row.name === name) target = row;
-                  }
-                  if (target === null) self.unselect_all();
-                  else if (self.get_selected_row() !== target) self.select_row(target);
-                };
-                highlight();
-                onCleanup(shown.subscribe(highlight));
-                onCleanup(items.subscribe(highlight));
+                self.prepend(states.list);
               }}
-            />
+            >
+              <Gtk.ListBox
+                cssClasses={['navigation-sidebar']}
+                onRowActivated={(_self: Gtk.ListBox, row: Gtk.ListBoxRow) => {
+                  const name = row.name;
+                  if (name.startsWith('s:')) actions.openSession(name.slice(2));
+                  else if (name.startsWith('p:')) select(name.slice(2));
+                }}
+                $={(self: Gtk.ListBox) => {
+                  // arbre aplati : chaque projet, puis s'il est déplié ses sessions ouvertes (ordre
+                  // d'ouverture, puis celui choisi par glisser-déposer)
+                  terminals.manager.watch();
+                  const items = createComputed((): TreeItem[] => {
+                    const { openSessions, collapsed, terminals: configured, subprojects, devenvs } = settings.data();
+                    const running = terminals.manager.running();
+                    const favs = favorites();
+                    const out: TreeItem[] = [];
+                    const shownProjects = projects();
+                    const byPath = new Map(shownProjects.map((p) => [p.path, p]));
+                    // sous-projets sous leur ancêtre le plus proche (parmi les projets affichés)
+                    const tree = projectTree(
+                      shownProjects.map((p) => p.path),
+                      subprojects,
+                    );
+                    const subCount = new Map<string, number>();
+                    for (const n of tree) if (n.parent !== null) subCount.set(n.parent, (subCount.get(n.parent) ?? 0) + 1);
+                    /** projets repliés : leurs sous-projets ne sont pas affichés */
+                    const hidden = new Set<string>();
+                    for (const node of tree) {
+                      const p = byPath.get(node.path);
+                      if (p === undefined) continue;
+                      if (node.parent !== null && hidden.has(node.parent)) {
+                        hidden.add(p.path);
+                        continue;
+                      }
+                      const depth = node.depth;
+                      const byID = new Map(p.sessions.map((v) => [v.session.id, v]));
+                      const open = openSessions.flatMap((id) => {
+                        const v = byID.get(id);
+                        return v === undefined ? [] : [v];
+                      });
+                      const terms = (configured[p.path] ?? []).filter((t) => running.has(t.id)).length;
+                      const devenvDirs = [...new Set((devenvs[p.path] ?? []).map((d) => devenvDir(d, p.path)))];
+                      const children = open.length;
+                      const expanded = !collapsed.includes(p.key);
+                      if (!expanded) hidden.add(p.path);
+                      // non lues : celles qui n'apparaissent pas dessous (repliées ou non ouvertes)
+                      const shownBelow = new Set(expanded ? open.map((v) => v.session.id) : []);
+                      const unread = p.sessions.filter((v) => v.unread && !shownBelow.has(v.session.id)).length;
+                      // repli possible aussi pour un projet qui n'a que des sous-projets
+                      out.push({ kind: 'project', project: p, favorite: favs.includes(p.path), open: children + (subCount.get(p.path) ?? 0), sessions: open.length, expanded, unread, terminals: terms, devenvDirs, parent: node.parent, depth });
+                      if (!expanded) continue;
+                      // sessions ouvertes du projet (ses sous-projets suivent)
+                      for (const [n, view] of open.entries()) out.push({ kind: 'session', view, last: n === children - 1, depth });
+                    }
+                    return out;
+                  });
+                  onCleanup(
+                    keyedListBox(self, items, treeKey, (i, live) => {
+                      // clé stable : l'activité et les compteurs sont mis à jour sur place (#157)
+                      const row = asWidget(
+                        i.kind === 'project'
+                          ? ProjectRow({ item: i, live: live((x) => (x.kind === 'project' ? x : i)), actions })
+                          : SessionTreeRow({ item: i, live: live((x) => (x.kind === 'session' ? x : i)), actions }),
+                      );
+                      // sous-projet : la ligne et ses enfants sont indentés
+                      if (i.depth > 0) row.marginStart = i.depth * SUBPROJECT_INDENT;
+                      return row;
+                    }),
+                  );
+                  // filtrage de la recherche : projet affiché s'il correspond, sessions avec leur projet
+                  self.set_filter_func((row) => {
+                    const set = matching.peek();
+                    if (set === null) return true;
+                    const proj = row.name.startsWith('p:') ? row : projectRowOf(self, row);
+                    return proj !== null && set.has(proj.name.slice(2));
+                  });
+                  onCleanup(matching.subscribe(() => self.invalidate_filter()));
+                  enableReorder(self, settings, projects, () => {
+                    const parents = new Map<string, string | null>();
+                    for (const i of items.peek()) if (i.kind === 'project') parents.set(i.project.key, i.parent);
+                    return parents;
+                  });
+                  // la ligne affichée est sélectionnée (y compris après reconstruction d'une ligne)
+                  const highlight = (): void => {
+                    const name = shown.peek();
+                    let target: Gtk.ListBoxRow | null = null;
+                    for (let i = 0, row = self.get_row_at_index(0); row !== null; i += 1, row = self.get_row_at_index(i)) {
+                      if (row.name === name) target = row;
+                    }
+                    if (target === null) self.unselect_all();
+                    else if (self.get_selected_row() !== target) self.select_row(target);
+                  };
+                  highlight();
+                  onCleanup(shown.subscribe(highlight));
+                  onCleanup(items.subscribe(highlight));
+                }}
+              />
+            </Gtk.Box>
           </Gtk.ScrolledWindow>
           <Adw.StatusPage
             name="empty"

@@ -636,17 +636,27 @@ export function MainWindow({
       if (before === null) return;
       // changements regroupés : un seul enregistrement (#156)
       const changes = new Map<string, boolean>();
+      // réponses à lire (en tête de la barre latérale) : jusqu'à la mise de côté, même sous les yeux (#178)
+      const toRead = new Map<string, boolean>();
       for (const [id, activity] of now) {
         const was = before.get(id) ?? 'idle';
         if (was === activity) continue;
         // fin d'un tour de l'agent : non lue, sauf si elle est sous les yeux
-        if (activity === 'idle' && (was === 'busy' || was === 'retry')) changes.set(id, seen() !== id);
+        if (activity === 'idle' && (was === 'busy' || was === 'retry')) {
+          changes.set(id, seen() !== id);
+          // à lire seulement si ouverte : une session fermée n'apparaît pas dans « Réponse à lire »
+          if (settings.data.peek().openSessions.includes(id)) toRead.set(id, true);
+        }
         // nouveau tour (message envoyé d'ici ou de la console) : la réponse précédente a été lue
-        else if (activity === 'busy') changes.set(id, false);
+        else if (activity === 'busy') {
+          changes.set(id, false);
+          toRead.set(id, false);
+        }
       }
       // sessions supprimées : retirées
       for (const id of settings.data.peek().unread) if (!now.has(id) && before.has(id)) changes.set(id, false);
-      if (changes.size > 0) settings.setUnreadMany(changes);
+      for (const id of settings.data.peek().toRead) if (!now.has(id) && before.has(id)) toRead.set(id, false);
+      if (changes.size > 0 || toRead.size > 0) settings.setUnreadMany(changes, toRead);
     }),
   );
 

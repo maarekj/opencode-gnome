@@ -11,6 +11,11 @@ import { moveChild } from './projecttree.ts';
 
 export const SidebarMode = z.enum(['favorites', 'all']);
 export type SidebarMode = z.output<typeof SidebarMode>;
+/** Liste après ajouts (true) et retraits (false) ; la même liste si rien ne change. */
+function applyChanges(current: readonly string[], ch: ReadonlyMap<string, boolean>): readonly string[] {
+  const next = [...current.filter((id) => ch.get(id) !== false), ...[...ch].filter(([id, u]) => u && !current.includes(id)).map(([id]) => id)];
+  return next.length !== current.length || next.some((id, i) => id !== current[i]) ? next : current;
+}
 
 /** Terminal persistant d'un projet (session zellij). */
 export const ProjectTerminal = z.object({
@@ -119,6 +124,8 @@ export const SettingsData = z.object({
   openSessions: z.prefault(z.array(z.string()), []),
   /** sessions non lues : l'agent a fini de répondre, session pas encore ouverte */
   unread: z.prefault(z.array(z.string()), []),
+  /** réponses à lire (en tête de la barre latérale) : l'agent a fini, session pas encore mise de côté (#178) */
+  toRead: z.prefault(z.array(z.string()), []),
   /** projets repliés dans la barre latérale (clés de projet) */
   collapsed: z.prefault(z.array(z.string()), []),
   /** largeur de la barre latérale en px (0 = automatique) */
@@ -161,7 +168,7 @@ export const SettingsData = z.object({
 export type SettingsData = z.output<typeof SettingsData>;
 export type Theme = SettingsData['appTheme'];
 
-const DEFAULTS: SettingsData = { asides: {}, links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, gitDiffFull: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, zellijLayout: 'bare', terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
+const DEFAULTS: SettingsData = { asides: {}, links: {}, layout: {}, devenvs: {}, browsers: {}, ides: {}, markdown: DEFAULT_MARKDOWN_STYLE, voice: DEFAULT_VOICE, terminals: {}, favorites: [], subprojects: {}, sidebarMode: 'all', openSessions: [], unread: [], toRead: [], collapsed: [], sidebarWidth: 0, showTools: true, gitFilesTree: false, gitDiffFull: false, notifications: true, notificationSound: true, fontScale: 100, maxWidth: 860, terminalIntegrated: true, zellijLayout: 'bare', terminalPanelHeight: 300, appTheme: 'system', terminalTheme: 'system' };
 
 export const settingsPath = (): string => GLib.build_filenamev([GLib.get_user_config_dir(), 'opencode-gnome', 'settings.json']);
 
@@ -193,7 +200,7 @@ export function parseSettings(raw: unknown): SettingsData {
  * État d'interface (#156) : propre à l'application, changé souvent (session ouverte, lu / non lu,
  * repli…), enregistré dans state.json à côté de settings.json, sans verrou (ocg ne s'en sert pas).
  */
-export const STATE_KEYS = ['openSessions', 'unread', 'collapsed', 'asides', 'sidebarWidth', 'terminalPanelHeight', 'sidebarMode'] as const satisfies readonly (keyof SettingsData)[];
+export const STATE_KEYS = ['openSessions', 'unread', 'collapsed', 'asides', 'sidebarWidth', 'terminalPanelHeight', 'sidebarMode', 'toRead'] as const satisfies readonly (keyof SettingsData)[];
 const isStateKey = (k: string): boolean => (STATE_KEYS as readonly string[]).includes(k);
 
 export const statePath = (settings: string): string => GLib.build_filenamev([GLib.path_get_dirname(settings), 'state.json']);
@@ -500,10 +507,18 @@ export class Settings {
   /** Ajoute une session aux sessions ouvertes (à la fin), si elle n'y est pas. */
   /** Marque une session non lue (true) ou lue (false). */
   /** Plusieurs sessions lues / non lues en une seule modification. */
-  setUnreadMany(changes: ReadonlyMap<string, boolean>): void {
-    const current = this.data.peek().unread;
-    const next = [...current.filter((id) => changes.get(id) !== false), ...[...changes].filter(([id, u]) => u && !current.includes(id)).map(([id]) => id)];
-    if (next.length !== current.length || next.some((id, i) => id !== current[i])) this.update((d) => ({ ...d, unread: next }));
+  setUnreadMany(changes: ReadonlyMap<string, boolean>, toRead: ReadonlyMap<string, boolean> = new Map()): void {
+    const d0 = this.data.peek();
+    const unread = applyChanges(d0.unread, changes);
+    const reads = applyChanges(d0.toRead, toRead);
+    // un seul enregistrement (#156)
+    if (unread !== d0.unread || reads !== d0.toRead) this.update((d) => ({ ...d, unread: [...unread], toRead: [...reads] }));
+  }
+
+  /** Réponse mise de côté (false) ou de nouveau à lire (true) (#178). */
+  setToRead(id: string, toRead: boolean): void {
+    if (this.data.peek().toRead.includes(id) === toRead) return;
+    this.update((d) => ({ ...d, toRead: toRead ? [...d.toRead, id] : d.toRead.filter((x) => x !== id) }));
   }
 
   setUnread(id: string, unread: boolean): void {
@@ -526,7 +541,10 @@ export class Settings {
   }
 
   closeSessions(ids: readonly string[]): void {
-    if (ids.some((id) => this.data.peek().openSessions.includes(id))) this.update((d) => ({ ...d, openSessions: d.openSessions.filter((x) => !ids.includes(x)) }));
+    const d0 = this.data.peek();
+    // fermée : plus de réponse à lire (#178)
+    if (ids.some((id) => d0.openSessions.includes(id) || d0.toRead.includes(id)))
+      this.update((d) => ({ ...d, openSessions: d.openSessions.filter((x) => !ids.includes(x)), toRead: d.toRead.filter((x) => !ids.includes(x)) }));
   }
 
   setCollapsed(key: string, collapsed: boolean): void {

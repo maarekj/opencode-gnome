@@ -91,8 +91,8 @@ def test_projet_signale_une_demande_en_attente(run_app):
     data['permissions'] = [{'id': 'per_1', 'sessionID': 'ses_a2', 'action': 'shell', 'resources': ['ls']}]
     _, app = run_app(data)
     # pastille : texte « 1 », infobulle en description accessible
-    badge = app.find('label', '1')
-    assert badge.description == '1 session attend ta réponse'
+    # (le compteur « 1 » de l'en-tête « Action requise » n'a pas cette description)
+    wait_until(lambda: any(b.description == '1 session attend ta réponse' for b in app.all('label', '1')), 10, 'pastille du projet')
 
 
 def test_session_ouverte_affiche_son_activite(run_app):
