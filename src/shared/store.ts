@@ -635,9 +635,28 @@ export class Store {
       projectOfSession.set(s.id, p.path);
       g.sessions.push(v);
     }
+    // même dossier sous plusieurs identifiants (OpenCode 2 peut recréer un projet et y rattacher
+    // les sessions, #181) : un seul projet, celui mis à jour le plus récemment
+    const updatedOf = (key: string): number => this.#projects.get(key)?.time?.updated ?? 0;
+    const keyOfPath = new Map<string, string>();
+    for (const [key, g] of groups) {
+      const other = keyOfPath.get(g.path);
+      if (other === undefined) {
+        keyOfPath.set(g.path, key);
+        continue;
+      }
+      const [winner, loser] = updatedOf(key) > updatedOf(other) ? [key, other] : [other, key];
+      const w = groups.get(winner);
+      const l = groups.get(loser);
+      if (w === undefined || l === undefined) continue;
+      w.sessions.push(...l.sessions);
+      groups.delete(loser);
+      keyOfPath.set(g.path, winner);
+    }
     // projets git connus sans session (le serveur les a vus mais tout a été supprimé)
     for (const p of this.#projects.values()) {
-      if (p.id !== GLOBAL && !groups.has(p.id)) {
+      if (p.id !== GLOBAL && !groups.has(p.id) && !keyOfPath.has(p.worktree)) {
+        keyOfPath.set(p.worktree, p.id);
         groups.set(p.id, { path: p.worktree, vcs: p.vcs !== undefined, name: p.name ?? GLib.path_get_basename(p.worktree), sessions: [] });
       }
     }

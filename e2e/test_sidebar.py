@@ -200,3 +200,14 @@ def test_page_dechargee_garde_le_brouillon(run_app):
     app.action('open-session', "'ses_a'")
     assert app.text_visible('La connexion échoue après une mise en veille.')
     wait_until(lambda: app.composer().text == 'brouillon en cours', 5, 'brouillon retrouvé')
+
+
+def test_projet_en_double_meme_dossier_fusionne(run_app):
+    """#181 : deux projets OpenCode pour le même dossier (l'ancien vide) : un seul projet, avec ses sessions."""
+    data = scenario('projects')
+    old = dict(data['projects'][0], id='prj_alpha_old', time={'created': 0, 'updated': 1})
+    data['projects'].append(old)
+    _, app = run_app(data, settings={'openSessions': ['ses_a1']})
+    app.find('list item', contains='Refonte de l\'API')
+    rows = [r for r in app.all('list item') if (r.name or '').startswith('alpha')]
+    assert len(rows) == 1
