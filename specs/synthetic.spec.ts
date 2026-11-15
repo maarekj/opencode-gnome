@@ -41,6 +41,11 @@ describe('syntheticItem', () => {
     expect(item?.kind === 'tool' ? item.tool.error : null).toBe('Sous-agent annulé');
   });
 
+  it('commande arrêtée depuis l\'application : « Commande arrêtée »', () => {
+    const item = syntheticItem({ id: 'm', time, metadata: { source: 'shell', state: 'error' }, text: '<shell id="sh_1" state="error" command="sleep 120">\nShell.NotFoundError\n</shell>' });
+    expect(item?.kind === 'shell' ? [item.command, item.output] : null).toEqual(['sleep 120', 'Commande arrêtée']);
+  });
+
   it('autres entrées (relances, fichiers joints) : masquées', () => {
     expect(syntheticItem({ id: 'm', time, text: 'Summarize the task tool output above and continue with your task.' })).toBeNull();
   });

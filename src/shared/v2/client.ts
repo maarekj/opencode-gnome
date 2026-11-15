@@ -4,6 +4,9 @@
 // main plutôt que `@opencode/client`, dont seuls les types servent : chaque appel est vérifié à
 // la compilation (entrée et sortie), et chaque schéma zod contre le type officiel (`conforms`).
 import type {
+  ShellListOutput,
+  ShellOutputOutput,
+  ShellOutputInput,
   AgentListOutput,
   McpListOutput,
   PluginListOutput,
@@ -44,7 +47,7 @@ import type {
 import type Gio from 'gi://Gio';
 import type { OpencodeClient } from '../client.ts';
 import { conforms } from './conforms.ts';
-import { McpList, PluginList, SkillList, AgentList, CommandList, FileFind, ModelDefault, ModelList, VcsDiff, FormList, Info, Messages, PermissionList, Project, Session, SessionPage, Status, type FormV2, type MessageV2, type PermissionV2, type ProjectV2, type SessionV2 } from './schemas.ts';
+import { McpList, PluginList, ShellList, ShellOutput, SkillList, AgentList, CommandList, FileFind, ModelDefault, ModelList, VcsDiff, FormList, Info, Messages, PermissionList, Project, Session, SessionPage, Status, type FormV2, type MessageV2, type PermissionV2, type ProjectV2, type SessionV2 } from './schemas.ts';
 import * as z from 'zod/mini';
 
 // les schémas acceptent tout ce que le serveur v2 peut renvoyer (vérifié à la compilation)
@@ -67,6 +70,8 @@ conforms<VcsDiffOutput, typeof VcsDiff>(true);
 conforms<McpListOutput, typeof McpList>(true);
 conforms<SkillListOutput, typeof SkillList>(true);
 conforms<PluginListOutput, typeof PluginList>(true);
+conforms<ShellListOutput, typeof ShellList>(true);
+conforms<ShellOutputOutput, typeof ShellOutput>(true);
 
 /** Requête typée : paramètres de requête tels que décrits par le type d'entrée officiel. */
 type Query<T> = { readonly [K in keyof T]?: T[K] extends string | number | boolean | null | undefined ? T[K] : never };
@@ -234,6 +239,23 @@ export class OpencodeV2 {
 
   async plugins(directory: string): Promise<z.output<typeof PluginList>['data']> {
     return (await this.#http.get('/api/plugin', PluginList, { 'location[directory]': directory })).data;
+  }
+
+  // ---------------------------------------------------------------- commandes shell (#182)
+
+  /** Commandes shell en cours dans le dossier (les terminées sont retirées par le serveur). */
+  async shells(directory: string): Promise<z.output<typeof ShellList>['data']> {
+    return (await this.#http.get('/api/shell', ShellList, { 'location[directory]': directory })).data;
+  }
+
+  /** Sortie d'une commande à partir de `cursor` (position opaque rendue par l'appel précédent). */
+  async shellOutput(id: string, directory: string, cursor?: number): Promise<z.output<typeof ShellOutput>['data']> {
+    return (await this.#http.get(`/api/shell/${seg(id)}/output`, ShellOutput, { 'location[directory]': directory, ...query<Omit<ShellOutputInput, 'id' | 'location'>>(cursor === undefined ? {} : { cursor }) })).data;
+  }
+
+  /** Arrête une commande (et la retire). */
+  async removeShell(id: string, directory: string): Promise<void> {
+    await this.#http.request('DELETE', `/api/shell/${seg(id)}`, z.unknown(), { query: { 'location[directory]': directory } });
   }
 
   /** Relit la configuration du dossier (opencode.json, agents, commandes, skills, MCP). */

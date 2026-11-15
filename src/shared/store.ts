@@ -6,8 +6,11 @@ import { errorMessage } from './errors.ts';
 import type { Project, Session } from './schemas.ts';
 import { listenV2 } from './v2/client.ts';
 import * as E from './v2/events.ts';
-import { appProject, Project as ProjectV2 } from './v2/schemas.ts';
-import type * as z from 'zod/mini';
+import { appProject, Project as ProjectV2, ShellInfo } from './v2/schemas.ts';
+import * as z from 'zod/mini';
+
+const ShellCreated = z.object({ info: ShellInfo });
+const ShellRef = z.object({ id: z.string() });
 
 /** Événement v2 d'une session, transmis aux conversations ouvertes (#171). */
 export interface SessionEventV2 {
@@ -107,6 +110,10 @@ export class Store {
   readonly connection: Accessor<Connection>;
   /** Sessions de sous-agents (`parentID`) vues depuis le démarrage, avec leur activité. */
   readonly children: Accessor<ReadonlyMap<string, SessionView>>;
+  /** commandes shell en cours sur le serveur (toutes sessions), dont celles en arrière-plan (#182) */
+  readonly shells: Accessor<readonly ShellInfo[]>;
+  readonly #setShells: (v: readonly ShellInfo[]) => void;
+  readonly #shells = new Map<string, ShellInfo>();
   readonly client: OpencodeClient;
 
   readonly #setProjects: (v: readonly ProjectView[]) => void;
@@ -158,6 +165,9 @@ export class Store {
     const [children, setChildren] = createState<ReadonlyMap<string, SessionView>>(new Map());
     this.children = children;
     this.#setChildren = setChildren;
+    const [shells, setShells] = createState<readonly ShellInfo[]>([]);
+    this.shells = shells;
+    this.#setShells = setShells;
   }
 
   start(): void {
@@ -472,6 +482,17 @@ export class Store {
         if (r.asked) this.#discover(r.sessionID);
         break;
       }
+      case 'shell.created': {
+        const info = ShellCreated.safeParse(data);
+        if (info.success) this.#putShells([info.data.info]);
+        return;
+      }
+      case 'shell.exited':
+      case 'shell.deleted': {
+        const id = ShellRef.safeParse(data);
+        if (id.success && this.#shells.delete(id.data.id)) this.#setShells([...this.#shells.values()]);
+        return;
+      }
       case 'project.updated': {
         const p = ProjectV2.safeParse(data);
         if (!p.success) return;
@@ -482,6 +503,33 @@ export class Store {
         return;
     }
     this.#publishSoon();
+  }
+
+  /** Relit les commandes en cours d'un dossier (à l'ouverture d'une session : #182). */
+  async loadShells(directory: string): Promise<void> {
+    const list = await this.client.v2.shells(directory);
+    // celles de ce dossier qui ont disparu entre-temps (terminées pendant une déconnexion)
+    const inside = (cwd: string): boolean => cwd === directory || cwd.startsWith(`${directory}/`);
+    for (const s of this.#shells.values()) if (inside(s.cwd) && !list.some((x) => x.id === s.id)) this.#shells.delete(s.id);
+    this.#putShells(list);
+  }
+
+  #putShells(list: readonly ShellInfo[]): void {
+    for (const s of list) {
+      if (s.status === 'running') this.#shells.set(s.id, s);
+      else this.#shells.delete(s.id);
+    }
+    this.#setShells([...this.#shells.values()]);
+  }
+
+  /** Commande arrêtée d'ici : retirée sans attendre l'événement du serveur. */
+  forgetShell(id: string): void {
+    if (this.#shells.delete(id)) this.#setShells([...this.#shells.values()]);
+  }
+
+  /** Commandes en cours d'une session. */
+  sessionShells(sessionID: string): ShellInfo[] {
+    return this.shells().filter((s) => s.metadata['sessionID'] === sessionID);
   }
 
   /** Activité récente : la session remonte en tête de son projet. */

@@ -42,6 +42,8 @@ export function syntheticItem(e: { readonly id: string; readonly time: { readonl
     const { head, body } = tagged(e.text, 'shell');
     const command = /command="([\s\S]*)"$/u.exec(head)?.[1] ?? '';
     const exit = meta['exit'];
+    // arrêtée depuis l'application (DELETE) : le serveur ne la retrouve plus à la fin (#182)
+    if (state === 'error' && body === 'Shell.NotFoundError') return { kind: 'shell', id: `${e.id}:shell`, messageID: e.id, command, status: state, output: 'Commande arrêtée' };
     return { kind: 'shell', id: `${e.id}:shell`, messageID: e.id, command, status: state, output: body, ...(typeof exit === 'number' || typeof exit === 'string' ? { exit } : {}) };
   }
   return null;

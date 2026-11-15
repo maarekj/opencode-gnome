@@ -218,3 +218,19 @@ export const PluginList = z.object({
     }),
   ),
 });
+
+// ------------------------------------------------------------- commandes shell du serveur (#182)
+
+/** Commande shell lancée par le serveur (outil shell de l'agent, notamment en arrière-plan). */
+export const ShellInfo = z.object({
+  id: z.string(),
+  status: z.string(), // running | exited | timeout | killed
+  command: z.string(),
+  cwd: z.string(),
+  exit: z.optional(z.number()),
+  metadata: z.record(z.string(), z.unknown()),
+  time: z.object({ started: z.number(), completed: z.optional(z.number()) }),
+});
+export type ShellInfo = z.output<typeof ShellInfo>;
+export const ShellList = z.object({ data: z.array(ShellInfo) });
+export const ShellOutput = z.object({ data: z.object({ output: z.string(), cursor: z.number(), size: z.number(), truncated: z.boolean() }) });

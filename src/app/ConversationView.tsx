@@ -178,10 +178,14 @@ function ScrolledOutput(text: string, css: string[]): Gtk.Widget {
   return box;
 }
 
+/** Commande shell lancée en arrière-plan (v2) : l'outil rend la main aussitôt (#182). */
+const backgroundShell = (t: ToolCall): boolean => t.input['background'] === true && t.output.startsWith('Command moved to the background');
+
 function ToolDetails({ tool }: { tool: ToolCall }): JSX.Element {
   const input = tool.input;
   const command = field(input, 'command');
-  const output = tool.output;
+  // arrière-plan : pas le message technique d'OpenCode ; la sortie arrive à la fin de la commande
+  const output = backgroundShell(tool) ? "Lancée en arrière-plan : suivie dans « commandes en cours » (en-tête), résultat à la fin de la commande." : tool.output;
   const error = tool.error ?? '';
   return (
     <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={6} marginTop={6} marginStart={28}>

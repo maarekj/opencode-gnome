@@ -41,6 +41,8 @@ const Scenario = z.object({
   active: z.optional(z.array(z.string())),
   permissions: z.optional(z.array(Entity)),
   forms: z.optional(z.array(Entity)),
+  /** commandes shell en cours (#182) : `{ id, status, command, cwd, metadata: { sessionID }, time: { started }, output? }` */
+  shells: z.optional(z.array(Entity)),
   /** `[{ name, status: { status, error? } }]` */
   mcp: z.optional(z.array(z.looseObject({ name: z.string() }))),
   /** configuration du projet et globale : écrites dans les fichiers opencode.json par le test (pas servies) */
@@ -113,6 +115,7 @@ class State {
   readonly messages = new Map<string, Entry[]>();
   permissions: Json[] = [];
   forms: Json[] = [];
+  shells: Json[] = [];
   active = new Set<string>();
   mcp: Json[] = [];
   failOnce = new Set<string>();
@@ -128,6 +131,7 @@ class State {
     for (const [id, msgs] of Object.entries(s.messages ?? {})) this.messages.set(id, structuredClone(msgs));
     this.permissions = structuredClone(s.permissions ?? []);
     this.forms = structuredClone(s.forms ?? []);
+    this.shells = structuredClone(s.shells ?? []);
     this.active = new Set(s.active ?? []);
     this.mcp = structuredClone(s.mcp ?? []);
     this.failOnce = new Set(s.failOnce ?? []);
@@ -354,6 +358,8 @@ function simpleRoute(p: string, query: Record<string, string>): unknown {
     }
     case '/api/permission/request':
       return located(state.permissions.filter((x) => directory === '/' || dirOf(state.sessions.get(str(x['sessionID'])) ?? { id: '', title: '', location: { directory } }) === directory));
+    case '/api/shell':
+      return located(state.shells.map(({ output: _output, ...info }) => info));
     case '/api/form':
       return located(state.forms.filter((x) => directory === '/' || dirOf(state.sessions.get(str(x['sessionID'])) ?? { id: '', title: '', location: { directory } }) === directory));
     default:
@@ -533,6 +539,28 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
   }
   if (handleGlobal(method, p, res)) return;
+  // commandes shell (#182) : sortie (curseur en caractères), arrêt
+  const shell = /^\/api\/shell\/([^/]+)(\/output)?$/u.exec(p);
+  if (shell !== null) {
+    const id = decodeURIComponent(shell[1] ?? '');
+    const sh = state.shells.find((x) => x['id'] === id);
+    if (sh === undefined) {
+      notFound(res, p);
+      return;
+    }
+    if (method === 'GET' && shell[2] !== undefined) {
+      const out = str(sh['output']);
+      const cursor = Number(query['cursor'] ?? 0);
+      send(res, 200, { location: { directory: str(sh['cwd'], '/') }, data: { output: out.slice(cursor), cursor: out.length, size: out.length, truncated: false } });
+      return;
+    }
+    if (method === 'DELETE') {
+      state.shells = state.shells.filter((x) => x !== sh);
+      emit('shell.deleted', { id });
+      res.writeHead(204).end();
+      return;
+    }
+  }
   if (p === '/api/session' && method === 'POST') {
     const directory = str(obj(b['location'])['directory'], '/');
     const id = state.id('ses');

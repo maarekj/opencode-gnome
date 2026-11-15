@@ -5,6 +5,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import { createComputed, createMemo, createRoot, createState } from 'gnim';
 import { Conversation } from '../shared/conversation.ts';
 import type { Settings } from '../shared/settings.ts';
+import { shellsButton } from './ShellsButton.ts';
 import { isWorking, prettyPath, type Activity, type Store } from '../shared/store.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { gitStatus, type GitStatus } from '../shared/git.ts';
@@ -343,6 +344,7 @@ export function createConversationPage(opts: {
               onClicked={(self: Gtk.Button) => openFolder(self, dir(), toast)}
             />
             <Gtk.Box $type="end">{IdeButton({ project: projectPath, settings, toast, directory: dir })}</Gtk.Box>
+            <Gtk.Box $type="end" $={(self: Gtk.Box) => self.append(shellsButton(store, sessionID, dir, toast))} />
           </Adw.HeaderBar>
           <Gtk.Box $type="top" visible={!child}>
             <ProjectBar project={projectPath} ctx={terminals} directory={dir} />
