@@ -12,6 +12,7 @@ import type { FormV2, PermissionV2 } from './v2/schemas.ts';
 import type { SessionEventV2, Store } from './store.ts';
 import * as E from './v2/events.ts';
 import { HistoryEntry, type AssistantMessage, type ToolContentBlock } from './v2/messages.ts';
+import { syntheticItem } from './v2/synthetic.ts';
 
 export interface ContextUsage {
   /** tokens présents dans le contexte au dernier tour */
@@ -371,8 +372,14 @@ export class Conversation {
         case 'idle':
           if ('outcome' in e && e.outcome === 'failed' && e.error !== undefined) this.#setItem(m, { kind: 'error', id: `${e.id}:error`, messageID: e.id, text: e.error.message }, true);
           break;
+        case 'synthetic': {
+          // sous-agents et commandes en arrière-plan (#179) ; le reste (relances, fichiers joints) : masqué
+          const item = 'text' in e && typeof e.text === 'string' ? syntheticItem({ ...e, text: e.text }) : null;
+          if (item !== null) this.#setItem(m, item, true);
+          break;
+        }
         default:
-          // synthetic, system (contexte injecté pour le modèle), location-switched… : non affichés
+          // system (contexte injecté pour le modèle), location-switched… : non affichés
           break;
       }
     }

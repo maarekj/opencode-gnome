@@ -391,6 +391,12 @@ function ToolLine({ tool: p, open, generic = false }: { tool: ToolCall; open: Un
   );
 }
 
+/**
+ * Sous-agent lancé en arrière-plan (v2) : l'outil se termine aussitôt, sous-agent encore en cours
+ * (`metadata.status`), son résultat arrive plus tard dans une entrée à part (#179).
+ */
+const isBackground = (t: ToolCall): boolean => field(t.metadata, 'status') === 'running' || t.output.startsWith('The subagent is working in the background');
+
 /** Rapport final d'un sous-agent, sans l'enveloppe `<task …><task_result>` (v1). */
 const taskReport = (output: string): string => {
   const m = /<task_result>\n?([\s\S]*?)\n?<\/task_result>/u.exec(output);
@@ -450,10 +456,11 @@ function SubagentCard({ tool, ctx }: { tool: Accessor<ToolCall>; ctx: FlowContex
       return count === '' ? now : `${count} · ${now}`;
     }
     const took = t.time.end === undefined ? '' : fmtDuration(t.time.end - t.time.start);
+    if (t.status === 'completed' && isBackground(t)) return count === '' ? 'Lancé en arrière-plan' : `Lancé en arrière-plan · ${count}`;
     const verdict = t.status === 'error' ? 'Échec' : 'Terminé';
     return [took === '' ? verdict : `${verdict} en ${took}`, count].filter((x) => x !== '').join(' · ');
   });
-  const report = tool((t) => (t.status === 'completed' ? taskReport(t.output) : ''));
+  const report = tool((t) => (t.status === 'completed' && !isBackground(t) ? taskReport(t.output) : ''));
   const error = tool((t) => (t.status === 'error' ? (t.error ?? '') : ''));
   const t0 = tool.peek();
   const agent = field(t0.input, 'agent') ?? field(t0.input, 'subagent_type') ?? 'sous-agent';

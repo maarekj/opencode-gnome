@@ -68,7 +68,9 @@ export const CompactionMessage = z.object({
   summary: z.optional(z.string()),
   error: z.optional(StructuredError),
 });
-export const SyntheticMessage = z.object({ type: z.literal('synthetic'), id: z.string(), time: Created, text: z.string(), description: z.optional(z.string()) });
+/** Texte ajouté par opencode ; `metadata.source` : `subagent` (sous-agent en arrière-plan ou commande `subagent: true`), `shell` (commande en arrière-plan) (#179). */
+export const SyntheticMessage = z.object({ type: z.literal('synthetic'), id: z.string(), time: Created, text: z.string(), description: z.optional(z.string()), metadata: z.optional(z.record(z.string(), z.unknown())) });
+export type SyntheticMessage = z.output<typeof SyntheticMessage>;
 export const SystemMessage = z.object({ type: z.literal('system'), id: z.string(), time: Created, text: z.string(), description: z.optional(z.string()) });
 export const SkillMessage = z.object({ type: z.literal('skill'), id: z.string(), time: Created, name: z.string() });
 export const AgentSwitched = z.object({ type: z.literal('agent-switched'), id: z.string(), time: Created, agent: z.string() });
