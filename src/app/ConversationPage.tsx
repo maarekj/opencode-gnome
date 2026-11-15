@@ -5,7 +5,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import { createComputed, createMemo, createRoot, createState } from 'gnim';
 import { Conversation } from '../shared/conversation.ts';
 import type { Settings } from '../shared/settings.ts';
-import { prettyPath, type Activity, type Store } from '../shared/store.ts';
+import { isWorking, prettyPath, type Activity, type Store } from '../shared/store.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { gitStatus, type GitStatus } from '../shared/git.ts';
 import type { Session } from '../shared/schemas.ts';
@@ -169,6 +169,8 @@ export function createConversationPage(opts: {
       return git === '' ? base : `${base}  ·  ${git}`;
     });
     const busy = view((v) => v !== null && v.activity !== 'idle');
+    /** l'agent travaille (pas en attente d'une réponse) : spinner en fin de conversation (#180) */
+    const working = view((v) => v !== null && isWorking(v.activity));
     // messages annulés par /undo (ici ou dans la TUI) : masqués jusqu'au prochain prompt
     const revert = view((v) => v?.session.revert?.messageID ?? null);
     conversation.setRevert(revert.peek());
@@ -366,6 +368,7 @@ export function createConversationPage(opts: {
             conversation={conversation}
             revealed={revealed}
             active={active}
+            working={working}
             actions={requestActions}
             showTools={showTools}
             maxWidth={settings.data((d) => d.maxWidth)}

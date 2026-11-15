@@ -216,3 +216,14 @@ def test_formulaire_types_et_conditions(run_app):
     app.click('button', 'Répondre')
     req = fake.wait_request('POST', '/api/session/ses_c/form/frm_t/reply')
     assert req['body']['answer'] == {'cibles': ['web', 'api'], 'notifier': True, 'instances': 2}
+
+
+def test_spinner_en_fin_de_conversation_pendant_le_travail(run_app):
+    """#180 : spinner centré après le dernier message tant que l'agent travaille."""
+    _, app = run_app(scenario('demo'), '--session', 'ses_a')
+    app.text_visible('La connexion échoue')
+    assert not app.has(None, contains="L'agent travaille")
+    app.emit('session.execution.started', {'sessionID': 'ses_a'})
+    app.find(None, contains="L'agent travaille", timeout=5)
+    app.emit('session.execution.succeeded', {'sessionID': 'ses_a'})
+    wait_until(lambda: not app.has(None, contains="L'agent travaille"), 5, 'spinner masqué')
