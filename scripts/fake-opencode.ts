@@ -194,13 +194,15 @@ function finishExecution(ses: Ses, outcome: 'succeeded' | 'interrupted'): void {
 }
 
 /** Réponse simulée à un prompt : message utilisateur, étape de l'agent en direct, fin d'exécution. */
-function simulateTurn(ses: Ses, text: string): string {
+function simulateTurn(ses: Ses, text: string, files: unknown[] = []): string {
   const msgs = state.messages.get(ses.id) ?? [];
   state.messages.set(ses.id, msgs);
   const userID = state.id('msg');
   const now = Date.now();
-  msgs.push({ id: userID, type: 'user', time: { created: now }, text });
-  emit('session.inbox.enqueued', { sessionID: ses.id, inboxID: userID, item: { type: 'user', payload: { text }, delivery: 'steer' } }, dirOf(ses));
+  // pièces jointes (#183) : comme OpenCode 2, dans l'historique et dans l'événement
+  const attached = files.length === 0 ? {} : { files };
+  msgs.push({ id: userID, type: 'user', time: { created: now }, text, ...attached });
+  emit('session.inbox.enqueued', { sessionID: ses.id, inboxID: userID, item: { type: 'user', payload: { text, ...attached }, delivery: 'steer' } }, dirOf(ses));
   const reply = state.scenario.reply;
   state.active.add(ses.id);
   emit('session.execution.started', { sessionID: ses.id });
@@ -445,7 +447,12 @@ function handleSession(method: string, ses: Ses, action: string, query: Record<s
       send(res, 200, messagePage(msgs, query));
       return;
     case 'POST prompt': {
-      const id = simulateTurn(ses, str(b['text']));
+      // comme OpenCode 2 : les `data:` deviennent des pièces jointes en base64 (#183)
+      const files = (Array.isArray(b['files']) ? b['files'] : []).flatMap((f) => {
+        const m = /^data:([^;]+);base64,(.*)$/su.exec(str(obj(f)['uri']));
+        return m === null ? [] : [{ data: m[2] ?? '', mime: m[1] ?? '', source: { type: 'inline' }, ...(obj(f)['name'] === undefined ? {} : { name: str(obj(f)['name']) }) }];
+      });
+      const id = simulateTurn(ses, str(b['text']), files);
       data(res, { id, sessionID: sid, type: 'user', payload: { text: str(b['text']) }, delivery: 'steer' });
       return;
     }

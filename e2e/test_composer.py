@@ -216,3 +216,6 @@ def test_coller_une_image_puis_la_retirer(run_app):
     app.type_in_composer('Voici une capture')
     images = prompt_body(fake)['files']
     assert images and images[0]['uri'].startswith('data:image/png;base64,')
+    # #183 : l'image du message envoyé s'affiche aussitôt dans la conversation
+    # (miniature : bouton nommé par son infobulle, le nom du fichier ; le compositeur est vidé à l'envoi)
+    wait_until(lambda: not app.has('button', 'Retirer') and app.has('button', 'clipboard.png'), 5, 'image affichée')

@@ -48,8 +48,8 @@ export const InboxEnqueued = z.object({
   inboxID: z.string(),
   item: z.object({ type: z.string(), payload: z.unknown() }),
 });
-/** Texte d'un message utilisateur en file d'attente. */
-export const UserPayload = z.object({ text: z.string() });
+/** Message de l'utilisateur en file d'attente : texte et pièces jointes (base64, #183). */
+export const UserPayload = z.object({ text: z.string(), files: z.optional(z.array(z.object({ data: z.string(), mime: z.string(), name: z.optional(z.string()) }))) });
 export const InboxDelivered = z.object({ sessionID: z.string(), inboxID: z.string() });
 export const ExecutionFailed = z.object({ sessionID: z.string(), error: StructuredError });
 export const RetryScheduled = z.object({ sessionID: z.string(), attempt: z.number(), error: StructuredError });

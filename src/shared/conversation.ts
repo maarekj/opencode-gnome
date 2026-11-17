@@ -202,7 +202,7 @@ export class Conversation {
   /** message utilisateur -> bloc de fin de tour */
   readonly #turns = new Map<string, TurnEntry>();
   /** messages utilisateur en file d'attente : texte connu à l'envoi, affiché à la remise */
-  readonly #inbox = new Map<string, string>();
+  readonly #inbox = new Map<string, z.output<typeof E.UserPayload>>();
   #structureChanged = false;
   #contextDirty = false;
   #flushQueued = false;
@@ -449,21 +449,25 @@ export class Conversation {
       case 'session.inbox.enqueued': {
         const d = parse(E.InboxEnqueued, data);
         const user = d?.item.type === 'user' ? parse(E.UserPayload, d.item.payload) : null;
-        if (d !== null && user !== null) this.#inbox.set(d.inboxID, user.text);
+        if (d !== null && user !== null) this.#inbox.set(d.inboxID, user);
         return;
       }
       case 'session.inbox.delivered': {
         const d = parse(E.InboxDelivered, data);
         if (d === null) return;
-        const text = this.#inbox.get(d.inboxID);
+        const user = this.#inbox.get(d.inboxID);
         this.#inbox.delete(d.inboxID);
         // envoyé par un autre client (texte inconnu) : relu
-        if (text === undefined) {
+        if (user === undefined) {
           this.#reloadSoon();
           return;
         }
         const m = this.#message(d.inboxID, 'user', created);
-        this.#setItem(m, { kind: 'user', id: `${d.inboxID}:user`, messageID: d.inboxID, text });
+        this.#setItem(m, { kind: 'user', id: `${d.inboxID}:user`, messageID: d.inboxID, text: user.text });
+        // pièces jointes, comme depuis l'historique (#183)
+        for (const [n, f] of (user.files ?? []).entries()) {
+          this.#setItem(m, { kind: 'file', id: `${d.inboxID}:file:${n}`, messageID: d.inboxID, mime: f.mime, filename: f.name ?? '', url: `data:${f.mime};base64,${f.data}` });
+        }
         break;
       }
       case 'session.step.started': {
