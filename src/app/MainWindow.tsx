@@ -6,7 +6,7 @@ import { createMemo, createState, onCleanup } from 'gnim';
 import { errorMessage, HttpError } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
-import { prettyPath, type ProjectView, type Store } from '../shared/store.ts';
+import { isWorking, prettyPath, type Activity, type ProjectView, type Store } from '../shared/store.ts';
 import { attachArgv, attachCommand, openTerminal, openTerminalArgv } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag, subagentTag, type ConversationPageHandle } from './ConversationPage.tsx';
 import type { Settings } from '../shared/settings.ts';
@@ -625,7 +625,7 @@ export function MainWindow({
   };
   syncUnread();
   onCleanup(settings.data.subscribe(syncUnread));
-  let previous: Map<string, string> | null = null;
+  let previous: Map<string, Activity> | null = null;
   onCleanup(
     store.projects.subscribe(() => {
       if (store.connection.peek().state !== 'connected') return;
@@ -642,7 +642,7 @@ export function MainWindow({
         const was = before.get(id) ?? 'idle';
         if (was === activity) continue;
         // fin d'un tour de l'agent : non lue, sauf si elle est sous les yeux
-        if (activity === 'idle' && (was === 'busy' || was === 'retry')) {
+        if (activity === 'idle' && isWorking(was)) {
           changes.set(id, seen() !== id);
           // à lire seulement si ouverte : une session fermée n'apparaît pas dans « Réponse à lire »
           if (settings.data.peek().openSessions.includes(id)) toRead.set(id, true);

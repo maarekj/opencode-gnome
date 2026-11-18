@@ -979,7 +979,10 @@ export function ConversationView({
   revealer,
   active,
   working,
+  workingDetail,
 }: {
+  /** détail sous le spinner (tâches de fond en cours, #184) */
+  workingDetail?: Accessor<string> | undefined;
   /** l'agent travaille : spinner centré après le dernier message (#180) */
   working?: Accessor<boolean> | undefined;
   /** page affichée (markdown en direct suspendu sinon) */
@@ -1280,6 +1283,12 @@ export function ConversationView({
             tooltipText="L'agent travaille…"
             cssClasses={['working-spinner']}
             $={(self: Adw.Spinner) => self.update_property([Gtk.AccessibleProperty.LABEL], ["L'agent travaille…"])}
+          />
+          <Gtk.Label
+            label={workingDetail ?? ''}
+            visible={workingDetail === undefined ? false : createComputed(() => (working?.() ?? false) && workingDetail() !== '')}
+            halign={Gtk.Align.CENTER}
+            cssClasses={['dim-label', 'caption']}
           />
         </Gtk.Box>
       </Adw.Clamp>

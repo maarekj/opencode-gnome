@@ -30,6 +30,7 @@ const ACTIVITY_LABEL: Readonly<Record<Activity, string>> = {
   retry: 'Nouvel essai…',
   question: 'Question en attente',
   permission: 'Permission demandée',
+  background: 'En attente des tâches de fond…',
 };
 
 /**
@@ -166,10 +167,11 @@ export function createConversationPage(opts: {
       if (conversation.permissions().length > 0) return ACTIVITY_LABEL.permission;
       const v = view();
       if (v === null) return '';
-      const base = ACTIVITY_LABEL[v.activity] || (child ? `Sous-agent · ${prettyPath(v.session.directory)}` : prettyPath(v.session.directory));
+      const base = (v.activity === 'background' && v.background !== undefined ? `En attente : ${v.background}` : ACTIVITY_LABEL[v.activity]) || (child ? `Sous-agent · ${prettyPath(v.session.directory)}` : prettyPath(v.session.directory));
       return git === '' ? base : `${base}  ·  ${git}`;
     });
-    const busy = view((v) => v !== null && v.activity !== 'idle');
+    // tâches de fond seules : l'agent ne travaille pas lui-même (rien à interrompre, #184)
+    const busy = view((v) => v !== null && v.activity !== 'idle' && v.activity !== 'background');
     /** l'agent travaille (pas en attente d'une réponse) : spinner en fin de conversation (#180) */
     const working = view((v) => v !== null && isWorking(v.activity));
     // messages annulés par /undo (ici ou dans la TUI) : masqués jusqu'au prochain prompt
@@ -371,6 +373,7 @@ export function createConversationPage(opts: {
             revealed={revealed}
             active={active}
             working={working}
+            workingDetail={view((v) => (v?.activity === 'background' && v.background !== undefined ? `En attente des tâches de fond : ${v.background}` : ''))}
             actions={requestActions}
             showTools={showTools}
             maxWidth={settings.data((d) => d.maxWidth)}

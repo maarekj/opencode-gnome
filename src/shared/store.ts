@@ -19,13 +19,22 @@ export interface SessionEventV2 {
   readonly data: unknown;
 }
 
-export type Activity = 'idle' | 'busy' | 'retry' | 'question' | 'permission';
+/** `background` : tour fini, mais sous-agents ou commandes en arrière-plan encore en cours (#184) */
+export type Activity = 'idle' | 'busy' | 'retry' | 'question' | 'permission' | 'background';
+
+/** Tâches de fond d'une session : sous-agents au travail et commandes shell en cours (#184). */
+export interface Background {
+  readonly subagents: number;
+  readonly shells: number;
+}
 
 export interface SessionView {
   readonly session: Session;
   readonly activity: Activity;
   /** l'agent a fini de répondre et la session n'a pas été ouverte depuis */
   readonly unread: boolean;
+  /** tâches de fond en cours (`activity === 'background'`) : « 2 sous-agents et 1 commande » (#184) */
+  readonly background?: string;
 }
 
 /**
@@ -50,7 +59,13 @@ export interface ProjectView {
 /** L'agent attend une réponse de l'utilisateur. */
 export const isWaiting = (a: Activity): boolean => a === 'question' || a === 'permission';
 /** L'agent travaille. */
-export const isWorking = (a: Activity): boolean => a === 'busy' || a === 'retry';
+export const isWorking = (a: Activity): boolean => a === 'busy' || a === 'retry' || a === 'background';
+
+/** « 2 sous-agents et 1 commande » (infobulles). */
+export function backgroundLabel(b: Background): string {
+  const parts = [b.subagents > 0 ? `${b.subagents} sous-agent${b.subagents > 1 ? 's' : ''}` : '', b.shells > 0 ? `${b.shells} commande${b.shells > 1 ? 's' : ''}` : ''].filter((x) => x !== '');
+  return parts.join(' et ');
+}
 
 /**
  * Le statut, les permissions et les questions sont propres à chaque instance (répertoire) d'opencode.
@@ -103,6 +118,12 @@ interface ActivitySnapshot {
   readonly status: Map<string, 'busy' | 'retry'>;
   readonly permissions: Map<string, Set<string>>;
   readonly questions: Map<string, Set<string>>;
+  /** commandes shell en cours des répertoires relus (#184) */
+  readonly shells: ShellInfo[];
+  /** répertoires dont les commandes ont été relues */
+  readonly shellDirs: string[];
+  /** début de la relecture : les commandes lancées depuis sont gardées */
+  readonly since: number;
 }
 
 export class Store {
@@ -216,8 +237,10 @@ export class Store {
       const activity = await this.#loadActivity(sessions);
       if (gen !== this.#reloadGen) return;
       this.#applyActivity(activity, changes.activity);
-      this.#inheritedCache = null;
-      for (const id of [...this.#permissions.keys(), ...this.#questions.keys()]) this.#discover(id);
+      this.#invalidate();
+      // sous-agents au travail aussi : leur parent attend ses tâches de fond (#184)
+      for (const id of [...this.#permissions.keys(), ...this.#questions.keys(), ...this.#status.keys()]) this.#discover(id);
+      this.#replaceShells(activity);
       this.#publish();
     } catch (e) {
       if (gen === this.#reloadGen) this.#setConnection({ state: 'error', message: errorMessage(e) });
@@ -235,20 +258,25 @@ export class Store {
       Promise.all(
         dirs.map(async (dir) => {
           try {
-            const [permissions, forms] = await Promise.all([this.client.v2.permissions(dir), this.client.v2.forms(dir)]);
-            return { permissions, forms };
+            // commandes : null si illisibles (celles déjà connues du dossier sont alors gardées)
+            const [permissions, forms, shells] = await Promise.all([this.client.v2.permissions(dir), this.client.v2.forms(dir), this.client.v2.shells(dir).catch(() => null)]);
+            return { dir, permissions, forms, shells };
           } catch {
             return null; // répertoire supprimé, instance en erreur… : ignoré
           }
         }),
       ),
     ]);
-    const snapshot: ActivitySnapshot = { status: new Map(), permissions: new Map(), questions: new Map() };
+    const snapshot: ActivitySnapshot = { status: new Map(), permissions: new Map(), questions: new Map(), shells: [], shellDirs: [], since: Date.now() };
     for (const id of Object.keys(statuses)) snapshot.status.set(id, 'busy');
     for (const r of results) {
       if (r === null) continue;
       for (const p of r.permissions) this.#track(snapshot.permissions, p.sessionID, p.id, true);
       for (const q of r.forms) this.#track(snapshot.questions, q.sessionID, q.id, true);
+      if (r.shells !== null) {
+        snapshot.shells.push(...r.shells);
+        snapshot.shellDirs.push(r.dir);
+      }
     }
     return snapshot;
   }
@@ -273,7 +301,7 @@ export class Store {
 
   /** Ajoute / retire une demande en attente d'une session. */
   #track(map: Map<string, Set<string>>, sessionID: string, id: string | undefined, add: boolean): void {
-    this.#inheritedCache = null;
+    this.#invalidate();
     const set = map.get(sessionID) ?? new Set<string>();
     if (add && id !== undefined) set.add(id);
     // id inconnu à la réponse : on considère la session comme répondue
@@ -372,8 +400,8 @@ export class Store {
         if (s.parentID === undefined) this.#roots.add(s.id);
         else {
           this.#children.set(s.id, s);
-    this.#inheritedCache = null;
-          this.#inheritedCache = null;
+    this.#invalidate();
+          this.#invalidate();
           this.#discover(s.parentID);
           this.#publishSoon();
         }
@@ -420,7 +448,7 @@ export class Store {
     const sessionID = sid.success ? sid.data.sessionID : null;
     // conversations ouvertes : tous les événements de leur session (streaming compris)
     if (sessionID !== null) for (const fn of this.#listenersV2.get(sessionID) ?? []) fn({ type, created, data });
-    this.#inheritedCache = null;
+    this.#invalidate();
     switch (type) {
       case 'session.created':
       case 'session.renamed':
@@ -449,6 +477,8 @@ export class Store {
         this.#changes?.activity.add(sessionID);
         this.#status.set(sessionID, 'busy');
         this.#touch(sessionID, created);
+        // sous-agent pas encore vu : son parent attend peut-être ses tâches de fond (#184)
+        this.#discover(sessionID);
         break;
       case 'session.retry.scheduled':
         if (sessionID === null) return;
@@ -490,7 +520,7 @@ export class Store {
       case 'shell.exited':
       case 'shell.deleted': {
         const id = ShellRef.safeParse(data);
-        if (id.success && this.#shells.delete(id.data.id)) this.#setShells([...this.#shells.values()]);
+        if (id.success && this.#shells.delete(id.data.id)) this.#shellsChanged();
         return;
       }
       case 'project.updated': {
@@ -514,17 +544,36 @@ export class Store {
     this.#putShells(list);
   }
 
+  /**
+   * Commandes des répertoires relus remplacées (comme le statut : une fin manquée pendant une
+   * coupure ne laisse pas la session « en attente » pour toujours) ; celles lancées pendant la
+   * relecture sont gardées.
+   */
+  #replaceShells(snapshot: ActivitySnapshot): void {
+    const inside = (cwd: string): boolean => snapshot.shellDirs.some((d) => cwd === d || cwd.startsWith(`${d}/`));
+    const fresh = new Set(snapshot.shells.map((s) => s.id));
+    for (const s of this.#shells.values()) if (inside(s.cwd) && !fresh.has(s.id) && s.time.started < snapshot.since) this.#shells.delete(s.id);
+    this.#putShells(snapshot.shells);
+  }
+
   #putShells(list: readonly ShellInfo[]): void {
     for (const s of list) {
       if (s.status === 'running') this.#shells.set(s.id, s);
       else this.#shells.delete(s.id);
     }
+    this.#shellsChanged();
+  }
+
+  /** Commandes changées : liste publiée, activité des sessions recalculée (tâches de fond, #184). */
+  #shellsChanged(): void {
     this.#setShells([...this.#shells.values()]);
+    this.#invalidate();
+    this.#publishSoon();
   }
 
   /** Commande arrêtée d'ici : retirée sans attendre l'événement du serveur. */
   forgetShell(id: string): void {
-    if (this.#shells.delete(id)) this.#setShells([...this.#shells.values()]);
+    if (this.#shells.delete(id)) this.#shellsChanged();
   }
 
   /** Commandes en cours d'une session. */
@@ -566,7 +615,7 @@ export class Store {
         if (s.time.archived !== undefined) this.#forget(s.id);
         else if (s.parentID === undefined) this.#sessions.set(s.id, s);
         else this.#children.set(s.id, s);
-        this.#inheritedCache = null;
+        this.#invalidate();
         this.#publishSoon();
         return null;
       })
@@ -594,7 +643,51 @@ export class Store {
     if ((this.#questions.get(sessionID)?.size ?? 0) > 0) return 'question';
     if ((this.#permissions.get(sessionID)?.size ?? 0) > 0) return 'permission';
     // remontée des sous-agents : sessions racines seulement (comme avant #157)
-    return (this.#sessions.has(sessionID) ? this.#inherited().get(sessionID) : undefined) ?? this.#status.get(sessionID) ?? 'idle';
+    const own = (this.#sessions.has(sessionID) ? this.#inherited().get(sessionID) : undefined) ?? this.#status.get(sessionID) ?? 'idle';
+    // tour fini, tâches de fond en cours : la session travaille encore (#184)
+    return own === 'idle' && this.#backgroundOf().has(sessionID) ? 'background' : own;
+  }
+
+  /** Tâches de fond en cours d'une session (sous-agents et commandes, descendants compris). */
+  background(sessionID: string): Background {
+    return this.#backgroundOf().get(sessionID) ?? { subagents: 0, shells: 0 };
+  }
+
+  #backgroundCache: ReadonlyMap<string, Background> | null = null;
+
+  /** Activités dérivées (demandes remontées, tâches de fond) à recalculer. */
+  #invalidate(): void {
+    this.#inheritedCache = null;
+    this.#backgroundCache = null;
+  }
+
+  /** Tâches de fond remontées à chaque ancêtre, en partant des sous-agents au travail et des commandes. */
+  #backgroundOf(): ReadonlyMap<string, Background> {
+    if (this.#backgroundCache !== null) return this.#backgroundCache;
+    const out = new Map<string, { subagents: number; shells: number }>();
+    const add = (id: string, key: 'subagents' | 'shells'): void => {
+      const b = out.get(id) ?? { subagents: 0, shells: 0 };
+      b[key] += 1;
+      out.set(id, b);
+    };
+    const ancestors = (id: string): string[] => {
+      const seen = new Set<string>();
+      const up: string[] = [];
+      for (let c = this.#children.get(id); c?.parentID !== undefined && !seen.has(c.id); c = this.#children.get(c.parentID)) {
+        seen.add(c.id);
+        up.push(c.parentID);
+      }
+      return up;
+    };
+    for (const id of this.#status.keys()) for (const a of ancestors(id)) add(a, 'subagents');
+    for (const s of this.#shells.values()) {
+      const id = s.metadata['sessionID'];
+      if (typeof id !== 'string') continue;
+      add(id, 'shells');
+      for (const a of ancestors(id)) add(a, 'shells');
+    }
+    this.#backgroundCache = out;
+    return out;
   }
 
   /**
@@ -634,7 +727,7 @@ export class Store {
     if (this.#children.size > MAX_CHILDREN) {
       // sous-agents en attente et leurs ancêtres gardés : la demande remonte à la session racine
       const keep = new Set<string>();
-      for (const id of [...this.#questions.keys(), ...this.#permissions.keys()])
+      for (const id of [...this.#questions.keys(), ...this.#permissions.keys(), ...this.#status.keys()])
         for (let c = this.#children.get(id); c !== undefined && !keep.has(c.id); c = c.parentID === undefined ? undefined : this.#children.get(c.parentID)) keep.add(c.id);
       const old = [...this.#children.values()].filter((c) => !keep.has(c.id)).toSorted((a, b) => (a.time.updated ?? a.time.created) - (b.time.updated ?? b.time.created));
       for (const c of old.slice(0, this.#children.size - MAX_CHILDREN)) this.#children.delete(c.id);
@@ -661,7 +754,7 @@ export class Store {
   #projectOfSession = new Map<string, string>();
 
   #publish(): void {
-    this.#inheritedCache = null;
+    this.#invalidate();
     this.#byWorktree = new Map([...this.#projects.values()].filter((p) => p.id !== GLOBAL).map((p) => [p.worktree, p]));
     const views = new Map<string, SessionView>();
     const projectOfSession = new Map<string, string>();
@@ -676,9 +769,10 @@ export class Store {
       }
       const activity = this.activity(s.id);
       const unread = this.#unread.has(s.id);
+      const background = activity === 'background' ? backgroundLabel(this.background(s.id)) : undefined;
       // même objet si rien n'a changé : les abonnés en aval ne recalculent pas
       const old = this.#views.get(s.id);
-      const v = old !== undefined && old.session === s && old.activity === activity && old.unread === unread ? old : { session: s, activity, unread };
+      const v = old !== undefined && old.session === s && old.activity === activity && old.unread === unread && old.background === background ? old : { session: s, activity, unread, ...(background === undefined ? {} : { background }) };
       views.set(s.id, v);
       projectOfSession.set(s.id, p.path);
       g.sessions.push(v);

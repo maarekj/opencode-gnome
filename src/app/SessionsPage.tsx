@@ -49,6 +49,8 @@ function activityIcon(view: SessionView): Gtk.Widget | null {
       return new Adw.Spinner({ tooltipText: 'En cours' });
     case 'retry':
       return new Gtk.Image({ iconName: 'view-refresh-symbolic', cssClasses: ['warning'], tooltipText: 'Nouvel essai' });
+    case 'background':
+      return new Gtk.Image({ iconName: 'preferences-system-time-symbolic', cssClasses: ['accent'], tooltipText: `En attente des tâches de fond : ${view.background ?? ''}` });
     case 'question':
       return new Gtk.Image({ iconName: 'help-about-symbolic', cssClasses: ['warning'], tooltipText: 'Question en attente' });
     case 'permission':

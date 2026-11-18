@@ -21,7 +21,8 @@ export interface StateEntry {
 /** Groupe d'une session ; null : inactive et sans réponse à lire, absente de l'en-tête. */
 export function groupOf(view: SessionView, open: boolean, toRead: boolean): StateGroup | null {
   if (view.activity === 'question' || view.activity === 'permission') return 'action';
-  if (view.activity === 'busy' || view.activity === 'retry') return 'working';
+  // tâches de fond comprises (#184) ; pas d'import de store.ts (specs sans gnim)
+  if (view.activity === 'busy' || view.activity === 'retry' || view.activity === 'background') return 'working';
   return open && toRead ? 'toread' : null;
 }
 

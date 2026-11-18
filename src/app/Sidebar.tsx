@@ -272,6 +272,9 @@ export function treeActivity(view: SessionView): JSX.Element {
       return <Adw.Spinner tooltipText="En cours" />;
     case 'retry':
       return <Gtk.Image iconName="view-refresh-symbolic" cssClasses={['warning']} tooltipText="Nouvel essai" />;
+    case 'background':
+      // tour fini, sous-agents ou commandes encore en cours (#184)
+      return <Gtk.Image iconName="preferences-system-time-symbolic" cssClasses={['accent']} tooltipText={`En attente des tâches de fond : ${view.background ?? ''}`} />;
     case 'question':
       return <Gtk.Image iconName="help-about-symbolic" cssClasses={['warning']} tooltipText="Question en attente" />;
     case 'permission':
