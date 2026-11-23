@@ -37,6 +37,24 @@ const which = (bin: string): string => {
 };
 /** Dossiers des outils de la voix (paquets Nix du shell devenv) : le lanceur ne reprend pas le PATH. */
 const voiceTools = [...new Set(['whisper-cli', 'piper', 'pw-record'].map((b) => path.dirname(which(b))))].join(':');
+/**
+ * Schémas GSettings des paquets Nix du shell devenv (GTK 4…) : sans eux, le sélecteur d'émojis
+ * (Ctrl+; dans une zone de texte) ne trouve pas son schéma et GLib tue l'application (#185).
+ */
+const schemaDirs = [
+  ...new Set(
+    (process.env['XDG_DATA_DIRS'] ?? '')
+      .split(':')
+      .filter((d) => d.startsWith('/nix/store/'))
+      .flatMap((d) => {
+        // soit l'entrée pointe déjà dans gsettings-schemas, soit c'est un `share` qui en contient
+        const nested = path.join(d, 'gsettings-schemas');
+        const sub = fs.existsSync(nested) ? fs.readdirSync(nested).map((n) => path.join(nested, n)) : [];
+        return [d, ...sub].map((b) => path.join(b, 'glib-2.0', 'schemas'));
+      })
+      .filter((d) => fs.existsSync(path.join(d, 'gschemas.compiled'))),
+  ),
+].join(':');
 /** Valeur d'unité systemd entre guillemets, `%` littéral. */
 const unitQuote = (s: string): string => `"${s.replaceAll('%', '%%').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 const shq = (s: string): string => `'${s.replaceAll("'", String.raw`'\''`)}'`;
@@ -161,6 +179,8 @@ export OCG_NAMESPACE=${shq(variant)}
 export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
 # voix : whisper-cli, piper, pw-record / pw-play des paquets Nix de l'app (dictée, lecture)
 export OPENCODE_GNOME_TOOLS_PATH=${shq(voiceTools)}
+# schémas GSettings du GTK 4 de l'app (sélecteur d'émojis… ; schéma manquant = abandon du processus)
+export GSETTINGS_SCHEMA_DIR=${shq(schemaDirs)}\${GSETTINGS_SCHEMA_DIR:+:$GSETTINGS_SCHEMA_DIR}
 exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "$@"
 `,
   0o755,
