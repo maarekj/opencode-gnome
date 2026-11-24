@@ -6,6 +6,7 @@ import { createMemo, createState, onCleanup } from 'gnim';
 import { errorMessage, HttpError } from '../shared/errors.ts';
 import { esc } from '../shared/format.ts';
 import type { Session } from '../shared/schemas.ts';
+import { zellijInstalled } from '../shared/terminals.ts';
 import { isWorking, prettyPath, type Activity, type ProjectView, type Store } from '../shared/store.ts';
 import { attachArgv, attachCommand, openTerminal, openTerminalArgv } from '../shared/terminal.ts';
 import { createConversationPage, sessionTag, subagentTag, type ConversationPageHandle } from './ConversationPage.tsx';
@@ -14,13 +15,14 @@ import { openExtensions } from './ExtensionsDialog.ts';
 import { reloadProjectConfig } from './ReloadConfig.ts';
 import { type TasksMonitor } from './TasksWindow.tsx';
 import { TerminalManager } from '../shared/terminals.ts';
-import { type TerminalContext } from './TerminalBar.tsx';
+import { terminalActions, type TerminalContext } from './TerminalBar.tsx';
 import { devenvAction, devenvDir, devenvStatus, phaseKind } from '../shared/devenv.ts';
 import { TerminalDock } from './TerminalPanel.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { openShortcuts } from './HelpWindows.tsx';
 import { openPreferences } from './PreferencesDialog.tsx';
-import { openQuickPanel } from './QuickPanel.ts';
+import { browserFor, openLink } from './LinkBar.tsx';
+import { openQuickPanel, type QuickTool } from './QuickPanel.ts';
 import { openSearch } from './SearchDialog.ts';
 import { initVoice, escapeStopsVoice } from './Voice.ts';
 import { SearchIndex } from '../shared/search.ts';
@@ -592,6 +594,8 @@ export function MainWindow({
       if (win === null) return;
       openQuickPanel(win, {
         projects: () => store.projects.peek(),
+        tools: quickTools,
+        currentProject: () => current.peek()?.path ?? null,
         openSession: actions.openSession,
         openProject: select,
         actions: [
@@ -640,6 +644,32 @@ export function MainWindow({
     },
     openSearch: openSearchNow,
   });
+  /** Terminaux persistants et liens épinglés de tous les projets, pour le panneau Ctrl+P. */
+  function quickTools(): readonly QuickTool[] {
+    const d = settings.data.peek();
+    const names = new Map(store.projects.peek().map((p) => [p.path, p.name]));
+    const nameOf = (path: string): string => names.get(path) ?? GLib.path_get_basename(path);
+    const out: QuickTool[] = [];
+    if (zellijInstalled()) {
+      for (const [path, list] of Object.entries(d.terminals))
+        for (const t of list)
+          out.push({ kind: 'terminal', label: t.name, detail: t.command === '' ? 'shell' : t.command, project: nameOf(path), projectPath: path, run: () => terminalActions(t, path, terminals).open() });
+    }
+    for (const [path, list] of Object.entries(d.links))
+      for (const l of list)
+        out.push({
+          kind: 'link',
+          label: l.name,
+          detail: l.url,
+          project: nameOf(path),
+          projectPath: path,
+          run: () => {
+            openLink(l, path, browserFor(settings, path)).catch((e: unknown) => toast(`${l.name} : ${errorMessage(e)}`));
+          },
+        });
+    return out;
+  }
+
   function openSearchNow(): void {
     if (win === null) return;
     openSearch(win, {

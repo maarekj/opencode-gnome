@@ -43,3 +43,28 @@ def test_aucun_resultat(run_app):
     open_panel(app)
     app.type('zzzzzzzz')
     assert app.text_visible('Rien ne correspond')
+
+
+DEMO = '/tmp/opencode-fake/demo'
+TOOLS = {
+    'links': {DEMO: [{'id': 'l1', 'name': 'Front local', 'url': 'http://localhost:8080'}]},
+    'terminals': {DEMO: [{'id': 't1', 'name': 'Serveur dev', 'command': 'pnpm start'}]},
+}
+
+
+def test_terminaux_et_liens_du_projet_courant(run_app):
+    _, app = run_app(scenario('demo'), '--session', 'ses_a', settings=TOOLS)
+    open_panel(app)
+    # champ vide : terminaux et liens du projet affiché
+    app.find('label', 'Terminaux')
+    app.find('label', 'Serveur dev')
+    app.find('label', 'Liens')
+    app.find('label', 'Front local')
+
+
+def test_ouvrir_un_lien_au_clavier(run_app):
+    _, app = run_app(scenario('demo'), '--session', 'ses_a', settings=TOOLS)
+    open_panel(app)
+    app.type('front')
+    app.key('Return')
+    assert app.logged('LIEN', 'localhost:8080')

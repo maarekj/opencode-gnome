@@ -19,8 +19,25 @@ export interface QuickAction {
   readonly run: () => void;
 }
 
+/** Terminal persistant ou lien épinglé d'un projet. */
+export interface QuickTool {
+  readonly kind: 'terminal' | 'link';
+  readonly label: string;
+  /** commande ou adresse, affichée en grisé */
+  readonly detail: string;
+  /** nom du projet */
+  readonly project: string;
+  /** chemin du projet */
+  readonly projectPath: string;
+  readonly run: () => void;
+}
+
 export interface QuickOptions {
   readonly projects: () => readonly ProjectView[];
+  /** terminaux persistants et liens épinglés de tous les projets */
+  readonly tools: () => readonly QuickTool[];
+  /** chemin du projet affiché (champ vide : seuls ses terminaux et liens sont proposés) */
+  readonly currentProject: () => string | null;
   readonly openSession: (sessionID: string) => void;
   readonly openProject: (key: string) => void;
   readonly actions: readonly QuickAction[];
@@ -163,6 +180,15 @@ export function openQuickPanel(parent: Gtk.Widget, o: QuickOptions): void {
         header('Sessions');
         for (const { v, p } of found) sessionRow(v, p);
       }
+    }
+
+    // champ vide : terminaux et liens du projet courant ; recherche : ceux de tous les projets
+    const tools = query.length === 0 ? o.tools().filter((t) => t.projectPath === o.currentProject()) : o.tools().filter((t) => matches(`${t.label} ${t.detail} ${t.project}`, query));
+    for (const [kind, title, icon] of [['terminal', 'Terminaux', 'utilities-terminal-symbolic'], ['link', 'Liens', 'web-browser-symbolic']] as const) {
+      const found = tools.filter((t) => t.kind === kind);
+      if (found.length === 0) continue;
+      header(title);
+      for (const t of found) row(icon, t.label, [dim(t.detail), dim(t.project)], `${t.project} — ${t.detail}`, t.run);
     }
 
     const foundActions = query.length === 0 ? o.actions : o.actions.filter((a) => matches(a.label, query));
