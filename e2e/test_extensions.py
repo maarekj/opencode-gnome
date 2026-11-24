@@ -97,3 +97,12 @@ def test_plugins_projet_et_global(run_app):
     app.click('page tab', 'Plugins')
     app.find(None, contains='opencode-wakatime')
     app.find(None, contains='local.ts')
+
+
+def test_bouton_depuis_une_session(run_app):
+    """L'en-tête d'une session ouverte a aussi le bouton « MCP, skills et plugins » (#186)."""
+    _, app = run_app(data())
+    app.click('list item', 'ext')
+    app.click('list item', 'Extensions')
+    app.click('button', 'MCP, skills et plugins du projet')
+    app.find('dialog', 'MCP, skills et plugins — ext')

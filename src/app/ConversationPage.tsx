@@ -16,6 +16,7 @@ import { Composer, type Choice, type ComposerProps } from './Composer.tsx';
 import { IdeButton } from './Ide.ts';
 import { ProjectBar } from './ProjectBar.tsx';
 import { reviewTarget } from './SessionsPage.tsx';
+import { openExtensions } from './ExtensionsDialog.ts';
 import { openFolder } from './OpenFolder.ts';
 import type { SessionActions } from './SessionMenu.ts';
 import { ConversationView } from './ConversationView.tsx';
@@ -315,6 +316,12 @@ export function createConversationPage(opts: {
               iconName="og-git-symbolic"
               tooltipText="Git : modifications, journal, branches"
               onClicked={openDiff}
+            />
+            <Gtk.Button
+              $type="end"
+              iconName="application-x-addon-symbolic"
+              tooltipText="MCP, skills et plugins du projet"
+              onClicked={(self: Gtk.Button) => openExtensions(self, store.client, projectPath.peek() ?? dir())}
             />
             {aside === null ? null : (
               <Gtk.ToggleButton
