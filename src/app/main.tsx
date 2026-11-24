@@ -213,6 +213,15 @@ searchAction.connect('activate', () => {
 app.add_action(searchAction);
 app.set_accels_for_action('app.search', ['<Control><Shift>f']);
 
+/** app.quick : panneau d'actions rapide (Ctrl+P) — sessions à suivre, projets, actions */
+const quickAction = new Gio.SimpleAction({ name: 'quick' });
+quickAction.connect('activate', () => {
+  if (mainWindow === null) app.activate();
+  api?.openQuick();
+});
+app.add_action(quickAction);
+app.set_accels_for_action('app.quick', ['<Control>p']);
+
 // ------------------------------------------------------------------ fenêtre
 
 app.connect('startup', () => {

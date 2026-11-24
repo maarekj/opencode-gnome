@@ -18,6 +18,9 @@ import { type TerminalContext } from './TerminalBar.tsx';
 import { devenvAction, devenvDir, devenvStatus, phaseKind } from '../shared/devenv.ts';
 import { TerminalDock } from './TerminalPanel.tsx';
 import { Sidebar } from './Sidebar.tsx';
+import { openShortcuts } from './HelpWindows.tsx';
+import { openPreferences } from './PreferencesDialog.tsx';
+import { openQuickPanel } from './QuickPanel.ts';
 import { openSearch } from './SearchDialog.ts';
 import { initVoice, escapeStopsVoice } from './Voice.ts';
 import { SearchIndex } from '../shared/search.ts';
@@ -115,6 +118,8 @@ export interface WindowApi {
   currentDirectory: () => string | null;
   /** recherche dans toutes les conversations (Ctrl+Maj+F) */
   openSearch: () => void;
+  /** panneau d'actions rapide (Ctrl+P) */
+  openQuick: () => void;
   /** panneau de la question annexe de la session affichée (Ctrl+Maj+A) */
   toggleAside: () => void;
 }
@@ -583,19 +588,70 @@ export function MainWindow({
       const id = shownSession();
       if (id !== null) pages.get(id)?.toggleAside();
     },
-    openSearch: () => {
+    openQuick: () => {
       if (win === null) return;
-      openSearch(win, {
-        index: searchIndex,
-        projects: () => allProjects.peek(),
-        project: null,
-        open: (sessionID, messageID, partID) => {
-          actions.openSession(sessionID);
-          if (messageID !== null) pages.get(sessionID)?.reveal(messageID, partID ?? undefined);
-        },
+      openQuickPanel(win, {
+        projects: () => store.projects.peek(),
+        openSession: actions.openSession,
+        openProject: select,
+        actions: [
+          {
+            icon: 'tab-new-symbolic',
+            label: 'Nouvelle session',
+            detail: current.peek()?.name ?? '',
+            run: () => {
+              const dir = current.peek()?.path;
+              if (dir !== undefined) actions.newSession(dir);
+            },
+          },
+          { icon: 'system-search-symbolic', label: 'Rechercher dans les conversations', detail: 'Ctrl+Maj+F', run: openSearchNow },
+          {
+            icon: 'preferences-system-symbolic',
+            label: 'Préférences',
+            detail: 'Ctrl+,',
+            run: () => {
+              if (win !== null) openPreferences(win, settings, store.client.providers(GLib.get_home_dir()));
+            },
+          },
+          {
+            icon: 'application-x-addon-symbolic',
+            label: 'MCP, skills et plugins (global)',
+            run: () => {
+              if (win !== null) openExtensions(win, store.client, null);
+            },
+          },
+          {
+            icon: 'alarm-symbolic',
+            label: 'Tâches planifiées',
+            run: () => {
+              win?.get_application()?.activate_action('tasks', GLib.Variant.new_string('tasks'));
+            },
+          },
+          {
+            icon: 'preferences-desktop-keyboard-shortcuts-symbolic',
+            label: 'Raccourcis clavier',
+            detail: 'Ctrl+?',
+            run: () => {
+              if (win !== null) openShortcuts(win);
+            },
+          },
+        ],
       });
     },
+    openSearch: openSearchNow,
   });
+  function openSearchNow(): void {
+    if (win === null) return;
+    openSearch(win, {
+      index: searchIndex,
+      projects: () => allProjects.peek(),
+      project: null,
+      open: (sessionID, messageID, partID) => {
+        actions.openSession(sessionID);
+        if (messageID !== null) pages.get(sessionID)?.reveal(messageID, partID ?? undefined);
+      },
+    });
+  }
 
   /** Ligne mise en évidence dans la barre latérale : session affichée, sinon projet courant. */
   const [shown, setShown] = createState('');
