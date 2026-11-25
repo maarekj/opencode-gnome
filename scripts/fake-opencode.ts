@@ -135,6 +135,16 @@ class State {
     this.active = new Set(s.active ?? []);
     this.mcp = structuredClone(s.mcp ?? []);
     this.failOnce = new Set(s.failOnce ?? []);
+    // les dossiers des projets et des sessions existent sur disque : l'app vérifie avant
+    // d'ouvrir un dossier ou d'y lancer devenv (« Dossier introuvable » sinon)
+    for (const p of s.projects ?? []) this.#mkdir(p['canonical']);
+    for (const ses of s.sessions ?? []) this.#mkdir((ses['location'] as Record<string, unknown> | undefined)?.['directory']);
+  }
+
+  /** Crée un dossier de scénario (sous /tmp/opencode-fake seulement). */
+  #mkdir(dir: unknown): void {
+    if (typeof dir !== 'string' || !dir.startsWith('/tmp/opencode-fake/')) return;
+    fs.mkdirSync(dir, { recursive: true });
   }
 
   /** Identifiant croissant (« z » : après les identifiants des scénarios `msg_001`…). */

@@ -290,7 +290,8 @@ function startStreamed(dir: string, what: string, action: 'up' | 'start', name: 
 /** abonnés au début / à la fin des démarrages d'un dossier */
 const startListeners = new Map<string, Set<() => void>>();
 
-function onStarts(widget: Gtk.Widget, dir: string, fn: () => void): void {
+/** Appelle `fn` au début et à la fin de chaque démarrage (devenv up) du dossier. */
+export function onDevenvStarts(widget: Gtk.Widget, dir: string, fn: () => void): void {
   const add = (): void => {
     const set = startListeners.get(dir) ?? new Set();
     set.add(fn);
@@ -324,7 +325,7 @@ function dot(kind: PhaseKind): Gtk.Widget {
  * Panneau des services de `d` : liste avec état et actions, tout démarrer / tout arrêter.
  * `visible(on)` : à appeler à l'ouverture / fermeture (relecture rapide pendant l'affichage).
  */
-export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContext): { widget: Gtk.Widget; visible: (on: boolean) => void } {
+export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContext, opts: { restartAll?: boolean } = {}): { widget: Gtk.Widget; visible: (on: boolean) => void } {
   const dir = devenvDir(d, project);
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6, marginTop: 6, marginBottom: 6, marginStart: 6, marginEnd: 6, widthRequest: 380 });
   const head = new Gtk.Box({ spacing: 6 });
@@ -332,8 +333,11 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
   title.set_markup(`<b>${GLib.markup_escape_text(d.name, -1)}</b>  <span alpha="60%">${GLib.markup_escape_text(prettyPath(dir), -1)}</span>`);
   head.append(title);
   const all = new Gtk.Button({ cssClasses: ['flat'] });
+  // « Tout redémarrer » : pas dans un dossier déplié, la ligne au-dessus l'a déjà (#190)
+  const restartAll = opts.restartAll === false ? null : new Gtk.Button({ iconName: 'system-reboot-symbolic', tooltipText: 'Redémarrer tous les services', cssClasses: ['flat', 'circular'], visible: false });
   const refresh = new Gtk.Button({ iconName: 'view-refresh-symbolic', tooltipText: 'Relire l’état des services', cssClasses: ['flat', 'circular'] });
   head.append(all);
+  if (restartAll !== null) head.append(restartAll);
   head.append(refresh);
   box.append(head);
   const list = new Gtk.ListBox({ selectionMode: Gtk.SelectionMode.NONE, cssClasses: ['boxed-list'] });
@@ -363,7 +367,7 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
     });
     render();
   };
-  onStarts(box, dir, showProgress);
+  onDevenvStarts(box, dir, showProgress);
   box.connect('map', showProgress);
   box.connect('unmap', () => {
     started?.listeners.delete(showProgress);
@@ -405,7 +409,7 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
     else if (kind === 'stopped' || kind === 'failed') button('media-playback-start-symbolic', `Démarrer ${p.name}`, () => act(`Démarrage de ${p.name}…`, () => devenvAction(dir, 'start', p.name)));
     else button('media-playback-stop-symbolic', `Arrêter ${p.name}`, () => act(`Arrêt de ${p.name}…`, () => devenvAction(dir, 'stop', p.name)), ['terminal-stop']);
     if (managerOn) {
-      button('view-refresh-symbolic', `Redémarrer ${p.name}`, () => act(`Redémarrage de ${p.name}…`, () => devenvAction(dir, 'restart', p.name)));
+      button('system-reboot-symbolic', `Redémarrer ${p.name}`, () => act(`Redémarrage de ${p.name}…`, () => devenvAction(dir, 'restart', p.name)));
       button('text-x-generic-symbolic', `Logs de ${p.name}`, () => openLogs(box, dir, p.name));
     }
     return r;
@@ -423,6 +427,10 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
     list.remove_all();
     const running = state?.kind === 'running';
     all.sensitive = effectiveBusy === null && state !== null;
+    if (restartAll !== null) {
+      restartAll.visible = running;
+      restartAll.sensitive = effectiveBusy === null;
+    }
     all.child = new Adw.ButtonContent({ label: running ? 'Tout arrêter' : 'Tout démarrer', iconName: running ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic' });
     all.tooltipText = running ? 'Arrêter le process manager et tous les services (devenv processes down)' : 'Démarrer tous les services en arrière-plan (devenv up --detach)';
     const rows: DevenvProcess[] = state?.kind === 'running' ? [...state.processes] : state?.kind === 'stopped' ? cached().map((name) => ({ name, phase: 'stopped', restarts: 0 })) : [];
@@ -443,6 +451,7 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
               : '');
     message.visible = message.label !== '';
   };
+  restartAll?.connect('clicked', () => act('Redémarrage de tous les services…', () => devenvAction(dir, 'restart')));
   all.connect('clicked', () => {
     if (state?.kind === 'running') act('Arrêt de tous les services…', () => devenvAction(dir, 'down'));
     // devenv up évalue la configuration Nix : peut prendre plusieurs dizaines de secondes ; sortie suivie
@@ -458,22 +467,15 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
   return { widget: box, visible: (on) => watcher?.fast(on) };
 }
 
-/** Panneau dans un dialogue (depuis le menu d'un dossier). */
-export function openDevenvDialog(parent: Gtk.Widget, d: ProjectDevenv, project: string, ctx: DevenvContext): void {
-  const panel = DevenvPanel(d, project, ctx);
-  const dialog = new Adw.Dialog({ title: d.name, contentWidth: 560 });
-  // marges : le panneau est conçu pour un popover, collé aux bords dans un dialogue
-  const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, marginStart: 18, marginEnd: 18, marginBottom: 18 });
-  body.append(panel.widget);
-  const toolbar = new Adw.ToolbarView({ content: body });
-  toolbar.add_top_bar(new Adw.HeaderBar());
-  dialog.child = toolbar;
-  panel.visible(true);
-  dialog.connect('closed', () => panel.visible(false));
-  dialog.present(parent);
+// ------------------------------------------------------------------ pastille
+
+/** Démarre tous les services (devenv up), sortie suivie par les panneaux ouverts. */
+export function startAllServices(d: ProjectDevenv, project: string, ctx: DevenvContext): void {
+  startStreamed(devenvDir(d, project), 'Démarrage de tous les services (devenv up)…', 'up', undefined, d.name, ctx, noop);
 }
 
-// ------------------------------------------------------------------ pastille
+/** Un démarrage (devenv up) est en cours dans ce dossier. */
+export const devenvStarting = (dir: string): boolean => starts.has(dir);
 
 /** Menu contextuel d'un élément devenv. */
 export function devenvMenu(widget: Gtk.Widget, d: ProjectDevenv, project: string, ctx: DevenvContext, extra: () => readonly (readonly MenuItem[])[] = () => [], host?: MenuHost): void {
@@ -481,7 +483,7 @@ export function devenvMenu(widget: Gtk.Widget, d: ProjectDevenv, project: string
   attachContextMenu(widget, () =>
     hosted(host, [
       [
-        { label: 'Tout démarrer', activate: () => startStreamed(devenvDir(d, project), 'Démarrage de tous les services (devenv up)…', 'up', undefined, d.name, ctx, noop) },
+        { label: 'Tout démarrer', activate: () => startAllServices(d, project, ctx) },
         { label: 'Tout arrêter', activate: () => void devenvAction(devenvDir(d, project), 'down').catch((e: unknown) => ctx.toast(`${d.name} : ${errorMessage(e)}`)) },
       ],
       [
@@ -513,7 +515,7 @@ export function devenvStatusWidget(d: ProjectDevenv, project: string, ctx: Deven
     remember(ctx, project, d.id, s);
     show();
   });
-  onStarts(box, dir, show);
+  onDevenvStarts(box, dir, show);
   return box;
 }
 

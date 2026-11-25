@@ -500,3 +500,40 @@ def test_choisir_le_layout_d_un_terminal(run_app):
     app.click('button', 'Ajouter', within=dialog)
     t = wait_until(lambda: terminals(app)[:1], 5, 'terminal enregistré')[0]
     assert t['layout'] == 'compact'
+
+
+FOLDER_DEVENV = {**DEVENV, 'layout': {DIR: [{'folder': 'f1', 'name': 'worktrees', 'items': [{'devenv': 'd1'}]}]}}
+
+
+def test_devenv_deplie_dans_le_dossier(run_app, tmp_path):
+    """#190 : dans le popover d'un dossier, le devenv se déplie sur place et a ses boutons globaux."""
+    state, env = fake_devenv(tmp_path, running=True)
+    _, app = project(run_app, settings=FOLDER_DEVENV, env=env)
+    app.click('toggle button', contains='Dossier « worktrees »')
+    # services dépliés dans le popover, sans modale
+    app.click('button', contains='clic pour déplier')
+    app.find('label', 'postgres')
+    assert not app.has('dialog', 'services')
+    # ça tourne : redémarrer puis arrêter tous les services
+    app.click('button', 'Redémarrer tous les services de services')
+    wait_until(lambda: 'processes restart @' in calls(state), 5, 'devenv processes restart')
+    app.click('button', 'Arrêter tous les services de services')
+    wait_until(lambda: 'processes down' in calls(state), 5, 'devenv processes down')
+
+
+def test_devenv_demarrer_depuis_le_dossier(run_app, tmp_path):
+    state, env = fake_devenv(tmp_path, running=False)
+    _, app = project(run_app, settings=FOLDER_DEVENV, env=env)
+    app.click('toggle button', contains='Dossier « worktrees »')
+    # arrêté : seul « Démarrer » est proposé
+    app.click('button', contains='Démarrer tous les services de services')
+    wait_until(lambda: 'up --detach --no-tui' in calls(state), 10, f'devenv up : {calls(state)!r}')
+
+
+def test_devenv_tout_redemarrer_depuis_la_pastille(run_app, tmp_path):
+    """#190 : le panneau d'une pastille devenv a un bouton « Tout redémarrer » (icône distincte de « Relire »)."""
+    state, env = fake_devenv(tmp_path, running=True)
+    _, app = project(run_app, settings=DEVENV, env=env)
+    app.click('toggle button', contains='devenv « services »')
+    app.click('button', 'Redémarrer tous les services')
+    wait_until(lambda: 'processes restart @' in calls(state), 5, 'devenv processes restart')

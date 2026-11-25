@@ -9,11 +9,12 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, onCleanup, type Accessor } from 'gnim';
 import { addFolder, folderId, moveEntry, removeFolder, renameFolder, type FolderEntry, type ItemRef } from '../shared/layout.ts';
-import { devenvDir, devenvInstalled, phaseKind } from '../shared/devenv.ts';
+import { devenvAction, devenvDir, devenvInstalled, phaseKind, type DevenvState } from '../shared/devenv.ts';
+import { errorMessage } from '../shared/errors.ts';
 import { layoutOf, type ProjectDevenv, type ProjectLink, type ProjectTerminal } from '../shared/settings.ts';
 import { zellijInstalled } from '../shared/terminals.ts';
 import { attachContextMenu, labelMenuButton, type MenuItem } from './ContextMenu.ts';
-import { askDevenv, DevenvPill, devenvMenu, devenvStatusWidget, openDevenvDialog, watchWhileMapped } from './DevenvItem.tsx';
+import { askDevenv, DevenvPanel, DevenvPill, devenvMenu, devenvStarting, devenvStatusWidget, onDevenvStarts, startAllServices, watchWhileMapped } from './DevenvItem.tsx';
 import { foldersOf } from './FolderChoice.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { askLink, BrowserButton, LinkPill, type LinkContext } from './LinkBar.tsx';
@@ -125,17 +126,52 @@ function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () =
       row.append(stop);
     }
   } else if (item.kind === 'devenv') {
-    // panneau des services dans un dialogue (pas de menu dans le menu)
+    // clic : services dépliés sur place (#190) ; boutons globaux selon l'état du process manager
     const { d } = item;
+    const dir = devenvDir(d, bar.project);
     content.append(new Gtk.Image({ iconName: 'system-run-symbolic', pixelSize: 14 }));
     content.append(new Gtk.Label({ label: d.name, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END }));
     content.append(devenvStatusWidget(d, bar.project, bar.links));
-    main.tooltipText = 'Services devenv : état, démarrer, arrêter, logs';
+    main.tooltipText = `Services devenv de « ${d.name} » : clic pour déplier`;
+    main.update_property([Gtk.AccessibleProperty.LABEL], [main.tooltipText]);
+    const revealer = new Gtk.Revealer({ transitionType: Gtk.RevealerTransitionType.SLIDE_DOWN });
+    let panel: { widget: Gtk.Widget; visible: (on: boolean) => void } | null = null;
     main.connect('clicked', () => {
-      close();
-      openDevenvDialog(anchor, d, bar.project, bar.links);
+      // pas de « Tout redémarrer » dans l'en-tête : la ligne au-dessus l'a déjà
+      panel ??= DevenvPanel(d, bar.project, bar.links, { restartAll: false });
+      revealer.child ??= panel.widget;
+      revealer.revealChild = !revealer.revealChild;
+      panel.visible(revealer.revealChild);
     });
     devenvMenu(main, d, bar.project, bar.links, extra, host);
+    const oops = (e: unknown): void => bar.links.toast(`${d.name} : ${errorMessage(e)}`);
+    const start = new Gtk.Button({ iconName: 'media-playback-start-symbolic', tooltipText: `Démarrer tous les services de ${d.name} (devenv up)`, cssClasses: ['flat', 'circular'] });
+    start.connect('clicked', () => startAllServices(d, bar.project, bar.links));
+    const restart = new Gtk.Button({ iconName: 'system-reboot-symbolic', tooltipText: `Redémarrer tous les services de ${d.name}`, cssClasses: ['flat', 'circular'] });
+    restart.connect('clicked', () => void devenvAction(dir, 'restart').catch(oops));
+    const stop = new Gtk.Button({ iconName: 'media-playback-stop-symbolic', tooltipText: `Arrêter tous les services de ${d.name}`, cssClasses: ['flat', 'circular', 'terminal-stop'] });
+    stop.connect('clicked', () => void devenvAction(dir, 'down').catch(oops));
+    row.append(start);
+    row.append(restart);
+    row.append(stop);
+    // boutons selon l'état : démarrer quand c'est arrêté, redémarrer / arrêter quand ça tourne
+    let devState: DevenvState | null = null;
+    const syncButtons = (): void => {
+      const on = devState?.kind === 'running';
+      start.visible = !on && !devenvStarting(dir);
+      restart.visible = on;
+      stop.visible = on;
+    };
+    watchWhileMapped(row, dir, (s) => {
+      devState = s;
+      syncButtons();
+    });
+    // le début et la fin d'un devenv up ne changent pas l'état tout de suite
+    onDevenvStarts(row, dir, syncButtons);
+    const block = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    block.append(row);
+    block.append(revealer);
+    return block;
   } else {
     // même pastille que dans la barre (ouverture, navigateurs, copie, modifier, supprimer)
     const pill = LinkPill({ link: item.link, project: bar.project, dir: bar.dir, ctx: bar.links, extra, host });
