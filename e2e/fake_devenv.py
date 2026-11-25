@@ -52,6 +52,10 @@ if not s['running']:
     print('  \x1b[31m×\x1b[0m No process manager is running. Start processes first with `devenv up -d`', file=sys.stderr)
     sys.exit(1)
 name = rest[0] if rest else None
+# comme le vrai devenv : start / stop / restart exigent un nom de service
+if cmd in ('start', 'stop', 'restart') and name is None:
+    print('error: the following required arguments were not provided:\n  <NAME>', file=sys.stderr)
+    sys.exit(2)
 if cmd == 'list':
     for k, v in s['processes'].items():
         ports = ' ports: main:5432' if k == 'postgres' else ''

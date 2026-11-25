@@ -6,7 +6,7 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createState, type Accessor, type Setter } from 'gnim';
-import { devenvAction, devenvDir, devenvLogs, devenvStatus, devenvStream, phaseKind, phaseLabel, refreshedServices, summary, type DevenvProcess, type DevenvState, type PhaseKind } from '../shared/devenv.ts';
+import { devenvAction, devenvDir, devenvLogs, devenvRestartAll, devenvStatus, devenvStream, phaseKind, phaseLabel, refreshedServices, summary, type DevenvProcess, type DevenvState, type PhaseKind } from '../shared/devenv.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { ProjectDevenv, Settings } from '../shared/settings.ts';
 import { prettyPath } from '../shared/store.ts';
@@ -451,7 +451,7 @@ export function DevenvPanel(d: ProjectDevenv, project: string, ctx: DevenvContex
               : '');
     message.visible = message.label !== '';
   };
-  restartAll?.connect('clicked', () => act('Redémarrage de tous les services…', () => devenvAction(dir, 'restart')));
+  restartAll?.connect('clicked', () => act('Redémarrage de tous les services…', () => devenvRestartAll(dir)));
   all.connect('clicked', () => {
     if (state?.kind === 'running') act('Arrêt de tous les services…', () => devenvAction(dir, 'down'));
     // devenv up évalue la configuration Nix : peut prendre plusieurs dizaines de secondes ; sortie suivie

@@ -125,6 +125,21 @@ export async function devenvAction(dir: string, action: 'up' | 'down' | 'start' 
 }
 
 /**
+ * Redémarre tous les services, un par un : `devenv processes restart` exige un nom (#191).
+ * Exception au premier échec, avec le nom du service fautif.
+ */
+export async function devenvRestartAll(dir: string): Promise<void> {
+  const state = await devenvStatus(dir);
+  if (state.kind !== 'running') throw new Error('le process manager ne tourne pas');
+  for (const p of state.processes) {
+    // oxlint-disable-next-line no-await-in-loop -- un service à la fois, dans l'ordre
+    await devenvAction(dir, 'restart', p.name).catch((e: unknown) => {
+      throw new Error(`${p.name} : ${e instanceof Error ? e.message : String(e)}`);
+    });
+  }
+}
+
+/**
  * Action longue (démarrage : évaluation Nix, construction) dont la sortie est suivie ligne à ligne
  * (`onLine`) : `up` = tout démarrer, `start` + nom = un service (démarre le process manager au besoin).
  */

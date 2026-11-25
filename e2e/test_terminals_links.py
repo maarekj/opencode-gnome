@@ -516,7 +516,8 @@ def test_devenv_deplie_dans_le_dossier(run_app, tmp_path):
     assert not app.has('dialog', 'services')
     # ça tourne : redémarrer puis arrêter tous les services
     app.click('button', 'Redémarrer tous les services de services')
-    wait_until(lambda: 'processes restart @' in calls(state), 5, 'devenv processes restart')
+    # restart exige un nom : chaque service est redémarré individuellement (#191)
+    wait_until(lambda: all(f'processes restart {n}' in calls(state) for n in ('postgres', 'web', 'worker')), 5, 'chaque service redémarré')
     app.click('button', 'Arrêter tous les services de services')
     wait_until(lambda: 'processes down' in calls(state), 5, 'devenv processes down')
 
@@ -536,4 +537,4 @@ def test_devenv_tout_redemarrer_depuis_la_pastille(run_app, tmp_path):
     _, app = project(run_app, settings=DEVENV, env=env)
     app.click('toggle button', contains='devenv « services »')
     app.click('button', 'Redémarrer tous les services')
-    wait_until(lambda: 'processes restart @' in calls(state), 5, 'devenv processes restart')
+    wait_until(lambda: all(f'processes restart {n}' in calls(state) for n in ('postgres', 'web', 'worker')), 5, 'chaque service redémarré')

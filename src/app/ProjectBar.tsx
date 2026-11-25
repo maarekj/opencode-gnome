@@ -9,7 +9,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createComputed, onCleanup, type Accessor } from 'gnim';
 import { addFolder, folderId, moveEntry, removeFolder, renameFolder, type FolderEntry, type ItemRef } from '../shared/layout.ts';
-import { devenvAction, devenvDir, devenvInstalled, phaseKind, type DevenvState } from '../shared/devenv.ts';
+import { devenvAction, devenvDir, devenvInstalled, devenvRestartAll, phaseKind, type DevenvState } from '../shared/devenv.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { layoutOf, type ProjectDevenv, type ProjectLink, type ProjectTerminal } from '../shared/settings.ts';
 import { zellijInstalled } from '../shared/terminals.ts';
@@ -148,7 +148,7 @@ function FolderRow(item: Item, bar: BarContext, folder: FolderEntry, close: () =
     const start = new Gtk.Button({ iconName: 'media-playback-start-symbolic', tooltipText: `Démarrer tous les services de ${d.name} (devenv up)`, cssClasses: ['flat', 'circular'] });
     start.connect('clicked', () => startAllServices(d, bar.project, bar.links));
     const restart = new Gtk.Button({ iconName: 'system-reboot-symbolic', tooltipText: `Redémarrer tous les services de ${d.name}`, cssClasses: ['flat', 'circular'] });
-    restart.connect('clicked', () => void devenvAction(dir, 'restart').catch(oops));
+    restart.connect('clicked', () => void devenvRestartAll(dir).catch(oops));
     const stop = new Gtk.Button({ iconName: 'media-playback-stop-symbolic', tooltipText: `Arrêter tous les services de ${d.name}`, cssClasses: ['flat', 'circular', 'terminal-stop'] });
     stop.connect('clicked', () => void devenvAction(dir, 'down').catch(oops));
     row.append(start);
